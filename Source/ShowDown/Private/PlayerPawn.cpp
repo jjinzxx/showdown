@@ -1,32 +1,216 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "PlayerPawn.h"
 
+#include "Camera/CameraComponent.h"
+#include "Card.h"
+#include "Components/StaticMeshComponent.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
+#include "GameFramework/PlayerController.h"
+#include "InputActionValue.h"
+#include "Kismet/GameplayStatics.h"
+#include "ShowDownGameModeBase.h"
 
-// Sets default values
 APlayerPawn::APlayerPawn()
 {
-	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
+	AutoPossessPlayer = EAutoReceiveInput::Player0;
+
+	// 루트 메시 컴포넌트 생성
+	rootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	SetRootComponent(rootComp);
+
+	// 카메라 컴포넌트 생성
+	cameraComp = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
+	cameraComp->SetupAttachment(rootComp);
+	cameraComp->bUsePawnControlRotation = true;
+	bUseControllerRotationPitch = true;
+	bUseControllerRotationYaw = true;
+
+	// 손패 카드 슬롯
+	PlayerHandCard = CreateDefaultSubobject<USceneComponent>(TEXT("PlayerHandRoot"));
+	PlayerHandCard->SetupAttachment(rootComp);
+
+	// 머리 위 카드 슬롯
+	PlayerHeadCard = CreateDefaultSubobject<USceneComponent>(TEXT("PlayerHeadCardSlot"));
+	PlayerHeadCard->SetupAttachment(rootComp);
 }
 
-// Called when the game starts or when spawned
 void APlayerPawn::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+	// GameModeBase 할당
+	ModeBase = Cast<AShowDownGameModeBase>(
+		UGameplayStatics::GetGameMode(GetWorld())
+	);
+
+	AddInputMappingContext();
 }
 
-// Called every frame
+void APlayerPawn::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+	AddInputMappingContext();
+	bHasPreviousMousePosition = false;
+}
+
+void APlayerPawn::AddInputMappingContext()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (PC)
+	{
+		PC->bShowMouseCursor = true;
+		PC->bEnableClickEvents = true;
+		PC->bEnableMouseOverEvents = true;
+
+		if (ULocalPlayer* LocalPlayer = PC->GetLocalPlayer())
+		{
+			if (UEnhancedInputLocalPlayerSubsystem* Subsystem =
+				LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+			{
+				if (imc_SD)
+				{
+					Subsystem->AddMappingContext(imc_SD, 0);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("imc_SD is not assigned on %s."), *GetName());
+				}
+			}
+		}
+	}
+}
+
 void APlayerPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		bHasPreviousMousePosition = false;
+		return;
+	}
+
+	float MouseX = 0.0f;
+	float MouseY = 0.0f;
+	if (!PC->GetMousePosition(MouseX, MouseY))
+	{
+		bHasPreviousMousePosition = false;
+		return;
+	}
+
+	if (!bHasPreviousMousePosition)
+	{
+		PreviousMouseX = MouseX;
+		PreviousMouseY = MouseY;
+		bHasPreviousMousePosition = true;
+		return;
+	}
+
+	const float DeltaX = MouseX - PreviousMouseX;
+	const float DeltaY = MouseY - PreviousMouseY;
+
+	PreviousMouseX = MouseX;
+	PreviousMouseY = MouseY;
+
+	if (!FMath::IsNearlyZero(DeltaX) || !FMath::IsNearlyZero(DeltaY))
+	{
+		ApplyCameraInput(DeltaX, -DeltaY);
+	}
 }
 
-// Called to bind functionality to input
 void APlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+	auto PlayerInput = Cast<UEnhancedInputComponent>(PlayerInputComponent);
+	if (!PlayerInput)
+	{
+		UE_LOG(LogTemp, Error, TEXT("EnhancedInputComponent is missing."));
+		return;
+	}
+	
+	if (ia_Select)
+	{
+		PlayerInput->BindAction(ia_Select, ETriggerEvent::Started, this, &APlayerPawn::InputSelect);
+	}
+
+	if (ia_LookUp)
+	{
+		PlayerInput->BindAction(ia_LookUp, ETriggerEvent::Triggered, this, &APlayerPawn::LookUp);
+	}
+
+	if (ia_Turn)
+	{
+		PlayerInput->BindAction(ia_Turn, ETriggerEvent::Triggered, this, &APlayerPawn::Turn);
+	}
 }
 
+void APlayerPawn::InputSelect(const FInputActionValue& InputValue)
+{
+	TraceCardUnderCursor();
+
+	if (HandCard)
+	{
+		SelectCard(HandCard);
+	}
+}
+
+void APlayerPawn::TraceCardUnderCursor()
+{
+	HandCard = nullptr;
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return;
+	}
+
+	FHitResult Hit;
+	PC->GetHitResultUnderCursor(ECC_Visibility, false, Hit);
+
+	HandCard = Cast<ACard>(Hit.GetActor());
+}
+
+void APlayerPawn::SelectCard(ACard* SelectedCard)
+{
+	if (!SelectedCard || !ModeBase)
+	{
+		return;
+	}
+
+	//ModeBase->PlayerSelectedCard(SelectedCard);
+}
+
+// 상하 회전 입력에 따른 콜백 함수 구현
+void APlayerPawn::LookUp(const FInputActionValue& inputValue)
+{
+	float value = inputValue.Get<float>();
+	ApplyCameraInput(0.0f, value);
+}
+
+// 좌우 회전 입력에 따른 콜백 함수 구현
+void APlayerPawn::Turn(const FInputActionValue& inputValue)
+{
+	float value = inputValue.Get<float>();
+	ApplyCameraInput(value, 0.0f);
+}
+
+void APlayerPawn::ApplyCameraInput(float YawInput, float PitchInput)
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return;
+	}
+
+	const FRotator ControlRotation = PC->GetControlRotation();
+	const float CurrentPitch = FRotator::NormalizeAxis(ControlRotation.Pitch);
+	const float CurrentYaw = FRotator::NormalizeAxis(ControlRotation.Yaw);
+
+	const float NewPitch = FMath::Clamp(CurrentPitch + PitchInput * LookSensitivity, MinPitch, MaxPitch);
+	const float NewYaw = FMath::Clamp(CurrentYaw + YawInput * LookSensitivity, MinYaw, MaxYaw);
+
+	PC->SetControlRotation(FRotator(NewPitch, NewYaw, 0.0f));
+}
