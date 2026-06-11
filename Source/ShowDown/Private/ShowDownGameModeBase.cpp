@@ -43,16 +43,16 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 	BuildDeck(Deck);
 	ShuffleDeck(Deck);
 
-	const int32 CardsToDeal = FMath::Min(PlayerHandCount, Deck.Num());
+	const int32 CardsToDeal = FMath::Min(HandCount, Deck.Num());
 	const FVector HandCenter =
 		PlayerPawn->PlayerHandCard->GetComponentLocation() +
-		PlayerPawn->PlayerHandCard->GetForwardVector() * PlayerHandForwardOffset;
+		PlayerPawn->PlayerHandCard->GetForwardVector() * HandForwardOffset;
 	const FRotator HandRotation = PlayerPawn->PlayerHandCard->GetComponentRotation();
 	const FVector RightVector = PlayerPawn->PlayerHandCard->GetRightVector();
 	const FVector ForwardVector = PlayerPawn->PlayerHandCard->GetForwardVector();
-	const float StartOffset = -PlayerHandSpacing * static_cast<float>(CardsToDeal - 1) * 0.5f;
-	const float AngleStep = CardsToDeal > 1 ? PlayerHandFanAngle / static_cast<float>(CardsToDeal - 1) : 0.0f;
-	const float StartAngle = -PlayerHandFanAngle * 0.5f;
+	const float StartOffset = -HandSpacing * static_cast<float>(CardsToDeal - 1) * 0.5f;
+	const float AngleStep = CardsToDeal > 1 ? HandFanAngle / static_cast<float>(CardsToDeal - 1) : 0.0f;
+	const float StartAngle = -HandFanAngle * 0.5f;
 
 	for (int32 Index = 0; Index < CardsToDeal; ++Index)
 	{
@@ -60,10 +60,10 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 		const float NormalizedFromCenter = CardsToDeal > 1
 			? (static_cast<float>(Index) / static_cast<float>(CardsToDeal - 1)) * 2.0f - 1.0f
 			: 0.0f;
-		const float FanDepthOffset = FMath::Abs(NormalizedFromCenter) * PlayerHandFanDepth;
+		const float FanDepthOffset = FMath::Abs(NormalizedFromCenter) * HandFanDepth;
 		const FVector SpawnLocation =
 			HandCenter +
-			RightVector * (StartOffset + PlayerHandSpacing * Index) -
+			RightVector * (StartOffset + HandSpacing * Index) -
 			ForwardVector * FanDepthOffset;
 		const FRotator SpawnRotation = HandRotation + FRotator(0.0f, StartAngle + AngleStep * Index, 0.0f);
 
@@ -73,7 +73,7 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 			continue;
 		}
 
-		NewCard->SetCard(Index % 2 == 0 ? ECardSuit::Spade : ECardSuit::Heart, Rank);
+		NewCard->SetCard(Rank);
 		NewCard->SetFaceUp(true);
 	}
 }

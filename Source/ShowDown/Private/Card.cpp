@@ -53,9 +53,8 @@ void ACard::Tick(float DeltaTime)
 	SetActorLocation(NewLocation);
 }
 
-void ACard::SetCard(ECardSuit NewSuit, int32 NewRank)
+void ACard::SetCard( int32 NewRank)
 {
-	Suit = NewSuit;
 	Rank = FMath::Clamp(NewRank, 1, 7);
 	RefreshVisual();
 }
