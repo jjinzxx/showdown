@@ -77,6 +77,9 @@ public:
 	
 	UPROPERTY()
 	class ACard* HandCard;
+
+	UPROPERTY()
+	class ACard* CurrentSelectedCard;
 	
 
 protected:
@@ -96,6 +99,7 @@ public:
 	void Turn(const FInputActionValue& InputValue);
 	void TraceCardUnderCursor();
 	void SelectCard(ACard* SelectedCard);
+	void SubmitSelectedCard(ACard* SelectedCard);
 
 private:
 	void AddInputMappingContext();

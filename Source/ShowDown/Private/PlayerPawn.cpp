@@ -175,12 +175,39 @@ void APlayerPawn::TraceCardUnderCursor()
 
 void APlayerPawn::SelectCard(ACard* SelectedCard)
 {
-	if (!SelectedCard || !ModeBase)
+	if (!SelectedCard)
 	{
 		return;
 	}
 
-	//ModeBase->PlayerSelectedCard(SelectedCard);
+	if (CurrentSelectedCard == SelectedCard)
+	{
+		SubmitSelectedCard(SelectedCard);
+		return;
+	}
+
+	if (CurrentSelectedCard)
+	{
+		CurrentSelectedCard->SelectCard(false);
+	}
+
+	SelectedCard->SelectCard(true);
+	CurrentSelectedCard = SelectedCard;
+}
+
+void APlayerPawn::SubmitSelectedCard(ACard* SelectedCard)
+{
+	if (!SelectedCard)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Submit selected card: %s"), *SelectedCard->GetName());
+
+	if (ModeBase)
+	{
+		ModeBase->PlayerSelectedCard(SelectedCard);
+	}
 }
 
 // 상하 회전 입력에 따른 콜백 함수 구현
