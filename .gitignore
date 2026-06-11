@@ -1,0 +1,67 @@
+# ============================================================
+# 사용자 정의 및 프로젝트 특정 설정
+# ============================================================
+.claude/
+.omc/
+.idea/
+.vsconfig
+*.sln.DotSettings.user
+
+# 특정 에셋 폴더 제외 (용량 관리)
+# Content/폴더이름
+
+# ============================================================
+# Unreal Engine 기본 제외 항목
+# ============================================================
+# 빌드 및 임시 파일
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+Platforms/
+
+# 플러그인 내 임시 폴더
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# 자동 생성된 프로젝트 파일 (Generate Visual Studio project files로 복구 가능)
+*.sln
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj
+*.xcworkspace
+
+# 맵 빌드 데이터 (용량이 크고 에디터에서 재생성 가능)
+*_BuiltData.uasset
+
+# ============================================================
+# IDE 및 컴파일러 설정 (Rider, VS, CMake)
+# ============================================================
+.vs/
+.idea_modules/
+cmake-build-*/
+out/
+*.iws
+
+# 컴파일된 바이너리 및 라이브러리
+*.obj
+*.lib
+*.dll
+*.exe
+*.app
+*.ipa
+*.so
+*.dylib
+
+# ============================================================
+# 화이트리스트 (제외 대상 중 포함할 항목)
+# ============================================================
+# 모바일 빌드 등에 필요한 아이콘/이미지는 유지
+!Build/**/*.ico
+!Build/IOS/Resources/**/*.png
+!Build/Android/res/**/*.png
+!Build/*/PakBlacklist*.txt
