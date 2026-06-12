@@ -1,11 +1,16 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "ShowDownGameModeBase.h"
 
 #include "Card.h"
+#include "CardDeck.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
+
+AShowDownGameModeBase::AShowDownGameModeBase()
+{
+	CardDeck = CreateDefaultSubobject<UCardDeck>(TEXT("CardDeck"));
+}
 
 void AShowDownGameModeBase::BeginPlay()
 {
@@ -32,6 +37,12 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 		return;
 	}
 
+	if (!CardDeck)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CardDeck is missing on %s."), *GetName());
+		return;
+	}
+
 	APlayerPawn* PlayerPawn = Cast<APlayerPawn>(UGameplayStatics::GetPlayerPawn(GetWorld(), 0));
 	if (!PlayerPawn || !PlayerPawn->PlayerHandCard)
 	{
@@ -39,11 +50,17 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 		return;
 	}
 
-	TArray<int32> Deck;
-	BuildDeck(Deck);
-	ShuffleDeck(Deck);
+	CardDeck->ResetDeck();
+	CardDeck->ShuffleDeck();
 
-	const int32 CardsToDeal = FMath::Min(HandCount, Deck.Num());
+	TArray<int32> PlayerRanks;
+	if (!CardDeck->DealCards(HandCount, PlayerRanks))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to deal player hand."));
+		return;
+	}
+
+	const int32 CardsToDeal = PlayerRanks.Num();
 	const FVector HandCenter =
 		PlayerPawn->PlayerHandCard->GetComponentLocation() +
 		PlayerPawn->PlayerHandCard->GetForwardVector() * HandForwardOffset;
@@ -56,7 +73,7 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 
 	for (int32 Index = 0; Index < CardsToDeal; ++Index)
 	{
-		const int32 Rank = Deck[Index];
+		const int32 Rank = PlayerRanks[Index];
 		const float NormalizedFromCenter = CardsToDeal > 1
 			? (static_cast<float>(Index) / static_cast<float>(CardsToDeal - 1)) * 2.0f - 1.0f
 			: 0.0f;
@@ -75,25 +92,5 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 
 		NewCard->SetCard(Rank);
 		NewCard->SetFaceUp(true);
-	}
-}
-
-void AShowDownGameModeBase::BuildDeck(TArray<int32>& OutDeck) const
-{
-	OutDeck.Reset();
-
-	for (int32 Rank = 1; Rank <= 7; ++Rank)
-	{
-		OutDeck.Add(Rank);
-		OutDeck.Add(Rank);
-	}
-}
-
-void AShowDownGameModeBase::ShuffleDeck(TArray<int32>& Deck) const
-{
-	for (int32 Index = Deck.Num() - 1; Index > 0; --Index)
-	{
-		const int32 SwapIndex = FMath::RandRange(0, Index);
-		Deck.Swap(Index, SwapIndex);
 	}
 }
