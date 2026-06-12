@@ -28,16 +28,23 @@ void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 		return;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("GameMode received selected card: %s"), *SelectedCard->GetName());
-
-	CardSystem->RemoveCardFromHand(PlayerState.HandCards, SelectedCard);
-	//콜렉터의 이마로 카드 이동
-	CollectorState.ForeheadCard = SelectedCard;
 	if (!CardSystem)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("CardSystem is missing on %s."), *GetName());
 		return;
 	}
+
+	if (CollectorState.ForeheadCard)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Collector already has a forehead card."));
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("GameMode received selected card: %s"), *SelectedCard->GetName());
+
+	CardSystem->RemoveCardFromHand(PlayerState.HandCards, SelectedCard);
+	//콜렉터의 이마로 카드 이동
+	CollectorState.ForeheadCard = SelectedCard;
 
 	if (!Collector || !Collector->c_HeadCard)
 	{
@@ -102,6 +109,7 @@ void AShowDownGameModeBase::DealInitialHand()
 		HandFanAngle,
 		HandFanDepth,
 		true,
+		true,
 		PlayerState.HandCards);
 
 	// 확인용으로 true. 나중에는 false로 바꾸면 콜렉터 손패가 뒷면이 됩니다.
@@ -115,6 +123,7 @@ void AShowDownGameModeBase::DealInitialHand()
 		HandFanAngle,
 		HandFanDepth,
 		true,
+		false,
 		CollectorState.HandCards);
 
 	UE_LOG(LogTemp, Log, TEXT("Player hand count: %d"), PlayerState.HandCards.Num());

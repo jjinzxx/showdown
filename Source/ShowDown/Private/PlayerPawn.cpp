@@ -171,6 +171,10 @@ void APlayerPawn::TraceCardUnderCursor()
 	PC->GetHitResultUnderCursor(ECC_Visibility, false, Hit);
 
 	HandCard = Cast<ACard>(Hit.GetActor());
+	if (HandCard && !HandCard->IsCardSelectable())
+	{
+		HandCard = nullptr;
+	}
 }
 
 void APlayerPawn::SelectCard(ACard* SelectedCard)

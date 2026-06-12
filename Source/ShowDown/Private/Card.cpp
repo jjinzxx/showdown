@@ -88,6 +88,20 @@ bool ACard::IsSelected() const
 	return bSelected;
 }
 
+void ACard::SetSelectable(bool bNewSelectable)
+{
+	bSelectable = bNewSelectable;
+	if (!bSelectable)
+	{
+		SelectCard(false);
+	}
+}
+
+bool ACard::IsCardSelectable() const
+{
+	return bSelectable;
+}
+
 void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
 {
 	if (!Slot)
@@ -96,11 +110,10 @@ void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
 	}
 
 	bSelected = false;
+	SetSelectable(false);
 	DefaultLocation = Slot->GetComponentLocation();
 	TargetLocation = DefaultLocation;
 
 	SetActorRotation(Slot->GetComponentRotation());
 	SetFaceUp(bNewFaceUp);
 }
-
-

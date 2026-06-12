@@ -47,6 +47,7 @@ public:
 		float HandFanAngle,
 		float HandFanDepth,
 		bool bFaceUp,
+		bool bSelectable,
 		TArray<ACard*>& OutCards);
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Card")

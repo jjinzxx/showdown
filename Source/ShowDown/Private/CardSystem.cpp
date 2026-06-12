@@ -73,6 +73,7 @@ bool UCardSystem::SpawnHandCards(
 	float HandFanAngle,
 	float HandFanDepth,
 	bool bFaceUp,
+	bool bSelectable,
 	TArray<ACard*>& OutCards)
 {
 	OutCards.Reset();
@@ -120,6 +121,7 @@ bool UCardSystem::SpawnHandCards(
 
 		NewCard->SetCard(Rank);
 		NewCard->SetFaceUp(bFaceUp);
+		NewCard->SetSelectable(bSelectable);
 		OutCards.Add(NewCard);
 	}
 
