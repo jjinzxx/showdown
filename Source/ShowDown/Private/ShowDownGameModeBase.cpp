@@ -5,12 +5,14 @@
 #include "Card.h"
 #include "CardSystem.h"
 #include "Collector.h"
+#include "CollectorAISystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
 
 AShowDownGameModeBase::AShowDownGameModeBase()
 {
 	CardSystem = CreateDefaultSubobject<UCardSystem>(TEXT("CardSystem"));
+	CollectorAISystem = CreateDefaultSubobject<UCollectorAISystem>(TEXT("CollectorAISystem"));
 }
 
 void AShowDownGameModeBase::BeginPlay()
@@ -23,19 +25,14 @@ void AShowDownGameModeBase::BeginPlay()
 
 void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 {
-	if (!SelectedCard)
-	{
-		return;
-	}
+	if (!SelectedCard){	return;}
 
-	if (!CardSystem)
-	{
+	if (!CardSystem){
 		UE_LOG(LogTemp, Warning, TEXT("CardSystem is missing on %s."), *GetName());
 		return;
 	}
 
-	if (CollectorState.ForeheadCard)
-	{
+	if (CollectorState.ForeheadCard){
 		UE_LOG(LogTemp, Warning, TEXT("Collector already has a forehead card."));
 		return;
 	}
@@ -46,13 +43,14 @@ void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 	//콜렉터의 이마로 카드 이동
 	CollectorState.ForeheadCard = SelectedCard;
 
-	if (!Collector || !Collector->c_HeadCard)
-	{
+	if (!Collector || !Collector->c_HeadCard){
 		UE_LOG(LogTemp, Warning, TEXT("Collector or Collector head card slot is missing."));
 		return;
 	}
 
 	CardSystem->MoveCardToSlot(SelectedCard, Collector->c_HeadCard, true);
+	
+	CollectorGiveCardToPlayer();
 }
 
 void AShowDownGameModeBase::DealInitialHand()
@@ -141,3 +139,49 @@ void AShowDownGameModeBase::FindCollector()
 		UE_LOG(LogTemp, Warning, TEXT("Collector is missing in the level."));
 	}
 }
+
+void AShowDownGameModeBase::CollectorGiveCardToPlayer()
+{
+	if (!CardSystem){
+		UE_LOG(LogTemp, Warning, TEXT("CardSystem is missing on %s."), *GetName());
+		return;
+	}
+
+	if (!CollectorAISystem){
+		UE_LOG(LogTemp, Warning, TEXT("CollectorAISystem is missing on %s."), *GetName());
+		return;
+	}
+
+	if (PlayerState.ForeheadCard){
+		UE_LOG(LogTemp, Warning, TEXT("Player already has a forehead card."));
+		return;
+	}
+
+	APlayerPawn* PlayerPawn = Cast<APlayerPawn>(UGameplayStatics::GetPlayerPawn(GetWorld(), 0));
+	if (!PlayerPawn || !PlayerPawn->PlayerHeadCard){
+		UE_LOG(LogTemp, Warning, TEXT("PlayerPawn or PlayerHeadCard is missing."));
+		return;
+	}
+
+	if (CollectorState.HandCards.Num() <= 0){
+		UE_LOG(LogTemp, Warning, TEXT("Collector has no hand cards."));
+		return;
+	}
+
+	ACard* ChosenCard = CollectorAISystem->ChooseCardActorToGive(CollectorState.HandCards);
+	if (!ChosenCard)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Collector AI failed to choose a card."));
+		return;
+	}
+
+	CardSystem->RemoveCardFromHand(CollectorState.HandCards, ChosenCard);
+
+	PlayerState.ForeheadCard = ChosenCard;
+
+	// 플레이어는 자기 이마 카드를 보면 안 되므로 false
+	CardSystem->MoveCardToSlot(ChosenCard, PlayerPawn->PlayerHeadCard, false);
+
+	UE_LOG(LogTemp, Log, TEXT("Collector gave card to player: %s"), *ChosenCard->GetName());
+}
+

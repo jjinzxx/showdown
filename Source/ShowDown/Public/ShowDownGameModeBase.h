@@ -10,6 +10,7 @@ class ACard;
 class APlayerPawn;
 class UCardSystem;
 class ACollector;
+class UCollectorAISystem;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
 USTRUCT(BlueprintType)
@@ -45,6 +46,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Deck")
 	UCardSystem* CardSystem;
 
+	//콜렉터 AI 시스템
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|AI")
+	UCollectorAISystem* CollectorAISystem;
+	
 	// 스폰할 카드 클래스
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShowDown|Card")
 	TSubclassOf<ACard> CardClass;
@@ -68,6 +73,8 @@ public:
 	// 카드가 양끝으로 빠지는 정도
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
 	float HandFanDepth = 25.0f;
+	
+
 
 protected:
 	virtual void BeginPlay() override;
@@ -87,5 +94,6 @@ private:
 	UPROPERTY()
 	ACollector* Collector = nullptr;
 	void FindCollector();
+	void CollectorGiveCardToPlayer();
 	
 };
