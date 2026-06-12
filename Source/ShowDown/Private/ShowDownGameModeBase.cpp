@@ -3,14 +3,14 @@
 #include "ShowDownGameModeBase.h"
 
 #include "Card.h"
-#include "CardDeck.h"
+#include "CardSystem.h"
 #include "Collector.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
 
 AShowDownGameModeBase::AShowDownGameModeBase()
 {
-	CardDeck = CreateDefaultSubobject<UCardDeck>(TEXT("CardDeck"));
+	CardSystem = CreateDefaultSubobject<UCardSystem>(TEXT("CardSystem"));
 }
 
 void AShowDownGameModeBase::BeginPlay()
@@ -18,7 +18,7 @@ void AShowDownGameModeBase::BeginPlay()
 	Super::BeginPlay();
 	
 	FindCollector();
-	DealPlayerInitialHand();
+	DealInitialHand();
 }
 
 void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
@@ -36,7 +36,7 @@ void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 	PlaceCardOnCollectorHead(SelectedCard);
 }
 
-void AShowDownGameModeBase::DealPlayerInitialHand()
+void AShowDownGameModeBase::DealInitialHand()
 {
 	if (!CardClass)
 	{
@@ -44,9 +44,9 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 		return;
 	}
 
-	if (!CardDeck)
+	if (!CardSystem)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("CardDeck is missing on %s."), *GetName());
+		UE_LOG(LogTemp, Warning, TEXT("CardSystem is missing on %s."), *GetName());
 		return;
 	}
 
@@ -57,53 +57,36 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 		return;
 	}
 
-	PlayerState.HandCards.Reset();
+	if (!Collector || !Collector->c_HandCard)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Collector or Collector hand card slot is missing."));
+		return;
+	}
 
-	CardDeck->ResetDeck();
-	CardDeck->ShuffleDeck();
+	CardSystem->ResetDeck();
+	CardSystem->ShuffleDeck();
 
 	TArray<int32> PlayerRanks;
-	if (!CardDeck->DealCards(HandCount, PlayerRanks))
+	if (!CardSystem->DealCards(HandCount, PlayerRanks))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Failed to deal player hand."));
 		return;
 	}
 
-	const int32 CardsToDeal = PlayerRanks.Num();
-	const FVector HandCenter =
-		PlayerPawn->PlayerHandCard->GetComponentLocation() +
-		PlayerPawn->PlayerHandCard->GetForwardVector() * HandForwardOffset;
-	const FRotator HandRotation = PlayerPawn->PlayerHandCard->GetComponentRotation();
-	const FVector RightVector = PlayerPawn->PlayerHandCard->GetRightVector();
-	const FVector ForwardVector = PlayerPawn->PlayerHandCard->GetForwardVector();
-	const float StartOffset = -HandSpacing * static_cast<float>(CardsToDeal - 1) * 0.5f;
-	const float AngleStep = CardsToDeal > 1 ? HandFanAngle / static_cast<float>(CardsToDeal - 1) : 0.0f;
-	const float StartAngle = -HandFanAngle * 0.5f;
-
-	for (int32 Index = 0; Index < CardsToDeal; ++Index)
+	TArray<int32> CollectorRanks;
+	if (!CardSystem->DealCards(HandCount, CollectorRanks))
 	{
-		const int32 Rank = PlayerRanks[Index];
-		const float NormalizedFromCenter = CardsToDeal > 1
-			? (static_cast<float>(Index) / static_cast<float>(CardsToDeal - 1)) * 2.0f - 1.0f
-			: 0.0f;
-		const float FanDepthOffset = FMath::Abs(NormalizedFromCenter) * HandFanDepth;
-		const FVector SpawnLocation =
-			HandCenter +
-			RightVector * (StartOffset + HandSpacing * Index) -
-			ForwardVector * FanDepthOffset;
-		const FRotator SpawnRotation = HandRotation + FRotator(0.0f, StartAngle + AngleStep * Index, 0.0f);
-
-		ACard* NewCard = GetWorld()->SpawnActor<ACard>(CardClass, SpawnLocation, SpawnRotation);
-		if (!NewCard)
-		{
-			continue;
-		}
-
-		NewCard->SetCard(Rank);
-		NewCard->SetFaceUp(true);
-
-		AddHandCard(PlayerState, NewCard);
+		UE_LOG(LogTemp, Warning, TEXT("Failed to deal collector hand."));
+		return;
 	}
+
+	SpawnHandCards(PlayerState, PlayerPawn->PlayerHandCard, PlayerRanks, true);
+
+	// 확인용으로 true. 나중에는 false로 바꾸면 콜렉터 손패가 뒷면이 됩니다.
+	SpawnHandCards(CollectorState, Collector->c_HandCard, CollectorRanks, true);
+
+	UE_LOG(LogTemp, Log, TEXT("Player hand count: %d"), PlayerState.HandCards.Num());
+	UE_LOG(LogTemp, Log, TEXT("Collector hand count: %d"), CollectorState.HandCards.Num());
 }
 
 void AShowDownGameModeBase::AddHandCard(FShowDownParticipantState& Participant, ACard* NewCard)
@@ -153,3 +136,53 @@ void AShowDownGameModeBase::PlaceCardOnCollectorHead(ACard* SelectedCard)
 
 	SelectedCard->MoveToSlot(Collector->c_HeadCard, true);
 }
+void AShowDownGameModeBase::SpawnHandCards(
+	FShowDownParticipantState& Participant,
+	USceneComponent* HandRoot,
+	const TArray<int32>& Ranks,
+	bool bFaceUp)
+{
+	if (!HandRoot)
+	{
+		return;
+	}
+	
+	Participant.HandCards.Reset();
+	
+	const int32 CardsToDeal = Ranks.Num();
+	const FVector HandCenter =
+		HandRoot->GetComponentLocation() +
+		HandRoot->GetForwardVector() * HandForwardOffset;
+	const FRotator HandRotation = HandRoot->GetComponentRotation();
+	const FVector RightVector = HandRoot->GetRightVector();
+	const FVector ForwardVector = HandRoot->GetForwardVector();
+	const float StartOffset = -HandSpacing * static_cast<float>(CardsToDeal - 1) * 0.5f;
+	const float AngleStep = CardsToDeal > 1 ? HandFanAngle / static_cast<float>(CardsToDeal - 1) : 0.0f;
+	const float StartAngle = -HandFanAngle * 0.5f;
+
+	for (int32 Index = 0; Index < CardsToDeal; ++Index)
+	{
+		const int32 Rank = Ranks[Index];
+		const float NormalizedFromCenter = CardsToDeal > 1
+			? (static_cast<float>(Index) / static_cast<float>(CardsToDeal - 1)) * 2.0f - 1.0f
+			: 0.0f;
+		const float FanDepthOffset = FMath::Abs(NormalizedFromCenter) * HandFanDepth;
+		const FVector SpawnLocation =
+			HandCenter +
+			RightVector * (StartOffset + HandSpacing * Index) -
+			ForwardVector * FanDepthOffset;
+		const FRotator SpawnRotation = HandRotation + FRotator(0.0f, StartAngle + AngleStep * Index, 0.0f);
+
+		ACard* NewCard = GetWorld()->SpawnActor<ACard>(CardClass, SpawnLocation, SpawnRotation);
+		if (!NewCard)
+		{
+			continue;
+		}
+
+		NewCard->SetCard(Rank);
+		NewCard->SetFaceUp(bFaceUp);
+
+		AddHandCard(Participant, NewCard);
+	}
+}
+	

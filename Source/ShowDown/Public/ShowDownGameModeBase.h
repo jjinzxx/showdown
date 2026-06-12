@@ -8,7 +8,7 @@
 
 class ACard;
 class APlayerPawn;
-class UCardDeck;
+class UCardSystem;
 class ACollector;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
@@ -43,7 +43,7 @@ public:
 
 	// 덱 관리 컴포넌트
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Deck")
-	UCardDeck* CardDeck;
+	UCardSystem* CardSystem;
 
 	// 스폰할 카드 클래스
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ShowDown|Card")
@@ -74,7 +74,7 @@ protected:
 
 private:
 	// 덱을 만들고 섞은 뒤에 플레이어에게 5장 스폰
-	void DealPlayerInitialHand();
+	void DealInitialHand();
 	
 	//플레이어 스탯
 	UPROPERTY()
@@ -92,5 +92,10 @@ private:
 	void FindCollector();
 	void PlaceCardOnCollectorHead(ACard* SelectedCard);
 	
-	
+	void SpawnHandCards(
+	FShowDownParticipantState& Participant,
+	USceneComponent* HandRoot,
+	const TArray<int32>& Ranks,
+	bool bFaceUp
+);
 };
