@@ -7,6 +7,8 @@
 #include "Collector.h"
 #include "CollectorAISystem.h"
 #include "BettingSystem.h"
+#include "RoundResolver.h"
+#include "RouletteSystem.h"
 #include "ShowDownTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
@@ -16,6 +18,8 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 	CardSystem = CreateDefaultSubobject<UCardSystem>(TEXT("CardSystem"));
 	CollectorAISystem = CreateDefaultSubobject<UCollectorAISystem>(TEXT("CollectorAISystem"));
 	BettingSystem = CreateDefaultSubobject<UBettingSystem>(TEXT("BettingSystem"));
+	RoundResolver = CreateDefaultSubobject<URoundResolver>(TEXT("RoundResolver"));
+	RouletteSystem = CreateDefaultSubobject<URouletteSystem>(TEXT("RouletteSystem"));
 }
 
 void AShowDownGameModeBase::BeginPlay()
@@ -223,7 +227,7 @@ void AShowDownGameModeBase::PlayerCheck()
 		bBettingPhase = false;
 
 		UE_LOG(LogTemp, Log, TEXT("Player Call %d"), CurrentBet);
-		UE_LOG(LogTemp, Log, TEXT("Betting finished. Next: Reveal cards."));
+		FinishBettingAndResolveRound();
 		return;
 	}
 
@@ -267,7 +271,7 @@ void AShowDownGameModeBase::PlayerFold()
 	bBettingPhase = false;
 
 	UE_LOG(LogTemp, Log, TEXT("Player Fold"));
-	UE_LOG(LogTemp, Log, TEXT("Next: Roulette or round end."));
+	ResolveFold(EShowDownSide::Player);
 }
 
 float AShowDownGameModeBase::EstimateCollectorWinChance() const
@@ -313,7 +317,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		CollectorState.CurrentBet = CurrentBet;
 		bBettingPhase = false;
 		UE_LOG(LogTemp, Log, TEXT("Collector Check"));
-		UE_LOG(LogTemp, Log, TEXT("Betting finished. Next: Reveal cards."));
+		FinishBettingAndResolveRound();
 		break;
 
 	case EShowDownBetAction::Call:
@@ -321,7 +325,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		CollectorState.CurrentBet = CurrentBet;
 		bBettingPhase = false;
 		UE_LOG(LogTemp, Log, TEXT("Collector Call %d"), CurrentBet);
-		UE_LOG(LogTemp, Log, TEXT("Betting finished. Next: Reveal cards."));
+		FinishBettingAndResolveRound();
 		break;
 
 	case EShowDownBetAction::Raise:
@@ -340,10 +344,111 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		BettingSystem->Fold(EShowDownSide::Collector);
 		bBettingPhase = false;
 		UE_LOG(LogTemp, Log, TEXT("Collector Fold"));
-		UE_LOG(LogTemp, Log, TEXT("Betting finished. Player wins this round."));
+		ResolveFold(EShowDownSide::Collector);
 		break;
 
 	default:
 		break;
 	}
+}
+
+void AShowDownGameModeBase::FinishBettingAndResolveRound()
+{
+	if (!RoundResolver || !PlayerState.ForeheadCard || !CollectorState.ForeheadCard)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cannot resolve round. RoundResolver or forehead cards are missing."));
+		return;
+	}
+
+	PlayerState.ForeheadCard->SetFaceUp(true);
+	CollectorState.ForeheadCard->SetFaceUp(true);
+
+	const int32 PlayerCardRank = PlayerState.ForeheadCard->Rank;
+	const int32 CollectorCardRank = CollectorState.ForeheadCard->Rank;
+	const EShowDownRoundResult Result = RoundResolver->ResolveRevealedCards(PlayerCardRank, CollectorCardRank);
+
+	UE_LOG(LogTemp, Log, TEXT("Reveal cards. Player: %d, Collector: %d"), PlayerCardRank, CollectorCardRank);
+
+	switch (Result)
+	{
+	case EShowDownRoundResult::PlayerWin:
+		UE_LOG(LogTemp, Log, TEXT("Round result: Player wins. Collector roulette with %d bullet(s)."), CollectorState.CurrentBet);
+		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet);
+		break;
+
+	case EShowDownRoundResult::CollectorWin:
+		UE_LOG(LogTemp, Log, TEXT("Round result: Collector wins. Player roulette with %d bullet(s)."), PlayerState.CurrentBet);
+		ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet);
+		break;
+
+	case EShowDownRoundResult::Draw:
+		UE_LOG(LogTemp, Log, TEXT("Round result: Draw. Both sides roulette."));
+		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet);
+		ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet);
+		break;
+
+	default:
+		break;
+	}
+}
+
+void AShowDownGameModeBase::ResolveFold(EShowDownSide FoldedSide)
+{
+	if (!RoundResolver)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cannot resolve fold. RoundResolver is missing."));
+		return;
+	}
+
+	FShowDownParticipantState& FoldedState = FoldedSide == EShowDownSide::Player ? PlayerState : CollectorState;
+	const int32 FoldedCardRank = FoldedState.ForeheadCard ? FoldedState.ForeheadCard->Rank : 0;
+	const int32 LoadCount = RoundResolver->GetFoldLoadCount(FoldedCardRank, FoldedState.CurrentBet);
+
+	if (PlayerState.ForeheadCard)
+	{
+		PlayerState.ForeheadCard->SetFaceUp(true);
+	}
+
+	if (CollectorState.ForeheadCard)
+	{
+		CollectorState.ForeheadCard->SetFaceUp(true);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("%s folded. Forehead card: %d, roulette load: %d"),
+		FoldedSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
+		FoldedCardRank,
+		LoadCount);
+
+	ApplyRouletteResult(FoldedSide, LoadCount);
+}
+
+void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount)
+{
+	if (!RouletteSystem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Cannot roll roulette. RouletteSystem is missing."));
+		return;
+	}
+
+	const int32 ClampedBulletCount = FMath::Clamp(BulletCount, 0, 6);
+	const float HitChance = RouletteSystem->GetHitChance(ClampedBulletCount);
+	const bool bHit = RouletteSystem->RollRoulette(ClampedBulletCount);
+
+	UE_LOG(LogTemp, Log, TEXT("%s roulette: %d/6, %.0f%% chance, result: %s"),
+		TargetSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
+		ClampedBulletCount,
+		HitChance * 100.0f,
+		bHit ? TEXT("Hit") : TEXT("Miss"));
+
+	if (!bHit)
+	{
+		return;
+	}
+
+	FShowDownParticipantState& TargetState = TargetSide == EShowDownSide::Player ? PlayerState : CollectorState;
+	TargetState.Lives = FMath::Max(0, TargetState.Lives - 1);
+
+	UE_LOG(LogTemp, Log, TEXT("%s lives: %d"),
+		TargetSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
+		TargetState.Lives);
 }

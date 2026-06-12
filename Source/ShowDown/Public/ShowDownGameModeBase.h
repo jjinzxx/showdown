@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "ShowDownTypes.h"
 #include "ShowDownGameModeBase.generated.h"
 
 class ACard;
@@ -12,6 +13,8 @@ class UCardSystem;
 class ACollector;
 class UCollectorAISystem;
 class UBettingSystem;
+class URoundResolver;
+class URouletteSystem;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
 USTRUCT(BlueprintType)
@@ -81,6 +84,12 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Betting")
 	UBettingSystem* BettingSystem;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Round")
+	URoundResolver* RoundResolver;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Roulette")
+	URouletteSystem* RouletteSystem;
+
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void StartBettingPhase();
 
@@ -118,5 +127,8 @@ private:
 	void CollectorGiveCardToPlayer();
 	float EstimateCollectorWinChance() const;
 	void ResolveCollectorBetResponse();
+	void FinishBettingAndResolveRound();
+	void ResolveFold(EShowDownSide FoldedSide);
+	void ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount);
 	
 };
