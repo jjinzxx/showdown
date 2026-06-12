@@ -6,6 +6,8 @@
 #include "CardSystem.h"
 #include "Collector.h"
 #include "CollectorAISystem.h"
+#include "BettingSystem.h"
+#include "ShowDownTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
 
@@ -13,6 +15,7 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 {
 	CardSystem = CreateDefaultSubobject<UCardSystem>(TEXT("CardSystem"));
 	CollectorAISystem = CreateDefaultSubobject<UCollectorAISystem>(TEXT("CollectorAISystem"));
+	BettingSystem = CreateDefaultSubobject<UBettingSystem>(TEXT("BettingSystem"));
 }
 
 void AShowDownGameModeBase::BeginPlay()
@@ -182,6 +185,165 @@ void AShowDownGameModeBase::CollectorGiveCardToPlayer()
 	// 플레이어는 자기 이마 카드를 보면 안 되므로 false
 	CardSystem->MoveCardToSlot(ChosenCard, PlayerPawn->PlayerHeadCard, false);
 
-	UE_LOG(LogTemp, Log, TEXT("Collector gave card to player: %s"), *ChosenCard->GetName());
+	UE_LOG(LogTemp, Log, TEXT("Collector gave card to player: %s, Rank: %d"), *ChosenCard->GetName(), ChosenCard->Rank);
+
+	StartBettingPhase();
 }
 
+void AShowDownGameModeBase::StartBettingPhase()
+{
+	if (!BettingSystem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("BettingSystem is missing on %s."), *GetName());
+		return;
+	}
+
+	bBettingPhase = true;
+	PlayerState.CurrentBet = 0;
+	CollectorState.CurrentBet = 0;
+
+	// 일단 최소 베팅 0으로 시작. 나중에 1로 바꿔도 됨.
+	BettingSystem->ResetBetting(0);
+
+	UE_LOG(LogTemp, Log, TEXT("Betting phase started. Q=Check, E=Raise, R=Fold"));
+}
+
+void AShowDownGameModeBase::PlayerCheck()
+{
+	if (!bBettingPhase || !BettingSystem || !CollectorAISystem)
+	{
+		return;
+	}
+
+	const int32 CurrentBet = BettingSystem->GetCurrentBet();
+	if (CurrentBet > PlayerState.CurrentBet)
+	{
+		BettingSystem->Call(EShowDownSide::Player);
+		PlayerState.CurrentBet = CurrentBet;
+		bBettingPhase = false;
+
+		UE_LOG(LogTemp, Log, TEXT("Player Call %d"), CurrentBet);
+		UE_LOG(LogTemp, Log, TEXT("Betting finished. Next: Reveal cards."));
+		return;
+	}
+
+	BettingSystem->Check(EShowDownSide::Player);
+	PlayerState.CurrentBet = CurrentBet;
+
+	UE_LOG(LogTemp, Log, TEXT("Player Check"));
+
+	ResolveCollectorBetResponse();
+}
+
+void AShowDownGameModeBase::PlayerRaise()
+{
+	if (!bBettingPhase || !BettingSystem || !CollectorAISystem)
+	{
+		return;
+	}
+
+	const int32 CurrentBet = BettingSystem->GetCurrentBet();
+	const int32 NewBet = FMath::Clamp(CurrentBet + 1, 1, 6);
+
+	if (BettingSystem->RaiseTo(EShowDownSide::Player, NewBet))
+	{
+		PlayerState.CurrentBet = NewBet;
+
+		UE_LOG(LogTemp, Log, TEXT("Player Raise to %d"), NewBet);
+
+		ResolveCollectorBetResponse();
+	}
+}
+
+void AShowDownGameModeBase::PlayerFold()
+{
+	if (!bBettingPhase || !BettingSystem)
+	{
+		return;
+	}
+
+	BettingSystem->Fold(EShowDownSide::Player);
+
+	bBettingPhase = false;
+
+	UE_LOG(LogTemp, Log, TEXT("Player Fold"));
+	UE_LOG(LogTemp, Log, TEXT("Next: Roulette or round end."));
+}
+
+float AShowDownGameModeBase::EstimateCollectorWinChance() const
+{
+	if (!PlayerState.ForeheadCard || !CollectorState.ForeheadCard)
+	{
+		return 0.5f;
+	}
+
+	const int32 PlayerRank = PlayerState.ForeheadCard->Rank;
+	const int32 CollectorRank = CollectorState.ForeheadCard->Rank;
+
+	if (CollectorRank > PlayerRank)
+	{
+		return 0.8f;
+	}
+
+	if (CollectorRank < PlayerRank)
+	{
+		return 0.25f;
+	}
+
+	return 0.5f;
+}
+
+void AShowDownGameModeBase::ResolveCollectorBetResponse()
+{
+	if (!BettingSystem || !CollectorAISystem)
+	{
+		return;
+	}
+
+	const int32 CurrentBet = BettingSystem->GetCurrentBet();
+	const int32 GivenCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
+	const EShowDownBetAction CollectorAction = CollectorAISystem->ChooseBetActionByGivenCard(GivenCardRank, CurrentBet);
+
+	UE_LOG(LogTemp, Log, TEXT("Collector remembers given card rank: %d"), GivenCardRank);
+
+	switch (CollectorAction)
+	{
+	case EShowDownBetAction::Check:
+		BettingSystem->Check(EShowDownSide::Collector);
+		CollectorState.CurrentBet = CurrentBet;
+		bBettingPhase = false;
+		UE_LOG(LogTemp, Log, TEXT("Collector Check"));
+		UE_LOG(LogTemp, Log, TEXT("Betting finished. Next: Reveal cards."));
+		break;
+
+	case EShowDownBetAction::Call:
+		BettingSystem->Call(EShowDownSide::Collector);
+		CollectorState.CurrentBet = CurrentBet;
+		bBettingPhase = false;
+		UE_LOG(LogTemp, Log, TEXT("Collector Call %d"), CurrentBet);
+		UE_LOG(LogTemp, Log, TEXT("Betting finished. Next: Reveal cards."));
+		break;
+
+	case EShowDownBetAction::Raise:
+		{
+			const int32 NewBet = FMath::Clamp(CurrentBet + 1, 1, 6);
+			if (BettingSystem->RaiseTo(EShowDownSide::Collector, NewBet))
+			{
+				CollectorState.CurrentBet = NewBet;
+				UE_LOG(LogTemp, Log, TEXT("Collector Raise to %d"), NewBet);
+				UE_LOG(LogTemp, Log, TEXT("Player needs to respond."));
+			}
+			break;
+		}
+
+	case EShowDownBetAction::Fold:
+		BettingSystem->Fold(EShowDownSide::Collector);
+		bBettingPhase = false;
+		UE_LOG(LogTemp, Log, TEXT("Collector Fold"));
+		UE_LOG(LogTemp, Log, TEXT("Betting finished. Player wins this round."));
+		break;
+
+	default:
+		break;
+	}
+}

@@ -115,4 +115,6 @@ private:
 	bool bHasPreviousMousePosition = false;
 	float PreviousMouseX = 0.0f;
 	float PreviousMouseY = 0.0f;
+	
+	void HandleBettingHotkeys();
 };

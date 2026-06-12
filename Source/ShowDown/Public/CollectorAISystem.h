@@ -23,6 +23,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|CollectorAI")
 	EShowDownBetAction ChooseBetAction(float EstimatedWinChance, int32 CurrentBet) const;
-};
 
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|CollectorAI")
+	EShowDownBetAction ChooseBetActionByGivenCard(int32 GivenCardRank, int32 CurrentBet) const;
+};
 

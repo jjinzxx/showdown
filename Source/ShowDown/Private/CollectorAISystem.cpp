@@ -47,3 +47,19 @@ EShowDownBetAction UCollectorAISystem::ChooseBetAction(float EstimatedWinChance,
 
 	return CurrentBet == 0 ? EShowDownBetAction::Check : EShowDownBetAction::Call;
 }
+
+EShowDownBetAction UCollectorAISystem::ChooseBetActionByGivenCard(int32 GivenCardRank, int32 CurrentBet) const
+{
+	if (GivenCardRank <= 0)
+	{
+		return CurrentBet == 0 ? EShowDownBetAction::Check : EShowDownBetAction::Call;
+	}
+
+	// 콜렉터는 자기가 플레이어에게 준 카드만 알고 판단합니다.
+	if (GivenCardRank <= 3)
+	{
+		return CurrentBet < 6 ? EShowDownBetAction::Raise : EShowDownBetAction::Call;
+	}
+
+	return CurrentBet == 0 ? EShowDownBetAction::Check : EShowDownBetAction::Call;
+}

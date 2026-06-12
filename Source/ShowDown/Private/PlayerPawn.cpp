@@ -2,6 +2,7 @@
 
 #include "Camera/CameraComponent.h"
 #include "Card.h"
+#include "InputCoreTypes.h"
 #include "Components/StaticMeshComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -118,6 +119,8 @@ void APlayerPawn::Tick(float DeltaTime)
 	{
 		ApplyCameraInput(DeltaX, -DeltaY);
 	}
+	
+	HandleBettingHotkeys();
 }
 
 void APlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -244,4 +247,28 @@ void APlayerPawn::ApplyCameraInput(float YawInput, float PitchInput)
 	const float NewYaw = FMath::Clamp(CurrentYaw + YawInput * LookSensitivity, MinYaw, MaxYaw);
 
 	PC->SetControlRotation(FRotator(NewPitch, NewYaw, 0.0f));
+}
+
+void APlayerPawn::HandleBettingHotkeys()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC || !ModeBase)
+	{
+		return;
+	}
+
+	if (PC->WasInputKeyJustPressed(EKeys::Q))
+	{
+		ModeBase->PlayerCheck();
+	}
+
+	if (PC->WasInputKeyJustPressed(EKeys::E))
+	{
+		ModeBase->PlayerRaise();
+	}
+
+	if (PC->WasInputKeyJustPressed(EKeys::R))
+	{
+		ModeBase->PlayerFold();
+	}
 }

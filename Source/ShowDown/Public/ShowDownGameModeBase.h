@@ -11,6 +11,7 @@ class APlayerPawn;
 class UCardSystem;
 class ACollector;
 class UCollectorAISystem;
+class UBettingSystem;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
 USTRUCT(BlueprintType)
@@ -74,6 +75,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
 	float HandFanDepth = 25.0f;
 	
+	
+	
+	// 베팅 시스템
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Betting")
+	UBettingSystem* BettingSystem;
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void StartBettingPhase();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void PlayerCheck();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void PlayerRaise();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void PlayerFold();
+	
 
 
 protected:
@@ -90,10 +109,14 @@ private:
 	UPROPERTY()
 	FShowDownParticipantState CollectorState;
 	
+	bool bBettingPhase = false;
+	
 	//콜렉터 추적
 	UPROPERTY()
 	ACollector* Collector = nullptr;
 	void FindCollector();
 	void CollectorGiveCardToPlayer();
+	float EstimateCollectorWinChance() const;
+	void ResolveCollectorBetResponse();
 	
 };
