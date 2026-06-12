@@ -52,6 +52,9 @@ public:
 	// 선택상태 확인
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Card")
 	bool IsSelected() const;
+	//카드 슬롯 이동
+	UFUNCTION(BlueprintCallable, Category = "Card")
+	void MoveToSlot(USceneComponent* Slot, bool bNewFaceUp);
 
 protected:
 	// Called when the game starts or when spawned

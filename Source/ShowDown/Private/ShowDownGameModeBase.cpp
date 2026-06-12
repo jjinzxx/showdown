@@ -4,6 +4,7 @@
 
 #include "Card.h"
 #include "CardDeck.h"
+#include "Collector.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
 
@@ -15,7 +16,8 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 void AShowDownGameModeBase::BeginPlay()
 {
 	Super::BeginPlay();
-
+	
+	FindCollector();
 	DealPlayerInitialHand();
 }
 
@@ -29,6 +31,9 @@ void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 	UE_LOG(LogTemp, Log, TEXT("GameMode received selected card: %s"), *SelectedCard->GetName());
 
 	RemoveHandCard(PlayerState, SelectedCard);
+	//콜렉터의 이마로 카드 이동
+	CollectorState.ForeheadCard = SelectedCard;
+	PlaceCardOnCollectorHead(SelectedCard);
 }
 
 void AShowDownGameModeBase::DealPlayerInitialHand()
@@ -119,4 +124,32 @@ void AShowDownGameModeBase::RemoveHandCard(FShowDownParticipantState& Participan
 	}
 
 	Participant.HandCards.Remove(RemovedCard);
+}
+
+void AShowDownGameModeBase::FindCollector()
+{
+	Collector = Cast<ACollector>(
+		UGameplayStatics::GetActorOfClass(GetWorld(), ACollector::StaticClass())
+	);
+
+	if (!Collector)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Collector is missing in the level."));
+	}
+}
+
+void AShowDownGameModeBase::PlaceCardOnCollectorHead(ACard* SelectedCard)
+{
+	if (!SelectedCard)
+	{
+		return;
+	}
+
+	if (!Collector || !Collector->c_HeadCard)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Collector or Collector head card slot is missing."));
+		return;
+	}
+
+	SelectedCard->MoveToSlot(Collector->c_HeadCard, true);
 }

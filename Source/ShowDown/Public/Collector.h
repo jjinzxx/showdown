@@ -14,7 +14,22 @@ class SHOWDOWN_API ACollector : public AActor
 public:
 	// Sets default values for this actor's properties
 	ACollector();
+	
+	//루트 컴포넌트
+	UPROPERTY(VisibleAnywhere, Category= Components)
+	USceneComponent* rootComp;
 
+	//손패 카드 슬롯 위치 컴포넌트
+	UPROPERTY(VisibleAnywhere, Category = CardSlot)
+	class USceneComponent* c_HandCard;
+	
+	//상대가 나에게 주는 카드 위치 컴포넌트
+	UPROPERTY(VisibleAnywhere, Category = CardSlot)
+	class USceneComponent* c_HeadCard;
+	
+	
+	
+	
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
@@ -22,4 +37,5 @@ protected:
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
+	
 };

@@ -41,6 +41,7 @@ void ACard::BeginPlay()
 	DefaultLocation = GetActorLocation();
 	TargetLocation = DefaultLocation;
 	RefreshVisual();
+
 }
 
 // Called every frame
@@ -86,3 +87,20 @@ bool ACard::IsSelected() const
 {
 	return bSelected;
 }
+
+void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
+{
+	if (!Slot)
+	{
+		return;
+	}
+
+	bSelected = false;
+	DefaultLocation = Slot->GetComponentLocation();
+	TargetLocation = DefaultLocation;
+
+	SetActorRotation(Slot->GetComponentRotation());
+	SetFaceUp(bNewFaceUp);
+}
+
+

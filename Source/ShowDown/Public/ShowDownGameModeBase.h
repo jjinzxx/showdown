@@ -9,6 +9,7 @@
 class ACard;
 class APlayerPawn;
 class UCardDeck;
+class ACollector;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
 USTRUCT(BlueprintType)
@@ -74,13 +75,22 @@ protected:
 private:
 	// 덱을 만들고 섞은 뒤에 플레이어에게 5장 스폰
 	void DealPlayerInitialHand();
-
+	
+	//플레이어 스탯
 	UPROPERTY()
 	FShowDownParticipantState PlayerState;
-
+	//콜렉터 스탯
 	UPROPERTY()
 	FShowDownParticipantState CollectorState;
-
+	//카드 추가 제거
 	void AddHandCard(FShowDownParticipantState& Participant, ACard* NewCard);
 	void RemoveHandCard(FShowDownParticipantState& Participant, ACard* RemovedCard);
+	
+	//콜렉터 추적
+	UPROPERTY()
+	ACollector* Collector = nullptr;
+	void FindCollector();
+	void PlaceCardOnCollectorHead(ACard* SelectedCard);
+	
+	
 };
