@@ -82,20 +82,10 @@ private:
 	//콜렉터 스탯
 	UPROPERTY()
 	FShowDownParticipantState CollectorState;
-	//카드 추가 제거
-	void AddHandCard(FShowDownParticipantState& Participant, ACard* NewCard);
-	void RemoveHandCard(FShowDownParticipantState& Participant, ACard* RemovedCard);
 	
 	//콜렉터 추적
 	UPROPERTY()
 	ACollector* Collector = nullptr;
 	void FindCollector();
-	void PlaceCardOnCollectorHead(ACard* SelectedCard);
 	
-	void SpawnHandCards(
-	FShowDownParticipantState& Participant,
-	USceneComponent* HandRoot,
-	const TArray<int32>& Ranks,
-	bool bFaceUp
-);
 };
