@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "ShowDownTypes.h"
+#include "TimerManager.h"
 #include "ShowDownGameModeBase.generated.h"
 
 class ACard;
@@ -119,6 +120,7 @@ private:
 	FShowDownParticipantState CollectorState;
 	
 	bool bBettingPhase = false;
+	FTimerHandle RevealDelayHandle;
 	
 	//콜렉터 추적
 	UPROPERTY()
@@ -129,6 +131,11 @@ private:
 	void ResolveCollectorBetResponse();
 	void FinishBettingAndResolveRound();
 	void ResolveFold(EShowDownSide FoldedSide);
+	void ContinueRoundAfterReveal(EShowDownRoundResult Result);
+	void ContinueFoldAfterReveal(EShowDownSide FoldedSide, int32 LoadCount);
 	void ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount);
+	void EndRound();
+	void ClearForeheadCards();
+	void SetPlayerHandSelectable(bool bSelectable);
 	
 };

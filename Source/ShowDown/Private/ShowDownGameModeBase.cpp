@@ -205,6 +205,7 @@ void AShowDownGameModeBase::StartBettingPhase()
 	bBettingPhase = true;
 	PlayerState.CurrentBet = 0;
 	CollectorState.CurrentBet = 0;
+	SetPlayerHandSelectable(false);
 
 	// 일단 최소 베팅 0으로 시작. 나중에 1로 바꿔도 됨.
 	BettingSystem->ResetBetting(0);
@@ -368,23 +369,36 @@ void AShowDownGameModeBase::FinishBettingAndResolveRound()
 	const EShowDownRoundResult Result = RoundResolver->ResolveRevealedCards(PlayerCardRank, CollectorCardRank);
 
 	UE_LOG(LogTemp, Log, TEXT("Reveal cards. Player: %d, Collector: %d"), PlayerCardRank, CollectorCardRank);
+	UE_LOG(LogTemp, Log, TEXT("Roulette will start in 5 seconds."));
 
+	GetWorldTimerManager().SetTimer(
+		RevealDelayHandle,
+		FTimerDelegate::CreateUObject(this, &AShowDownGameModeBase::ContinueRoundAfterReveal, Result),
+		5.0f,
+		false);
+}
+
+void AShowDownGameModeBase::ContinueRoundAfterReveal(EShowDownRoundResult Result)
+{
 	switch (Result)
 	{
 	case EShowDownRoundResult::PlayerWin:
 		UE_LOG(LogTemp, Log, TEXT("Round result: Player wins. Collector roulette with %d bullet(s)."), CollectorState.CurrentBet);
 		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet);
+		EndRound();
 		break;
 
 	case EShowDownRoundResult::CollectorWin:
 		UE_LOG(LogTemp, Log, TEXT("Round result: Collector wins. Player roulette with %d bullet(s)."), PlayerState.CurrentBet);
 		ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet);
+		EndRound();
 		break;
 
 	case EShowDownRoundResult::Draw:
 		UE_LOG(LogTemp, Log, TEXT("Round result: Draw. Both sides roulette."));
 		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet);
 		ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet);
+		EndRound();
 		break;
 
 	default:
@@ -418,8 +432,19 @@ void AShowDownGameModeBase::ResolveFold(EShowDownSide FoldedSide)
 		FoldedSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
 		FoldedCardRank,
 		LoadCount);
+	UE_LOG(LogTemp, Log, TEXT("Roulette will start in 5 seconds."));
 
+	GetWorldTimerManager().SetTimer(
+		RevealDelayHandle,
+		FTimerDelegate::CreateUObject(this, &AShowDownGameModeBase::ContinueFoldAfterReveal, FoldedSide, LoadCount),
+		5.0f,
+		false);
+}
+
+void AShowDownGameModeBase::ContinueFoldAfterReveal(EShowDownSide FoldedSide, int32 LoadCount)
+{
 	ApplyRouletteResult(FoldedSide, LoadCount);
+	EndRound();
 }
 
 void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount)
@@ -451,4 +476,71 @@ void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 
 	UE_LOG(LogTemp, Log, TEXT("%s lives: %d"),
 		TargetSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
 		TargetState.Lives);
+}
+
+void AShowDownGameModeBase::EndRound()
+{
+	bBettingPhase = false;
+
+	ClearForeheadCards();
+
+	if (PlayerState.Lives <= 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Game Over. Player has no lives left."));
+		return;
+	}
+
+	if (CollectorState.Lives <= 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Player wins. Collector has no lives left."));
+		return;
+	}
+
+	const bool bNeedRedeal = PlayerState.HandCards.Num() <= 0 || CollectorState.HandCards.Num() <= 0;
+	if (bNeedRedeal)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Hands are empty. Shuffling and dealing new 5-card hands."));
+		DealInitialHand();
+		return;
+	}
+
+	SetPlayerHandSelectable(true);
+	UE_LOG(LogTemp, Log, TEXT("Next round ready. Player hand: %d, Collector hand: %d"),
+		PlayerState.HandCards.Num(),
+		CollectorState.HandCards.Num());
+}
+
+void AShowDownGameModeBase::ClearForeheadCards()
+{
+	TArray<int32> DiscardRanks;
+
+	if (PlayerState.ForeheadCard)
+	{
+		DiscardRanks.Add(PlayerState.ForeheadCard->Rank);
+		PlayerState.ForeheadCard->Destroy();
+		PlayerState.ForeheadCard = nullptr;
+	}
+
+	if (CollectorState.ForeheadCard)
+	{
+		DiscardRanks.Add(CollectorState.ForeheadCard->Rank);
+		CollectorState.ForeheadCard->Destroy();
+		CollectorState.ForeheadCard = nullptr;
+	}
+
+	if (CardSystem && DiscardRanks.Num() > 0)
+	{
+		CardSystem->DiscardCards(DiscardRanks);
+	}
+}
+
+void AShowDownGameModeBase::SetPlayerHandSelectable(bool bSelectable)
+{
+	for (ACard* Card : PlayerState.HandCards)
+	{
+		if (Card)
+		{
+			Card->SetSelectable(bSelectable);
+		}
+	}
 }
