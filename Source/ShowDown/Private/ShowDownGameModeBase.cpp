@@ -27,6 +27,8 @@ void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("GameMode received selected card: %s"), *SelectedCard->GetName());
+
+	RemoveHandCard(PlayerState, SelectedCard);
 }
 
 void AShowDownGameModeBase::DealPlayerInitialHand()
@@ -49,6 +51,8 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 		UE_LOG(LogTemp, Warning, TEXT("PlayerPawn or PlayerHandCard is missing."));
 		return;
 	}
+
+	PlayerState.HandCards.Reset();
 
 	CardDeck->ResetDeck();
 	CardDeck->ShuffleDeck();
@@ -92,5 +96,27 @@ void AShowDownGameModeBase::DealPlayerInitialHand()
 
 		NewCard->SetCard(Rank);
 		NewCard->SetFaceUp(true);
+
+		AddHandCard(PlayerState, NewCard);
 	}
+}
+
+void AShowDownGameModeBase::AddHandCard(FShowDownParticipantState& Participant, ACard* NewCard)
+{
+	if (!NewCard)
+	{
+		return;
+	}
+
+	Participant.HandCards.Add(NewCard);
+}
+
+void AShowDownGameModeBase::RemoveHandCard(FShowDownParticipantState& Participant, ACard* RemovedCard)
+{
+	if (!RemovedCard)
+	{
+		return;
+	}
+
+	Participant.HandCards.Remove(RemovedCard);
 }
