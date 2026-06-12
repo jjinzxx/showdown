@@ -1,0 +1,222 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Subsystems/GameInstanceSubsystem.h"
+#include "HttpFwd.h"
+#include "SupabaseSubsystem.generated.h"
+
+// 로그인 요청이 끝났을 때 UI나 다른 코드에 결과를 알려주는 이벤트입니다.
+// bSuccess는 성공 여부, Message는 화면에 표시할 간단한 상태 문구입니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnSupabaseLoginResult,
+	bool,
+	bSuccess,
+	const FString&,
+	Message
+);
+
+// 플레이어 데이터 로딩이 끝났을 때 결과를 알려주는 이벤트입니다.
+// 지금은 profile, wallet, rank 요청이 각각 끝날 때마다 호출됩니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnPlayerDataLoaded,
+	bool,
+	bSuccess,
+	const FString&,
+	Message
+);
+
+// 닉네임 변경 요청이 끝났을 때 UI에 결과를 알려주는 이벤트입니다.
+// bSuccess는 성공 여부, Message는 화면이나 로그에 보여줄 상태 문구입니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnNicknameUpdated,
+	bool,
+	bSuccess,
+	const FString&,
+	Message
+);
+
+USTRUCT(BlueprintType)
+struct FShowDownSkin
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	FString Id;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	FString Name;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	FString Rarity;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	FString Type;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	int32 Price = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	bool bIsActive = false;
+};
+
+// 상점/스킨 데이터 로딩 결과를 알려주는 이벤트입니다.
+// skins, player_skins, player_equipment 요청이 각각 끝날 때마다 호출됩니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnCosmeticDataLoaded,
+	bool,
+	bSuccess,
+	const FString&,
+	Message
+);
+
+// Supabase와 통신하는 전용 Subsystem입니다.
+// GameInstanceSubsystem이라 게임 실행 중 계속 유지되고, UI나 게임 로직에서 쉽게 꺼내 쓸 수 있습니다.
+UCLASS()
+class SHOWDOWN_API USupabaseSubsystem : public UGameInstanceSubsystem
+{
+	GENERATED_BODY()
+
+public:
+	// 로그인 성공/실패를 외부에 알리는 이벤트입니다.
+	// LoginWidget 같은 UI가 이 이벤트를 구독해서 상태 메시지를 바꿀 수 있습니다.
+	UPROPERTY(BlueprintAssignable)
+	FOnSupabaseLoginResult OnLoginResult;
+
+	// 닉네임, 재화, 랭크 점수 로딩 결과를 외부에 알리는 이벤트입니다.
+	// 지금은 디버그와 UI 표시 준비 용도로 사용합니다.
+	UPROPERTY(BlueprintAssignable)
+	FOnPlayerDataLoaded OnPlayerDataLoaded;
+
+	// 상점 스킨, 보유 스킨, 장착 스킨 로딩 결과를 외부에 알리는 이벤트입니다.
+	UPROPERTY(BlueprintAssignable)
+	FOnCosmeticDataLoaded OnCosmeticDataLoaded;
+
+	// 이메일과 비밀번호로 Supabase Auth에 로그인 요청을 보냅니다.
+	// 성공하면 AccessToken과 UserId를 저장하고 LoadPlayerData를 호출합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void LoginWithEmail(const FString& Email, const FString& Password);
+
+	// 로그인 후 AccessToken을 이용해서 플레이어 기본 데이터를 불러옵니다.
+	// profiles, player_wallets, player_ranks 테이블에 각각 GET 요청을 보냅니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void LoadPlayerData();
+
+	// 상점 스킨 목록, 내가 보유한 스킨, 현재 장착 스킨 정보를 불러옵니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void LoadCosmeticData();
+
+	// 현재 저장된 Supabase access_token을 반환합니다.
+	// 나중에 다른 인증 요청을 보낼 때 사용할 수 있습니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	FString GetAccessToken() const;
+
+	// 로그인한 Supabase 유저 id를 반환합니다.
+	// profiles, player_wallets 같은 테이블의 user_id와 연결되는 값입니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	FString GetUserId() const;
+
+	// 서버에서 불러온 닉네임을 반환합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	FString GetNickname() const;
+
+	// 서버에서 불러온 메타 재화 coin을 반환합니다.
+	// GDD 기준 전투 중 총알이 아니라, 상점에서 쓰는 기억 조각입니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	int32 GetCoin() const;
+
+	// 서버에서 불러온 랭크 점수를 반환합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	int32 GetScore() const;
+
+	// skins 테이블에서 불러온 활성 스킨 목록을 반환합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	TArray<FShowDownSkin> GetShopSkins() const;
+
+	// player_skins 테이블에서 불러온 보유 스킨 id 목록을 반환합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	TArray<FString> GetOwnedSkinIds() const;
+
+	// 특정 타입에 현재 장착 중인 스킨 id를 반환합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	FString GetEquippedSkinId(const FString& SkinType) const;
+
+	// 특정 스킨을 보유 중인지 확인합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	bool IsSkinOwned(const FString& SkinId) const;
+	
+	// 닉네임 변경 결과를 외부에 알리는 이벤트입니다.
+	// MainMenu UI가 이 이벤트를 구독해서 화면의 닉네임을 새로고침할 수 있습니다.
+	UPROPERTY(BlueprintAssignable)
+	FOnNicknameUpdated OnNicknameUpdated;
+
+	// profiles 테이블의 nickname 값을 새 닉네임으로 업데이트합니다.
+	// 성공하면 내부 Nickname 변수도 새 값으로 갱신됩니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void UpdateNickname(const FString& NewNickname);
+
+private:
+	// Supabase 프로젝트 기본 URL입니다.
+	FString SupabaseUrl = TEXT("https://xfyzrqsbdweckjgxefjr.supabase.co");
+
+	// Supabase anon public key입니다.
+	FString SupabaseAnonKey = TEXT("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhmeXpycXNiZHdlY2tqZ3hlZmpyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMDI4NzQsImV4cCI6MjA5Njc3ODg3NH0.-kUBpHDLFPsL6MHPtdQUu_AgiFILyDxh5T8aFNMIKR8");
+
+	
+	// 로그인 성공 시 Supabase가 내려주는 인증 토큰입니다.
+	// 이후 DB 요청을 보낼 때 Authorization 헤더에 넣습니다.
+	FString AccessToken;
+
+	// 로그인 성공 시 응답에서 가져오는 유저 고유 id입니다.
+	FString UserId;
+
+	// profiles 테이블에서 불러온 닉네임입니다.
+	FString Nickname;
+
+	// player_wallets 테이블에서 불러온 coin입니다.
+	int32 Coin = 0;
+
+	// player_ranks 테이블에서 불러온 score입니다.
+	int32 Score = 1000;
+
+	// skins 테이블에서 불러온 활성 스킨 목록입니다.
+	TArray<FShowDownSkin> ShopSkins;
+
+	// player_skins 테이블에서 불러온 보유 스킨 id 목록입니다.
+	TArray<FString> OwnedSkinIds;
+
+	// player_equipment 테이블에서 불러온 타입별 장착 스킨 id입니다.
+	TMap<FString, FString> EquippedSkinIdsByType;
+
+	// Supabase Auth 로그인 요청의 응답을 처리합니다.
+	// access_token과 user.id를 파싱하고, 성공하면 LoadPlayerData를 호출합니다.
+	void HandleLoginResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// profiles 테이블 응답을 처리해서 Nickname 값을 저장합니다.
+	void HandleProfileResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// player_wallets 테이블 응답을 처리해서 Coin 값을 저장합니다.
+	void HandleWalletResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// player_ranks 테이블 응답을 처리해서 Score 값을 저장합니다.
+	void HandleRankResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// skins 테이블 응답을 처리해서 활성 스킨 목록을 저장합니다.
+	void HandleSkinsResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// player_skins 테이블 응답을 처리해서 보유 스킨 id 목록을 저장합니다.
+	void HandlePlayerSkinsResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// player_equipment 테이블 응답을 처리해서 현재 장착 정보를 저장합니다.
+	void HandlePlayerEquipmentResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// AccessToken이 필요한 Supabase REST 요청을 공통으로 만들어주는 helper 함수입니다.
+	// apikey, Authorization, Content-Type 헤더를 매번 반복해서 쓰지 않기 위해 분리했습니다.
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> CreateAuthorizedRequest(
+		const FString& Endpoint,
+		const FString& Verb
+	);
+	
+	// Supabase에 보낸 닉네임 변경 PATCH 요청의 응답을 처리합니다.
+	// 성공하면 응답에서 변경된 nickname을 읽어 내부 변수에 저장합니다.
+	void HandleUpdateNicknameResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+};

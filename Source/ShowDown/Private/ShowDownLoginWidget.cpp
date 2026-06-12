@@ -1,0 +1,144 @@
+#include "ShowDownLoginWidget.h"
+
+#include "SupabaseSubsystem.h"
+#include "Components/Button.h"
+#include "Components/EditableTextBox.h"
+#include "Components/TextBlock.h"
+#include "ShowDownMainMenuWidget.h"
+
+void UShowDownLoginWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+
+	// WBP_Login의 Button_Login 위젯이 정상적으로 연결되어 있으면
+	// 버튼 클릭 이벤트를 C++ 함수 HandleLoginClicked에 연결합니다.
+	if (Button_Login)
+	{
+		Button_Login->OnClicked.AddDynamic(this, &UShowDownLoginWidget::HandleLoginClicked);
+	}
+
+	// GameInstance에 등록된 SupabaseSubsystem을 가져옵니다.
+	// 로그인 요청 결과를 UI가 받을 수 있도록 OnLoginResult 이벤트에 함수를 연결합니다.
+	if (USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()->GetSubsystem<USupabaseSubsystem>())
+	{
+		SupabaseSubsystem->OnLoginResult.AddDynamic(this, &UShowDownLoginWidget::HandleLoginResult);
+	}
+
+	// 위젯이 처음 뜰 때 기본 상태 메시지를 표시합니다.
+	if (Text_Status)
+	{
+		Text_Status->SetText(FText::FromString(TEXT("Ready")));
+	}
+}
+
+void UShowDownLoginWidget::NativeDestruct()
+{
+	// 위젯이 제거될 때 SupabaseSubsystem에 연결했던 이벤트를 해제합니다.
+	// 이걸 하지 않으면 위젯이 사라진 뒤에도 이벤트가 호출될 수 있습니다.
+	if (USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()->GetSubsystem<USupabaseSubsystem>())
+	{
+		SupabaseSubsystem->OnLoginResult.RemoveDynamic(this, &UShowDownLoginWidget::HandleLoginResult);
+	}
+
+	Super::NativeDestruct();
+}
+
+void UShowDownLoginWidget::HandleLoginClicked()
+{
+	// 이메일 입력창이 정상적으로 연결되어 있으면 사용자가 입력한 이메일을 가져옵니다.
+	// 연결되어 있지 않으면 빈 문자열을 사용해서 크래시를 막습니다.
+	const FString Email = EditableTextBox_Email
+		? EditableTextBox_Email->GetText().ToString()
+		: TEXT("");
+
+	// 비밀번호 입력창이 정상적으로 연결되어 있으면 사용자가 입력한 비밀번호를 가져옵니다.
+	// Supabase 로그인 요청에 이 값이 사용됩니다.
+	const FString Password = EditableTextBox_Password
+		? EditableTextBox_Password->GetText().ToString()
+		: TEXT("");
+
+	// 버튼을 누른 직후에는 서버 응답을 기다리는 중이라는 메시지를 보여줍니다.
+	if (Text_Status)
+	{
+		Text_Status->SetText(FText::FromString(TEXT("Logging in...")));
+	}
+
+	// SupabaseSubsystem을 가져와서 실제 로그인 요청을 보냅니다.
+	// HTTP 요청과 토큰 처리는 SupabaseSubsystem 쪽에서 담당합니다.
+	if (USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()->GetSubsystem<USupabaseSubsystem>())
+	{
+		SupabaseSubsystem->LoginWithEmail(Email, Password);
+	}
+	else if (Text_Status)
+	{
+		// Subsystem을 찾지 못하면 로그인 요청을 보낼 수 없으므로 UI에 오류를 표시합니다.
+		Text_Status->SetText(FText::FromString(TEXT("Supabase subsystem not found")));
+	}
+}
+
+void UShowDownLoginWidget::HandleLoginResult(bool bSuccess, const FString& Message)
+{
+	// SupabaseSubsystem에서 전달한 로그인 결과 메시지를 로그인 화면의 상태 텍스트에 표시합니다.
+	// 예: Logging in..., Login success., Login failed.
+	if (Text_Status)
+	{
+		Text_Status->SetText(FText::FromString(Message));
+	}
+
+	// 로그인에 실패한 경우에는 메인 메뉴로 넘어가면 안 되므로 여기서 함수를 끝냅니다.
+	// 실패 메시지는 위에서 Text_Status에 이미 표시된 상태입니다.
+	if (!bSuccess)
+	{
+		return;
+	}
+
+	// 로그인에 성공했더라도, 어떤 메인 메뉴 WBP를 띄울지 지정되어 있지 않으면 생성할 수 없습니다.
+	// WBP_Login의 Class Defaults에서 MainMenuWidgetClass에 WBP_MainMenu를 지정해야 합니다.
+	if (!MainMenuWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MainMenuWidgetClass is not set."));
+		return;
+	}
+
+	// 현재 로그인 위젯을 소유한 PlayerController를 가져옵니다.
+	// 새 위젯을 만들 때 Owning Player로 넘기고, 마우스/UI 입력 모드도 이 컨트롤러에 설정합니다.
+	APlayerController* PlayerController = GetOwningPlayer();
+
+	// 지정해둔 WBP_MainMenu 클래스를 기반으로 실제 메인 메뉴 위젯 인스턴스를 생성합니다.
+	// C++ 타입은 UShowDownMainMenuWidget이고, 실제 디자인은 WBP_MainMenu가 담당합니다.
+	MainMenuWidget = CreateWidget<UShowDownMainMenuWidget>(
+		PlayerController,
+		MainMenuWidgetClass
+	);
+
+	// 위젯 생성에 실패하면 이후 AddToViewport를 할 수 없으므로 로그를 남기고 종료합니다.
+	if (!MainMenuWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to create main menu widget."));
+		return;
+	}
+
+	// 로그인 화면은 더 이상 필요 없으므로 화면에서 제거합니다.
+	// 이 다음부터는 메인 메뉴 화면만 보이게 됩니다.
+	RemoveFromParent();
+
+	// 생성한 메인 메뉴 위젯을 실제 화면에 표시합니다.
+	MainMenuWidget->AddToViewport();
+
+	// UI를 마우스로 조작할 수 있도록 PlayerController 설정을 바꿉니다.
+	if (PlayerController)
+	{
+		// 마우스 커서를 화면에 보이게 합니다.
+		PlayerController->bShowMouseCursor = true;
+
+		// 키보드/마우스 입력을 게임 캐릭터 조작이 아니라 UI에 집중시키는 모드로 바꿉니다.
+		FInputModeUIOnly InputMode;
+
+		// 방금 띄운 메인 메뉴 위젯에 포커스를 줍니다.
+		// 버튼이나 입력창을 바로 조작할 수 있게 하기 위한 설정입니다.
+		// InputMode.SetWidgetToFocus(MainMenuWidget->TakeWidget());
+
+		// PlayerController에 UI Only 입력 모드를 적용합니다.
+		PlayerController->SetInputMode(InputMode);
+	}
+}

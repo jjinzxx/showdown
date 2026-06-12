@@ -1,0 +1,66 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Blueprint/UserWidget.h"
+#include "Templates/SubclassOf.h"
+#include "ShowDownLoginWidget.generated.h"
+
+class UEditableTextBox;
+class UButton;
+class UTextBlock;
+class UShowDownMainMenuWidget;
+
+UCLASS()
+class SHOWDOWN_API UShowDownLoginWidget : public UUserWidget
+{
+	GENERATED_BODY()
+
+protected:
+	// 위젯이 화면에 생성되고 사용할 준비가 되었을 때 호출됩니다.
+	// 여기서 버튼 클릭 이벤트와 Supabase 로그인 결과 이벤트를 연결합니다.
+	virtual void NativeConstruct() override;
+
+	// 위젯이 화면에서 사라지거나 제거될 때 호출됩니다.
+	// 이벤트 연결을 해제해서 중복 호출이나 잘못된 접근을 막습니다.
+	virtual void NativeDestruct() override;
+
+private:
+	// WBP_Login 안에 있는 이메일 입력창과 연결됩니다.
+	// WBP에서 위젯 이름이 EditableTextBox_Email과 정확히 같아야 합니다.
+	UPROPERTY(meta = (BindWidget))
+	UEditableTextBox* EditableTextBox_Email;
+
+	// WBP_Login 안에 있는 비밀번호 입력창과 연결됩니다.
+	// 사용자가 입력한 비밀번호를 C++에서 읽기 위해 사용합니다.
+	UPROPERTY(meta = (BindWidget))
+	UEditableTextBox* EditableTextBox_Password;
+
+	// WBP_Login 안에 있는 로그인 버튼과 연결됩니다.
+	// 이 버튼이 눌리면 HandleLoginClicked 함수가 실행됩니다.
+	UPROPERTY(meta = (BindWidget))
+	UButton* Button_Login;
+
+	// WBP_Login 안에 있는 상태 메시지 텍스트와 연결됩니다.
+	// 로그인 대기, 로그인 중, 성공, 실패 같은 문구를 표시합니다.
+	UPROPERTY(meta = (BindWidget))
+	UTextBlock* Text_Status;
+
+	// 로그인 버튼을 눌렀을 때 실행되는 함수입니다.
+	// 이메일과 비밀번호를 입력창에서 읽고 SupabaseSubsystem에 로그인 요청을 보냅니다.
+	UFUNCTION()
+	void HandleLoginClicked();
+
+	// SupabaseSubsystem에서 로그인 결과를 알려주면 실행되는 함수입니다.
+	// 성공/실패 메시지를 받아서 Text_Status에 표시합니다.
+	UFUNCTION()
+	void HandleLoginResult(bool bSuccess, const FString& Message);
+	
+	// 로그인 성공 후 띄울 메인 메뉴 WBP 클래스입니다.
+	// 에디터에서 WBP_MainMenu를 지정합니다.
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSubclassOf<UShowDownMainMenuWidget> MainMenuWidgetClass;
+
+	// 생성된 메인 메뉴 위젯을 저장합니다.
+	UPROPERTY()
+	UShowDownMainMenuWidget* MainMenuWidget;
+};
