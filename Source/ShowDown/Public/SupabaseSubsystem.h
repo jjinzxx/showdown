@@ -40,6 +40,8 @@ struct FShowDownSkin
 {
 	GENERATED_BODY()
 
+	// ShopSkins 배열에서는 skin_sets.id를 담고,
+	// SkinSetItemsBySetId 안에서는 실제 skins.id를 담습니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
 	FString Id;
 
@@ -78,6 +80,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	Message
 );
 
+// 상점 상품 구매 요청 결과를 알려주는 이벤트입니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnSkinSetPurchased,
+	bool,
+	bSuccess,
+	const FString&,
+	Message
+);
+
 // Supabase와 통신하는 전용 Subsystem입니다.
 // GameInstanceSubsystem이라 게임 실행 중 계속 유지되고, UI나 게임 로직에서 쉽게 꺼내 쓸 수 있습니다.
 UCLASS()
@@ -103,6 +114,10 @@ public:
 	// 스킨 장착 변경 결과를 외부에 알리는 이벤트입니다.
 	UPROPERTY(BlueprintAssignable)
 	FOnSkinEquipped OnSkinEquipped;
+
+	// 상점 상품 구매 결과를 외부에 알리는 이벤트입니다.
+	UPROPERTY(BlueprintAssignable)
+	FOnSkinSetPurchased OnSkinSetPurchased;
 
 	// 이메일과 비밀번호로 Supabase Auth에 로그인 요청을 보냅니다.
 	// 성공하면 AccessToken과 UserId를 저장하고 LoadPlayerData를 호출합니다.
@@ -141,11 +156,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	int32 GetScore() const;
 
-	// skins 테이블에서 불러온 활성 스킨 목록을 반환합니다.
+	// skin_sets 테이블에서 불러온 활성 상점 상품 목록을 반환합니다.
+	// 이름은 기존 코드 호환을 위해 GetShopSkins로 유지합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	TArray<FShowDownSkin> GetShopSkins() const;
 
-	// player_skins 테이블에서 불러온 보유 스킨 id 목록을 반환합니다.
+	// player_skins 테이블에서 불러온 실제 보유 스킨 id 목록을 반환합니다.
+	// 상점 상품 보유 여부는 IsSkinOwned에서 player_skin_sets까지 함께 확인합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	TArray<FString> GetOwnedSkinIds() const;
 
@@ -153,13 +170,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	FString GetEquippedSkinId(const FString& SkinType) const;
 
-	// 특정 스킨을 보유 중인지 확인합니다.
+	// 상점 상품 세트 id 또는 실제 스킨 id를 보유 중인지 확인합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	bool IsSkinOwned(const FString& SkinId) const;
 
-	// 보유 중인 스킨을 해당 타입의 장착 스킨으로 저장합니다.
+	// 상점 상품 세트가 현재 장착 상태인지 확인합니다.
+	// 세트 안의 모든 slot(card/card_back 등)이 player_equipment와 일치해야 true입니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	bool IsShopItemEquipped(const FString& SetId) const;
+
+	// 보유 중인 상점 상품 세트를 장착합니다.
+	// 예: default_card_set -> card와 card_back을 각각 player_equipment에 저장합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	void EquipSkin(const FString& SkinId);
+
+	// RPC purchase_skin_set을 호출해서 coin 차감과 보유 스킨 추가를 DB에서 한 번에 처리합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void PurchaseSkinSet(const FString& SetId);
 	
 	// 닉네임 변경 결과를 외부에 알리는 이벤트입니다.
 	// MainMenu UI가 이 이벤트를 구독해서 화면의 닉네임을 새로고침할 수 있습니다.
@@ -195,14 +222,20 @@ private:
 	// player_ranks 테이블에서 불러온 score입니다.
 	int32 Score = 1000;
 
-	// skins 테이블에서 불러온 활성 스킨 목록입니다.
+	// skin_sets 테이블에서 불러온 활성 상점 상품 목록입니다.
 	TArray<FShowDownSkin> ShopSkins;
 
 	// player_skins 테이블에서 불러온 보유 스킨 id 목록입니다.
 	TArray<FString> OwnedSkinIds;
 
+	// player_skin_sets 테이블에서 불러온 보유 상품 세트 id 목록입니다.
+	TArray<FString> OwnedSkinSetIds;
+
 	// player_equipment 테이블에서 불러온 타입별 장착 스킨 id입니다.
 	TMap<FString, FString> EquippedSkinIdsByType;
+
+	// skin_set_items 테이블에서 불러온 세트별 실제 장착 스킨 목록입니다.
+	TMap<FString, TArray<FShowDownSkin>> SkinSetItemsBySetId;
 
 	// Supabase Auth 로그인 요청의 응답을 처리합니다.
 	// access_token과 user.id를 파싱하고, 성공하면 LoadPlayerData를 호출합니다.
@@ -217,11 +250,18 @@ private:
 	// player_ranks 테이블 응답을 처리해서 Score 값을 저장합니다.
 	void HandleRankResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
-	// skins 테이블 응답을 처리해서 활성 스킨 목록을 저장합니다.
+	// skin_sets 테이블 응답을 처리해서 활성 상점 상품 목록을 저장합니다.
+	// 함수 이름은 기존 skins 구조에서 이어진 이름입니다.
 	void HandleSkinsResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	// player_skins 테이블 응답을 처리해서 보유 스킨 id 목록을 저장합니다.
 	void HandlePlayerSkinsResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// player_skin_sets 테이블 응답을 처리해서 보유 상품 세트 id 목록을 저장합니다.
+	void HandlePlayerSkinSetsResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// skin_set_items 테이블 응답을 처리해서 상품 세트에 포함된 실제 스킨 목록을 저장합니다.
+	void HandleSkinSetItemsResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	// player_equipment 테이블 응답을 처리해서 현재 장착 정보를 저장합니다.
 	void HandlePlayerEquipmentResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
@@ -239,4 +279,7 @@ private:
 
 	// Supabase에 보낸 스킨 장착 PATCH 요청의 응답을 처리합니다.
 	void HandleEquipSkinResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// Supabase RPC purchase_skin_set 응답을 처리합니다.
+	void HandlePurchaseSkinSetResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 };
