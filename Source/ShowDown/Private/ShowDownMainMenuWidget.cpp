@@ -9,6 +9,11 @@
 #include "GameFramework/PlayerController.h"
 #include "ShowDownShopWidget.h"
 
+void UShowDownMainMenuWidget::SetUseLegacyNavigation(bool bInUseLegacyNavigation)
+{
+	bUseLegacyNavigation = bInUseLegacyNavigation;
+}
+
 void UShowDownMainMenuWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -189,6 +194,13 @@ void UShowDownMainMenuWidget::HandleCosmeticDataLoaded(bool bSuccess, const FStr
 
 void UShowDownMainMenuWidget::HandleSinglePlayClicked()
 {
+	OnSinglePlayRequested.Broadcast();
+
+	if (!bUseLegacyNavigation)
+	{
+		return;
+	}
+
 	// 싱글 플레이 맵 이름은 팀에서 확정한 뒤 여기에 넣으면 됩니다.
 	UE_LOG(LogTemp, Log, TEXT("Single Play clicked"));
 
@@ -198,16 +210,32 @@ void UShowDownMainMenuWidget::HandleSinglePlayClicked()
 
 void UShowDownMainMenuWidget::HandleMultiplayerClicked()
 {
+	OnMultiplayerRequested.Broadcast();
+
+	if (!bUseLegacyNavigation)
+	{
+		return;
+	}
+
 	// 멀티플레이 메뉴 또는 방 생성 화면으로 연결할 자리입니다.
 	UE_LOG(LogTemp, Log, TEXT("Multiplayer clicked"));
 }
 
 void UShowDownMainMenuWidget::HandleShopClicked()
 {
+	OnShopRequested.Broadcast();
+
+	if (!bUseLegacyNavigation)
+	{
+		return;
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("Shop clicked"));
 
 	if (USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()->GetSubsystem<USupabaseSubsystem>())
 	{
+		SupabaseSubsystem->LoadCosmeticData();
+
 		const TArray<FShowDownSkin> ShopSkins = SupabaseSubsystem->GetShopSkins();
 		const TArray<FString> OwnedSkinIds = SupabaseSubsystem->GetOwnedSkinIds();
 
@@ -254,6 +282,13 @@ void UShowDownMainMenuWidget::HandleShopClicked()
 
 void UShowDownMainMenuWidget::HandleQuitClicked()
 {
+	OnQuitRequested.Broadcast();
+
+	if (!bUseLegacyNavigation)
+	{
+		return;
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("Quit clicked"));
 
 	if (APlayerController* PlayerController = GetOwningPlayer())

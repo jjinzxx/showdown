@@ -10,10 +10,22 @@ class UButton;
 class UTextBlock;
 class UShowDownMainMenuWidget;
 
+// 로그인 성공 후 화면 전환이 필요하다는 요청입니다.
+// HubFlowManager가 이 이벤트를 받아 카메라/페이드/UI 전환을 한 곳에서 처리할 수 있습니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnShowDownLoginSucceeded);
+
 UCLASS()
 class SHOWDOWN_API UShowDownLoginWidget : public UUserWidget
 {
 	GENERATED_BODY()
+
+public:
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Flow")
+	FOnShowDownLoginSucceeded OnLoginSucceeded;
+
+	// true면 기존처럼 LoginWidget이 직접 MainMenu를 생성합니다.
+	// FlowManager가 화면 전환을 맡을 때는 false로 꺼서 UI와 연출 흐름을 분리합니다.
+	void SetUseLegacyNavigation(bool bInUseLegacyNavigation);
 
 protected:
 	// 위젯이 화면에 생성되고 사용할 준비가 되었을 때 호출됩니다.
@@ -25,6 +37,8 @@ protected:
 	virtual void NativeDestruct() override;
 
 private:
+	bool bUseLegacyNavigation = true;
+
 	// WBP_Login 안에 있는 이메일 입력창과 연결됩니다.
 	// WBP에서 위젯 이름이 EditableTextBox_Email과 정확히 같아야 합니다.
 	UPROPERTY(meta = (BindWidget))

@@ -26,6 +26,11 @@ void UShowDownShopWidget::SetMainMenuWidget(UShowDownMainMenuWidget* InMainMenuW
 	MainMenuWidget = InMainMenuWidget;
 }
 
+void UShowDownShopWidget::SetUseLegacyBackNavigation(bool bInUseLegacyBackNavigation)
+{
+	bUseLegacyBackNavigation = bInUseLegacyBackNavigation;
+}
+
 void UShowDownShopWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -488,6 +493,13 @@ void UShowDownShopWidget::HandleRefreshClicked()
 
 void UShowDownShopWidget::HandleBackClicked()
 {
+	OnBackRequested.Broadcast();
+
+	if (!bUseLegacyBackNavigation)
+	{
+		return;
+	}
+
 	if (MainMenuWidget)
 	{
 		MainMenuWidget->SetVisibility(ESlateVisibility::Visible);

@@ -12,14 +12,24 @@ class UShowDownMainMenuWidget;
 class UTextBlock;
 class UVerticalBox;
 
+// Shop에서 상위 흐름으로 돌아가야 한다는 요청입니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnShowDownShopBackRequested);
+
 UCLASS()
 class SHOWDOWN_API UShowDownShopWidget : public UUserWidget
 {
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Flow")
+	FOnShowDownShopBackRequested OnBackRequested;
+
 	// Shop 화면에서 Back을 눌렀을 때 다시 보여줄 MainMenu 위젯을 넘겨받습니다.
 	void SetMainMenuWidget(UShowDownMainMenuWidget* InMainMenuWidget);
+
+	// true면 기존처럼 ShopWidget이 MainMenu를 다시 보이게 하고 자기 자신을 제거합니다.
+	// FlowManager가 전환을 담당할 때는 false로 꺼서 Back 요청만 방송합니다.
+	void SetUseLegacyBackNavigation(bool bInUseLegacyBackNavigation);
 
 protected:
 	// C++ 전용 위젯이라 WBP가 없습니다.
@@ -34,6 +44,8 @@ protected:
 private:
 	UPROPERTY()
 	UShowDownMainMenuWidget* MainMenuWidget;
+
+	bool bUseLegacyBackNavigation = true;
 
 	UPROPERTY()
 	UTextBlock* Text_Title;

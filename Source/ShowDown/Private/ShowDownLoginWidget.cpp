@@ -6,6 +6,11 @@
 #include "Components/TextBlock.h"
 #include "ShowDownMainMenuWidget.h"
 
+void UShowDownLoginWidget::SetUseLegacyNavigation(bool bInUseLegacyNavigation)
+{
+	bUseLegacyNavigation = bInUseLegacyNavigation;
+}
+
 void UShowDownLoginWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -88,6 +93,15 @@ void UShowDownLoginWidget::HandleLoginResult(bool bSuccess, const FString& Messa
 	// 로그인에 실패한 경우에는 메인 메뉴로 넘어가면 안 되므로 여기서 함수를 끝냅니다.
 	// 실패 메시지는 위에서 Text_Status에 이미 표시된 상태입니다.
 	if (!bSuccess)
+	{
+		return;
+	}
+
+	OnLoginSucceeded.Broadcast();
+
+	// HubFlowManager가 화면 전환을 담당하는 경우 여기서 멈춥니다.
+	// 기존 L_MainMenu에서 LoginWidget만 직접 띄우는 흐름은 아래 레거시 경로가 계속 지원합니다.
+	if (!bUseLegacyNavigation)
 	{
 		return;
 	}

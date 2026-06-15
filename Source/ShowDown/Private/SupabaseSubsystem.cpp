@@ -108,7 +108,6 @@ void USupabaseSubsystem::HandleLoginResponse(
 
 	// 로그인에 성공했으므로 이어서 닉네임, coin, score를 불러옵니다.
 	LoadPlayerData();
-	LoadCosmeticData();
 
 	// UI에 로그인 성공을 알립니다.
 	OnLoginResult.Broadcast(true, TEXT("Login success."));
