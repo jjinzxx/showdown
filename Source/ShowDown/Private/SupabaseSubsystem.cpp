@@ -167,8 +167,12 @@ void USupabaseSubsystem::LoadPlayerData()
 	WalletRequest->ProcessRequest();
 
 	// player_ranks 테이블에서 현재 유저의 score를 가져옵니다.
+	// user_id 필터를 명시해 RLS 설정과 무관하게 항상 본인 행만 읽도록 합니다.
+	// (필터가 없으면 RLS가 느슨할 때 다른 행을 읽어 score가 엉뚱하게 나올 수 있습니다.)
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> RankRequest =
-		CreateAuthorizedRequest(TEXT("/rest/v1/player_ranks?select=score"), TEXT("GET"));
+		CreateAuthorizedRequest(
+			FString::Printf(TEXT("/rest/v1/player_ranks?user_id=eq.%s&select=score"), *UserId),
+			TEXT("GET"));
 
 	RankRequest->OnProcessRequestComplete().BindUObject(
 		this,
@@ -999,6 +1003,91 @@ void USupabaseSubsystem::HandleUpdateNicknameResponse(
 
 	// UI에 닉네임 변경 성공을 알립니다.
 	OnNicknameUpdated.Broadcast(true, TEXT("Nickname updated."));
+}
+
+void USupabaseSubsystem::AwardWinReward()
+{
+	// 보상 지급은 로그인한 유저만 가능하므로 access_token이 필요합니다.
+	if (AccessToken.IsEmpty())
+	{
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Access token is empty."));
+		return;
+	}
+
+	// 점수 보상은 award_win_reward RPC에서 서버 권한으로 처리합니다.
+	// 보상 금액과 행 수정을 모두 서버가 결정/수행하므로 클라이언트는 score 값을 조작할 수 없습니다.
+	// (SECURITY DEFINER 함수라 RLS UPDATE 정책 없이도 동작합니다.)
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
+		CreateAuthorizedRequest(TEXT("/rest/v1/rpc/award_win_reward"), TEXT("POST"));
+
+	// 인자가 없는 함수지만 PostgREST는 빈 JSON 본문을 기대합니다.
+	Request->SetContentAsString(TEXT("{}"));
+
+	Request->OnProcessRequestComplete().BindUObject(
+		this,
+		&USupabaseSubsystem::HandleAwardWinRewardResponse
+	);
+
+	Request->ProcessRequest();
+
+	UE_LOG(LogTemp, Log, TEXT("AwardWinReward requested."));
+}
+
+void USupabaseSubsystem::HandleAwardWinRewardResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Reward failed: %d / %s"), StatusCode, *ResponseText);
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward failed."));
+		return;
+	}
+
+	// 응답 형태: { "reward": 30, "score": 1230, "coin_reward": 70, "coin": 520 }
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward response parse failed."));
+		return;
+	}
+
+	int32 ScoreReward = 0;
+	JsonObject->TryGetNumberField(TEXT("reward"), ScoreReward);
+
+	int32 NewScore = Score;
+	if (JsonObject->TryGetNumberField(TEXT("score"), NewScore))
+	{
+		Score = NewScore;
+	}
+
+	int32 CoinReward = 0;
+	JsonObject->TryGetNumberField(TEXT("coin_reward"), CoinReward);
+
+	int32 NewCoin = Coin;
+	if (JsonObject->TryGetNumberField(TEXT("coin"), NewCoin))
+	{
+		Coin = NewCoin;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Win reward granted: +%d score (=%d), +%d coin (=%d)"),
+		ScoreReward, Score, CoinReward, Coin);
+
+	// 메인메뉴 등 UI가 점수/코인 표시를 새로고침하도록 알립니다.
+	OnPlayerDataLoaded.Broadcast(true, TEXT("Win reward granted."));
 }
 
 void USupabaseSubsystem::HandleEquipSkinResponse(

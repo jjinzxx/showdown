@@ -18,6 +18,11 @@
 
 AShowDownGameModeBase::AShowDownGameModeBase()
 {
+	// GameState를 AShowDownGameStateBase로 고정합니다.
+	// 이게 없으면 기본 AGameStateBase가 생성되어 GetGameState<AShowDownGameStateBase>()가
+	// 항상 null이 되고, OnGameOver를 포함한 모든 GameState 이벤트가 broadcast되지 않습니다.
+	GameStateClass = AShowDownGameStateBase::StaticClass();
+
 	CardSystem = CreateDefaultSubobject<UCardSystem>(TEXT("CardSystem"));
 	CollectorAISystem = CreateDefaultSubobject<UCollectorAISystem>(TEXT("CollectorAISystem"));
 	BettingSystem = CreateDefaultSubobject<UBettingSystem>(TEXT("BettingSystem"));
@@ -67,6 +72,20 @@ void AShowDownGameModeBase::StartSinglePlayer()
 {
 	FindCollector();
 	StartStage(0);
+}
+
+void AShowDownGameModeBase::ResetForHubReturn()
+{
+	GetWorldTimerManager().ClearTimer(RevealDelayHandle);
+
+	bBettingPhase = false;
+	bHasPendingRoundReveal = false;
+	bHasPendingFoldReveal = false;
+
+	ClearForeheadCards();
+	ClearHandCards();
+
+	UE_LOG(LogTemp, Log, TEXT("Board reset for hub return."));
 }
 
 void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)

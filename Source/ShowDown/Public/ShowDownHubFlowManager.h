@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Templates/SubclassOf.h"
+#include "Engine/TimerHandle.h"
+#include "ShowDownTypes.h"
 #include "ShowDownHubFlowManager.generated.h"
 
 class ACameraActor;
@@ -11,6 +13,7 @@ class UShowDownLoginWidget;
 class UShowDownMainMenuWidget;
 class UShowDownShopWidget;
 class UUserWidget;
+class AShowDownGameStateBase;
 
 UENUM(BlueprintType)
 enum class EShowDownHubFlowScreen : uint8
@@ -92,6 +95,12 @@ private:
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Level")
 	FName MultiplayerLevelName = TEXT("ShowDownRoom");
 
+	// 게임 종료(승/패) 후 메인메뉴로 돌아가기까지의 대기 시간(초). 결과를 잠시 보여주기 위함.
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Flow")
+	float ReturnToHubDelay = 4.0f;
+
+	FTimerHandle ReturnToHubTimerHandle;
+
 	UPROPERTY()
 	UShowDownLoginWidget* LoginWidget;
 
@@ -126,4 +135,11 @@ private:
 
 	UFUNCTION()
 	void HandleShopBackRequested();
+
+	// 게임이 끝나면(승/패) 호출됩니다. 결과를 잠시 보여준 뒤 허브로 복귀시킵니다.
+	UFUNCTION()
+	void HandleGameOver(EShowDownSide Winner);
+
+	// 게임판을 정리하고 메인메뉴로 돌아갑니다.
+	void ReturnToHub();
 };

@@ -198,6 +198,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	void UpdateNickname(const FString& NewNickname);
 
+	// 싱글플레이 승리 보상으로 랭크 점수(10~50)와 코인(50~100)을 지급합니다.
+	// 보상 금액은 클라이언트가 정하지 못하도록 서버의 award_win_reward RPC에서 결정합니다.
+	// 성공하면 응답의 새 score/coin으로 내부 값을 갱신하고 OnPlayerDataLoaded를 broadcast해
+	// UI(메인메뉴 점수/코인 표시)를 새로고침합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void AwardWinReward();
+
 private:
 	// Supabase 프로젝트 기본 URL입니다.
 	FString SupabaseUrl = TEXT("https://xfyzrqsbdweckjgxefjr.supabase.co");
@@ -276,6 +283,9 @@ private:
 	// Supabase에 보낸 닉네임 변경 PATCH 요청의 응답을 처리합니다.
 	// 성공하면 응답에서 변경된 nickname을 읽어 내부 변수에 저장합니다.
 	void HandleUpdateNicknameResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// award_win_reward RPC 응답({reward, score})을 처리해서 갱신된 Score를 저장합니다.
+	void HandleAwardWinRewardResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	// Supabase에 보낸 스킨 장착 PATCH 요청의 응답을 처리합니다.
 	void HandleEquipSkinResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);

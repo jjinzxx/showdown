@@ -7,6 +7,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "ShowDownGameModeBase.h"
+#include "ShowDownGameStateBase.h"
 #include "ShowDownLoginWidget.h"
 #include "ShowDownMainMenuWidget.h"
 #include "ShowDownShopWidget.h"
@@ -39,6 +40,15 @@ void AShowDownHubFlowManager::BeginPlay()
 		if (ACameraActor* StartCamera = bHasSession ? MainMenuCamera : LoginCamera)
 		{
 			PlayerController->SetViewTarget(StartCamera);
+		}
+	}
+
+	// 게임 종료(승/패)를 받아 허브로 복귀하기 위해 GameState 이벤트를 구독합니다.
+	if (UWorld* World = GetWorld())
+	{
+		if (AShowDownGameStateBase* ShowDownGameState = World->GetGameState<AShowDownGameStateBase>())
+		{
+			ShowDownGameState->OnGameOver.AddDynamic(this, &AShowDownHubFlowManager::HandleGameOver);
 		}
 	}
 
@@ -297,5 +307,70 @@ void AShowDownHubFlowManager::HandleQuitRequested()
 
 void AShowDownHubFlowManager::HandleShopBackRequested()
 {
+	ShowMainMenu();
+}
+
+void AShowDownHubFlowManager::HandleGameOver(EShowDownSide Winner)
+{
+	UE_LOG(LogTemp, Log, TEXT("Game over. Winner: %s. Returning to hub in %.1fs."),
+		Winner == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
+		ReturnToHubDelay);
+
+	// 플레이어가 모든 스테이지를 클리어해 승리하면 랭크 점수 보상을 지급합니다.
+	// 보상 금액(10~50)은 서버의 award_win_reward RPC가 결정하므로 여기서는 호출만 합니다.
+	if (Winner == EShowDownSide::Player)
+	{
+		if (UGameInstance* GameInstance = GetGameInstance())
+		{
+			if (USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
+			{
+				SupabaseSubsystem->AwardWinReward();
+			}
+		}
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 대기 시간이 0 이하면 즉시 복귀합니다.
+	if (ReturnToHubDelay <= 0.0f)
+	{
+		ReturnToHub();
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		ReturnToHubTimerHandle,
+		this,
+		&AShowDownHubFlowManager::ReturnToHub,
+		ReturnToHubDelay,
+		false);
+}
+
+void AShowDownHubFlowManager::ReturnToHub()
+{
+	// 테이블의 카드와 진행 상태를 정리합니다.
+	if (UWorld* World = GetWorld())
+	{
+		if (AShowDownGameModeBase* GameMode = World->GetAuthGameMode<AShowDownGameModeBase>())
+		{
+			GameMode->ResetForHubReturn();
+		}
+	}
+
+	// 보상(점수/코인) 반영분을 서버에서 다시 불러와 캐시를 최신으로 맞춥니다.
+	// 새로 뜨는 메인메뉴가 OnPlayerDataLoaded를 받아 갱신된 값을 표시합니다.
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
+		{
+			SupabaseSubsystem->LoadPlayerData();
+		}
+	}
+
+	// 카메라/입력/위젯을 메인메뉴 상태로 되돌립니다.
 	ShowMainMenu();
 }

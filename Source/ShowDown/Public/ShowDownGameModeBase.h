@@ -163,6 +163,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
 	void StartSinglePlayer();
 
+	// 게임 종료 후 허브(메인메뉴)로 돌아갈 때 게임판을 정리합니다.
+	// 진행 중인 타이머/베팅 상태를 끄고 테이블의 카드를 모두 제거합니다.
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
+	void ResetForHubReturn();
+
 	// true면 BeginPlay에서 곧장 게임을 시작합니다(테스트 레벨용 기본값).
 	// 단, 레벨에 HubFlowManager가 있으면 자동 시작을 미루고 허브 흐름이 시작을 제어합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Flow")
