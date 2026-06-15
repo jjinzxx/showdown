@@ -10,6 +10,7 @@
 #include "ShowDownGameStateBase.h"
 #include "ShowDownLoginWidget.h"
 #include "ShowDownMainMenuWidget.h"
+#include "ShowDownRankWidget.h"
 #include "ShowDownShopWidget.h"
 #include "SupabaseSubsystem.h"
 
@@ -116,6 +117,7 @@ void AShowDownHubFlowManager::ShowMainMenu()
 	MainMenuWidget->OnSinglePlayRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleSinglePlayRequested);
 	MainMenuWidget->OnMultiplayerRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleMultiplayerRequested);
 	MainMenuWidget->OnShopRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleShopRequested);
+	MainMenuWidget->OnRankingRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleRankingRequested);
 	MainMenuWidget->OnQuitRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleQuitRequested);
 
 	SetActiveWidget(MainMenuWidget);
@@ -160,6 +162,36 @@ void AShowDownHubFlowManager::ShowShop()
 	SetUiOnlyInput(ShopWidget);
 	ShopWidget->SetKeyboardFocus();
 	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::Shop);
+}
+
+void AShowDownHubFlowManager::ShowRanking()
+{
+	if (!RankWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RankWidgetClass is not set on ShowDownHubFlowManager."));
+		return;
+	}
+
+	// 랭킹 전용 카메라가 지정돼 있으면 그쪽으로, 없으면 메뉴 카메라 시점으로 블렌드합니다.
+	BlendToCamera(RankingCamera ? RankingCamera : MainMenuCamera);
+
+	RankWidget = CreateWidget<UShowDownRankWidget>(
+		GetPrimaryPlayerController(),
+		RankWidgetClass
+	);
+
+	if (!RankWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to create RankWidget."));
+		return;
+	}
+
+	// 랭킹 화면의 "뒤로" 버튼을 메인메뉴 복귀에 연결합니다.
+	RankWidget->OnBackRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleRankBackRequested);
+
+	SetActiveWidget(RankWidget);
+	SetUiOnlyInput(RankWidget);
+	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::Ranking);
 }
 
 void AShowDownHubFlowManager::ShowSinglePlayPreview()
@@ -300,12 +332,22 @@ void AShowDownHubFlowManager::HandleShopRequested()
 	ShowShop();
 }
 
+void AShowDownHubFlowManager::HandleRankingRequested()
+{
+	ShowRanking();
+}
+
 void AShowDownHubFlowManager::HandleQuitRequested()
 {
 	QuitGame();
 }
 
 void AShowDownHubFlowManager::HandleShopBackRequested()
+{
+	ShowMainMenu();
+}
+
+void AShowDownHubFlowManager::HandleRankBackRequested()
 {
 	ShowMainMenu();
 }
@@ -329,6 +371,9 @@ void AShowDownHubFlowManager::HandleGameOver(EShowDownSide Winner)
 		}
 	}
 
+	// 연출 파트가 결과 카메라/위젯 연출을 붙일 수 있는 훅입니다(블루프린트에서 구현).
+	OnGameResultPresentation(Winner);
+
 	UWorld* World = GetWorld();
 	if (!World)
 	{
@@ -336,6 +381,8 @@ void AShowDownHubFlowManager::HandleGameOver(EShowDownSide Winner)
 	}
 
 	// 대기 시간이 0 이하면 즉시 복귀합니다.
+	// (연출 파트가 길이를 직접 제어하려면 ReturnToHubDelay를 충분히 크게 두고
+	//  연출이 끝날 때 FinishResultAndReturnToHub()를 호출하면 됩니다.)
 	if (ReturnToHubDelay <= 0.0f)
 	{
 		ReturnToHub();
@@ -348,6 +395,17 @@ void AShowDownHubFlowManager::HandleGameOver(EShowDownSide Winner)
 		&AShowDownHubFlowManager::ReturnToHub,
 		ReturnToHubDelay,
 		false);
+}
+
+void AShowDownHubFlowManager::FinishResultAndReturnToHub()
+{
+	// 자동 복귀 타이머가 걸려 있으면 취소하고 즉시 복귀합니다.
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReturnToHubTimerHandle);
+	}
+
+	ReturnToHub();
 }
 
 void AShowDownHubFlowManager::ReturnToHub()

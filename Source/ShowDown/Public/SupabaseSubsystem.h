@@ -61,6 +61,32 @@ struct FShowDownSkin
 	bool bIsActive = false;
 };
 
+// 리더보드 한 줄(한 유저)의 정보입니다. get_leaderboard RPC 응답을 담습니다.
+// user_id/email 같은 민감 정보는 포함하지 않고, 공개해도 되는 닉네임/점수만 담습니다.
+USTRUCT(BlueprintType)
+struct FShowDownRankEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	int32 Rank = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	FString Nickname;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	int32 Score = 0;
+};
+
+// 리더보드 로딩 결과를 알려주는 이벤트입니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnLeaderboardLoaded,
+	bool,
+	bSuccess,
+	const FString&,
+	Message
+);
+
 // 상점/스킨 데이터 로딩 결과를 알려주는 이벤트입니다.
 // skins, player_skins, player_equipment 요청이 각각 끝날 때마다 호출됩니다.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -119,6 +145,10 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnSkinSetPurchased OnSkinSetPurchased;
 
+	// 리더보드 로딩 결과를 외부에 알리는 이벤트입니다.
+	UPROPERTY(BlueprintAssignable)
+	FOnLeaderboardLoaded OnLeaderboardLoaded;
+
 	// 이메일과 비밀번호로 Supabase Auth에 로그인 요청을 보냅니다.
 	// 성공하면 AccessToken과 UserId를 저장하고 LoadPlayerData를 호출합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
@@ -162,6 +192,15 @@ public:
 	// 서버에서 불러온 랭크 점수를 반환합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	int32 GetScore() const;
+
+	// get_leaderboard RPC를 호출해 전체 랭킹(닉네임+점수)을 불러옵니다.
+	// 완료되면 OnLeaderboardLoaded를 broadcast합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void LoadLeaderboard(int32 Limit = 100);
+
+	// 마지막으로 불러온 리더보드 목록을 반환합니다(점수 내림차순 정렬).
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	TArray<FShowDownRankEntry> GetLeaderboard() const;
 
 	// skin_sets 테이블에서 불러온 활성 상점 상품 목록을 반환합니다.
 	// 이름은 기존 코드 호환을 위해 GetShopSkins로 유지합니다.
@@ -236,6 +275,9 @@ private:
 	// player_ranks 테이블에서 불러온 score입니다.
 	int32 Score = 1000;
 
+	// get_leaderboard로 불러온 전체 랭킹 목록입니다.
+	TArray<FShowDownRankEntry> Leaderboard;
+
 	// skin_sets 테이블에서 불러온 활성 상점 상품 목록입니다.
 	TArray<FShowDownSkin> ShopSkins;
 
@@ -267,6 +309,9 @@ private:
 
 	// player_ranks 테이블 응답을 처리해서 Score 값을 저장합니다.
 	void HandleRankResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// get_leaderboard RPC 응답(배열)을 처리해서 Leaderboard에 저장합니다.
+	void HandleLeaderboardResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	// skin_sets 테이블 응답을 처리해서 활성 상점 상품 목록을 저장합니다.
 	// 함수 이름은 기존 skins 구조에서 이어진 이름입니다.

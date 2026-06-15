@@ -203,6 +203,91 @@ void USupabaseSubsystem::HandleLoginWithIdResponse(
 	OnLoginResult.Broadcast(true, TEXT("Login success."));
 }
 
+void USupabaseSubsystem::LoadLeaderboard(int32 Limit)
+{
+	if (AccessToken.IsEmpty())
+	{
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Access token is empty."));
+		return;
+	}
+
+	// get_leaderboard RPC 호출. 닉네임+점수만 정렬해서 돌려받습니다.
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
+		CreateAuthorizedRequest(TEXT("/rest/v1/rpc/get_leaderboard"), TEXT("POST"));
+
+	TSharedPtr<FJsonObject> BodyObject = MakeShared<FJsonObject>();
+	BodyObject->SetNumberField(TEXT("p_limit"), Limit);
+
+	FString BodyString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyString);
+	FJsonSerializer::Serialize(BodyObject.ToSharedRef(), Writer);
+	Request->SetContentAsString(BodyString);
+
+	Request->OnProcessRequestComplete().BindUObject(
+		this,
+		&USupabaseSubsystem::HandleLeaderboardResponse
+	);
+
+	Request->ProcessRequest();
+}
+
+void USupabaseSubsystem::HandleLeaderboardResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Leaderboard request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Leaderboard load failed: %d / %s"), StatusCode, *ResponseText);
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Leaderboard load failed."));
+		return;
+	}
+
+	// 응답 형태: [{"rank":1,"nickname":"a","score":1300}, ...]
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonArray))
+	{
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Leaderboard response parse failed."));
+		return;
+	}
+
+	Leaderboard.Reset();
+	for (const TSharedPtr<FJsonValue>& Value : JsonArray)
+	{
+		const TSharedPtr<FJsonObject> Entry = Value->AsObject();
+		if (!Entry.IsValid())
+		{
+			continue;
+		}
+
+		FShowDownRankEntry RankEntry;
+		RankEntry.Rank = static_cast<int32>(Entry->GetIntegerField(TEXT("rank")));
+		Entry->TryGetStringField(TEXT("nickname"), RankEntry.Nickname);
+		RankEntry.Score = Entry->GetIntegerField(TEXT("score"));
+		Leaderboard.Add(RankEntry);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Leaderboard loaded: %d entries."), Leaderboard.Num());
+	OnLeaderboardLoaded.Broadcast(true, TEXT("Leaderboard loaded."));
+}
+
+TArray<FShowDownRankEntry> USupabaseSubsystem::GetLeaderboard() const
+{
+	return Leaderboard;
+}
+
 TSharedRef<IHttpRequest, ESPMode::ThreadSafe> USupabaseSubsystem::CreateAuthorizedRequest(
 	const FString& Endpoint,
 	const FString& Verb
@@ -246,8 +331,11 @@ void USupabaseSubsystem::LoadPlayerData()
 	ProfileRequest->ProcessRequest();
 
 	// player_wallets 테이블에서 현재 유저의 coin을 가져옵니다.
+	// rank GET과 동일하게 user_id 필터를 명시해 RLS 설정과 무관하게 본인 행만 읽습니다.
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> WalletRequest =
-		CreateAuthorizedRequest(TEXT("/rest/v1/player_wallets?select=coin"), TEXT("GET"));
+		CreateAuthorizedRequest(
+			FString::Printf(TEXT("/rest/v1/player_wallets?user_id=eq.%s&select=coin"), *UserId),
+			TEXT("GET"));
 
 	WalletRequest->OnProcessRequestComplete().BindUObject(
 		this,

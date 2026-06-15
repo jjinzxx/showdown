@@ -12,6 +12,7 @@ class APlayerController;
 class UShowDownLoginWidget;
 class UShowDownMainMenuWidget;
 class UShowDownShopWidget;
+class UShowDownRankWidget;
 class UUserWidget;
 class AShowDownGameStateBase;
 
@@ -21,6 +22,7 @@ enum class EShowDownHubFlowScreen : uint8
 	Login,
 	MainMenu,
 	Shop,
+	Ranking,
 	SinglePlayPreview
 };
 
@@ -51,6 +53,9 @@ public:
 	void ShowShop();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
+	void ShowRanking();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
 	void ShowSinglePlayPreview();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
@@ -58,6 +63,18 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
 	void QuitGame();
+
+	// [연출 파트용 훅] 게임이 끝나면(승/패) 호출되는 블루프린트 이벤트입니다.
+	// 여기서 결과 카메라 연출, 승/패 결과 위젯, 사운드 등을 재생하면 됩니다.
+	// (시점은 GameCamera 슬롯/SetViewTargetWithBlend로 잡을 수 있습니다.)
+	// 연출이 없거나 짧으면 ReturnToHubDelay 후 자동으로 허브(메인메뉴)로 복귀합니다.
+	UFUNCTION(BlueprintImplementableEvent, Category = "ShowDown|Flow")
+	void OnGameResultPresentation(EShowDownSide Winner);
+
+	// [연출 파트용] 결과 연출을 끝냈을 때 호출하면 자동 복귀 타이머를 기다리지 않고
+	// 즉시 허브로 돌아갑니다. (연출 길이를 직접 제어하고 싶을 때 사용)
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
+	void FinishResultAndReturnToHub();
 
 protected:
 	virtual void BeginPlay() override;
@@ -75,6 +92,10 @@ private:
 	UPROPERTY(EditAnywhere, Category = "ShowDown|UI")
 	TSubclassOf<UShowDownShopWidget> ShopWidgetClass;
 
+	// 랭킹(점수 확인) 화면 WBP. 에디터에서 WBP_Rank를 지정합니다.
+	UPROPERTY(EditAnywhere, Category = "ShowDown|UI")
+	TSubclassOf<UShowDownRankWidget> RankWidgetClass;
+
 	// Optional cameras for each hub state. Empty values keep the current view.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera")
 	ACameraActor* LoginCamera;
@@ -84,6 +105,10 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera")
 	ACameraActor* ShopCamera;
+
+	// 랭킹 화면용 카메라. 비워두면 메뉴 카메라(MainMenuCamera) 시점을 사용합니다.
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera")
+	ACameraActor* RankingCamera;
 
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera")
 	ACameraActor* GameCamera;
@@ -111,6 +136,9 @@ private:
 	UShowDownShopWidget* ShopWidget;
 
 	UPROPERTY()
+	UShowDownRankWidget* RankWidget;
+
+	UPROPERTY()
 	UUserWidget* ActiveWidget;
 
 	void SetActiveWidget(UUserWidget* NextWidget);
@@ -131,10 +159,16 @@ private:
 	void HandleShopRequested();
 
 	UFUNCTION()
+	void HandleRankingRequested();
+
+	UFUNCTION()
 	void HandleQuitRequested();
 
 	UFUNCTION()
 	void HandleShopBackRequested();
+
+	UFUNCTION()
+	void HandleRankBackRequested();
 
 	// 게임이 끝나면(승/패) 호출됩니다. 결과를 잠시 보여준 뒤 허브로 복귀시킵니다.
 	UFUNCTION()

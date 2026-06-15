@@ -59,6 +59,11 @@ void UShowDownMainMenuWidget::NativeConstruct()
 		Button_Shop->OnClicked.AddDynamic(this, &UShowDownMainMenuWidget::HandleShopClicked);
 	}
 
+	if (Button_Ranking)
+	{
+		Button_Ranking->OnClicked.AddDynamic(this, &UShowDownMainMenuWidget::HandleRankingClicked);
+	}
+
 	if (Button_Quit)
 	{
 		Button_Quit->OnClicked.AddDynamic(this, &UShowDownMainMenuWidget::HandleQuitClicked);
@@ -206,6 +211,12 @@ void UShowDownMainMenuWidget::HandleSinglePlayClicked()
 
 	// 예시:
 	// UGameplayStatics::OpenLevel(this, TEXT("L_SingleGame"));
+}
+
+void UShowDownMainMenuWidget::HandleRankingClicked()
+{
+	// 화면 전환(랭킹 위젯 생성/표시)은 HubFlowManager가 담당합니다.
+	OnRankingRequested.Broadcast();
 }
 
 void UShowDownMainMenuWidget::HandleMultiplayerClicked()
