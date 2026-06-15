@@ -113,6 +113,96 @@ void USupabaseSubsystem::HandleLoginResponse(
 	OnLoginResult.Broadcast(true, TEXT("Login success."));
 }
 
+void USupabaseSubsystem::LoginWithId(const FString& Id, const FString& Password)
+{
+	// 아이디나 비밀번호가 비어 있으면 서버에 요청하지 않고 바로 실패 처리합니다.
+	if (Id.IsEmpty() || Password.IsEmpty())
+	{
+		OnLoginResult.Broadcast(false, TEXT("ID or password is empty."));
+		return;
+	}
+
+	// login-with-id Edge Function을 호출합니다.
+	// 아이디->이메일 매핑과 실제 로그인은 서버에서 처리되고, 응답으로 세션만 옵니다.
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+
+	Request->SetURL(SupabaseUrl + TEXT("/functions/v1/login-with-id"));
+	Request->SetVerb(TEXT("POST"));
+
+	// Edge Function 접근에도 anon 키가 필요합니다(아직 로그인 전이라 사용자 토큰은 없음).
+	Request->SetHeader(TEXT("apikey"), SupabaseAnonKey);
+	Request->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *SupabaseAnonKey));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+
+	// 요청 body: { "id": "...", "password": "..." }
+	TSharedPtr<FJsonObject> BodyObject = MakeShared<FJsonObject>();
+	BodyObject->SetStringField(TEXT("id"), Id);
+	BodyObject->SetStringField(TEXT("password"), Password);
+
+	FString BodyString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyString);
+	FJsonSerializer::Serialize(BodyObject.ToSharedRef(), Writer);
+	Request->SetContentAsString(BodyString);
+
+	Request->OnProcessRequestComplete().BindUObject(
+		this,
+		&USupabaseSubsystem::HandleLoginWithIdResponse
+	);
+
+	Request->ProcessRequest();
+
+	OnLoginResult.Broadcast(false, TEXT("Logging in..."));
+}
+
+void USupabaseSubsystem::HandleLoginWithIdResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnLoginResult.Broadcast(false, TEXT("Server request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	// Edge Function은 실패 시 아이디 존재 여부를 숨기려고 항상 동일한 401을 돌려줍니다.
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Login (id) failed: %d / %s"), StatusCode, *ResponseText);
+		OnLoginResult.Broadcast(false, TEXT("Login failed."));
+		return;
+	}
+
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		OnLoginResult.Broadcast(false, TEXT("Login response parse failed."));
+		return;
+	}
+
+	// Edge Function이 돌려준 세션에서 access_token과 user_id를 저장합니다.
+	if (!JsonObject->TryGetStringField(TEXT("access_token"), AccessToken))
+	{
+		OnLoginResult.Broadcast(false, TEXT("Access token not found."));
+		return;
+	}
+
+	JsonObject->TryGetStringField(TEXT("user_id"), UserId);
+
+	UE_LOG(LogTemp, Log, TEXT("Login (id) success. UserId: %s"), *UserId);
+
+	// 로그인 성공 후 닉네임/coin/score를 불러옵니다.
+	LoadPlayerData();
+
+	OnLoginResult.Broadcast(true, TEXT("Login success."));
+}
+
 TSharedRef<IHttpRequest, ESPMode::ThreadSafe> USupabaseSubsystem::CreateAuthorizedRequest(
 	const FString& Endpoint,
 	const FString& Verb

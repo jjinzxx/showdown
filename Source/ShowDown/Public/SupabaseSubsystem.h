@@ -124,6 +124,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	void LoginWithEmail(const FString& Email, const FString& Password);
 
+	// 아이디(username)와 비밀번호로 로그인합니다.
+	// 아이디->이메일 매핑과 로그인을 모두 login-with-id Edge Function이 서버에서 처리하고
+	// 세션만 돌려줍니다(이메일이 클라이언트로 노출되지 않음).
+	// 성공 처리는 LoginWithEmail과 동일하게 AccessToken/UserId 저장 + LoadPlayerData입니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void LoginWithId(const FString& Id, const FString& Password);
+
 	// 로그인 후 AccessToken을 이용해서 플레이어 기본 데이터를 불러옵니다.
 	// profiles, player_wallets, player_ranks 테이블에 각각 GET 요청을 보냅니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
@@ -247,6 +254,10 @@ private:
 	// Supabase Auth 로그인 요청의 응답을 처리합니다.
 	// access_token과 user.id를 파싱하고, 성공하면 LoadPlayerData를 호출합니다.
 	void HandleLoginResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// login-with-id Edge Function 응답을 처리합니다.
+	// access_token과 user_id를 파싱하고, 성공하면 LoadPlayerData를 호출합니다.
+	void HandleLoginWithIdResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	// profiles 테이블 응답을 처리해서 Nickname 값을 저장합니다.
 	void HandleProfileResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
