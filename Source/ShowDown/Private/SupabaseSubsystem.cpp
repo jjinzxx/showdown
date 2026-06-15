@@ -181,6 +181,9 @@ void USupabaseSubsystem::LoadPlayerData()
 
 void USupabaseSubsystem::LoadCosmeticData()
 {
+	// 상점 상품은 skin_sets 기준으로 보여주고,
+	// 실제 장착은 skin_set_items에 묶인 skins 기준으로 처리합니다.
+	// 그래서 상품/보유 세트/세트 구성품/현재 장착값을 함께 불러와야 합니다.
 	if (AccessToken.IsEmpty())
 	{
 		OnCosmeticDataLoaded.Broadcast(false, TEXT("Access token is empty."));
@@ -191,11 +194,16 @@ void USupabaseSubsystem::LoadCosmeticData()
 
 	ShopSkins.Empty();
 	OwnedSkinIds.Empty();
+	OwnedSkinSetIds.Empty();
 	EquippedSkinIdsByType.Empty();
+	SkinSetItemsBySetId.Empty();
 
+	// 상점에 표시할 상품 목록입니다.
+	// card와 card_back 같은 실제 스킨 조각은 skin_set_items에서 묶이고,
+	// 플레이어에게는 skin_sets 한 줄이 하나의 상품으로 보입니다.
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> SkinsRequest =
 		CreateAuthorizedRequest(
-			TEXT("/rest/v1/skins?select=id,name,rarity,price,is_active,type&is_active=eq.true&order=price.asc"),
+			TEXT("/rest/v1/skin_sets?select=id,name,rarity,price,is_active,type&is_active=eq.true&order=price.asc"),
 			TEXT("GET")
 		);
 
@@ -215,6 +223,30 @@ void USupabaseSubsystem::LoadCosmeticData()
 	);
 
 	PlayerSkinsRequest->ProcessRequest();
+
+	// 새 상점 구조의 보유 여부입니다.
+	// 이전 구조 호환을 위해 player_skins도 읽지만, 상품 보유 판단은 이 테이블이 기준입니다.
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> PlayerSkinSetsRequest =
+		CreateAuthorizedRequest(TEXT("/rest/v1/player_skin_sets?select=set_id"), TEXT("GET"));
+
+	PlayerSkinSetsRequest->OnProcessRequestComplete().BindUObject(
+		this,
+		&USupabaseSubsystem::HandlePlayerSkinSetsResponse
+	);
+
+	PlayerSkinSetsRequest->ProcessRequest();
+
+	// 상품 세트가 실제로 어떤 장착 slot들을 포함하는지 읽습니다.
+	// 예: gold_card_set -> gold_card(card), gold_card_back(card_back)
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> SkinSetItemsRequest =
+		CreateAuthorizedRequest(TEXT("/rest/v1/skin_set_items?select=set_id,skin_id,slot"), TEXT("GET"));
+
+	SkinSetItemsRequest->OnProcessRequestComplete().BindUObject(
+		this,
+		&USupabaseSubsystem::HandleSkinSetItemsResponse
+	);
+
+	SkinSetItemsRequest->ProcessRequest();
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> EquipmentRequest =
 		CreateAuthorizedRequest(TEXT("/rest/v1/player_equipment?select=skin_type,equipped_skin_id"), TEXT("GET"));
@@ -372,6 +404,8 @@ void USupabaseSubsystem::HandleSkinsResponse(
 	bool bWasSuccessful
 )
 {
+	// 함수 이름은 이전 skins 구조에서 이어졌지만,
+	// 현재 응답은 skin_sets 테이블의 상점 상품 목록입니다.
 	if (!bWasSuccessful || !Response.IsValid())
 	{
 		OnCosmeticDataLoaded.Broadcast(false, TEXT("Skins request failed."));
@@ -483,6 +517,122 @@ void USupabaseSubsystem::HandlePlayerSkinsResponse(
 
 	UE_LOG(LogTemp, Log, TEXT("Owned skins loaded: %d"), OwnedSkinIds.Num());
 	OnCosmeticDataLoaded.Broadcast(true, TEXT("Player skins loaded."));
+}
+
+void USupabaseSubsystem::HandlePlayerSkinSetsResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnCosmeticDataLoaded.Broadcast(false, TEXT("Player skin sets request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Player skin sets load failed: %d / %s"), StatusCode, *ResponseText);
+		OnCosmeticDataLoaded.Broadcast(false, TEXT("Player skin sets load failed."));
+		return;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonArray))
+	{
+		OnCosmeticDataLoaded.Broadcast(false, TEXT("Player skin sets response parse failed."));
+		return;
+	}
+
+	OwnedSkinSetIds.Empty();
+
+	for (const TSharedPtr<FJsonValue>& JsonValue : JsonArray)
+	{
+		const TSharedPtr<FJsonObject> PlayerSkinSetObject = JsonValue.IsValid()
+			? JsonValue->AsObject()
+			: nullptr;
+
+		if (!PlayerSkinSetObject.IsValid())
+		{
+			continue;
+		}
+
+		FString SetId;
+		if (PlayerSkinSetObject->TryGetStringField(TEXT("set_id"), SetId))
+		{
+			OwnedSkinSetIds.Add(SetId);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Owned skin sets loaded: %d"), OwnedSkinSetIds.Num());
+	OnCosmeticDataLoaded.Broadcast(true, TEXT("Player skin sets loaded."));
+}
+
+void USupabaseSubsystem::HandleSkinSetItemsResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnCosmeticDataLoaded.Broadcast(false, TEXT("Skin set items request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Skin set items load failed: %d / %s"), StatusCode, *ResponseText);
+		OnCosmeticDataLoaded.Broadcast(false, TEXT("Skin set items load failed."));
+		return;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonArray))
+	{
+		OnCosmeticDataLoaded.Broadcast(false, TEXT("Skin set items response parse failed."));
+		return;
+	}
+
+	SkinSetItemsBySetId.Empty();
+
+	for (const TSharedPtr<FJsonValue>& JsonValue : JsonArray)
+	{
+		const TSharedPtr<FJsonObject> SkinSetItemObject = JsonValue.IsValid()
+			? JsonValue->AsObject()
+			: nullptr;
+
+		if (!SkinSetItemObject.IsValid())
+		{
+			continue;
+		}
+
+		FString SetId;
+		FShowDownSkin SkinItem;
+
+		if (
+			SkinSetItemObject->TryGetStringField(TEXT("set_id"), SetId) &&
+			SkinSetItemObject->TryGetStringField(TEXT("skin_id"), SkinItem.Id) &&
+			SkinSetItemObject->TryGetStringField(TEXT("slot"), SkinItem.Type)
+		)
+		{
+			SkinSetItemsBySetId.FindOrAdd(SetId).Add(SkinItem);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Skin set items loaded: %d"), SkinSetItemsBySetId.Num());
+	OnCosmeticDataLoaded.Broadcast(true, TEXT("Skin set items loaded."));
 }
 
 void USupabaseSubsystem::HandlePlayerEquipmentResponse(
@@ -597,11 +747,37 @@ FString USupabaseSubsystem::GetEquippedSkinId(const FString& SkinType) const
 
 bool USupabaseSubsystem::IsSkinOwned(const FString& SkinId) const
 {
-	return OwnedSkinIds.Contains(SkinId);
+	return OwnedSkinSetIds.Contains(SkinId) || OwnedSkinIds.Contains(SkinId);
+}
+
+bool USupabaseSubsystem::IsShopItemEquipped(const FString& SetId) const
+{
+	// 세트 상품은 여러 실제 스킨을 포함할 수 있습니다.
+	// 모든 구성 스킨이 현재 장착값과 일치할 때만 세트 전체가 장착된 상태로 봅니다.
+	const TArray<FShowDownSkin>* SkinSetItems = SkinSetItemsBySetId.Find(SetId);
+
+	if (!SkinSetItems || SkinSetItems->Num() == 0)
+	{
+		return false;
+	}
+
+	for (const FShowDownSkin& SkinItem : *SkinSetItems)
+	{
+		const FString* EquippedSkinId = EquippedSkinIdsByType.Find(SkinItem.Type);
+
+		if (!EquippedSkinId || *EquippedSkinId != SkinItem.Id)
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 void USupabaseSubsystem::EquipSkin(const FString& SkinId)
 {
+	// SkinId라는 이름은 기존 API 호환 때문에 유지하지만,
+	// 현재 Shop에서는 skin_sets.id, 즉 상품 세트 id가 들어옵니다.
 	if (AccessToken.IsEmpty())
 	{
 		OnSkinEquipped.Broadcast(false, TEXT("Access token is empty."));
@@ -616,49 +792,85 @@ void USupabaseSubsystem::EquipSkin(const FString& SkinId)
 
 	if (!IsSkinOwned(SkinId))
 	{
-		OnSkinEquipped.Broadcast(false, TEXT("Skin is not owned."));
+		OnSkinEquipped.Broadcast(false, TEXT("Shop item is not owned."));
 		return;
 	}
 
-	FShowDownSkin TargetSkin;
-	bool bFoundSkin = false;
+	const TArray<FShowDownSkin>* SkinSetItems = SkinSetItemsBySetId.Find(SkinId);
 
-	for (const FShowDownSkin& Skin : ShopSkins)
+	if (!SkinSetItems || SkinSetItems->Num() == 0)
 	{
-		if (Skin.Id == SkinId)
+		OnSkinEquipped.Broadcast(false, TEXT("Shop item has no skin set items."));
+		return;
+	}
+
+	for (const FShowDownSkin& SkinItem : *SkinSetItems)
+	{
+		// 세트 안의 각 실제 스킨을 slot별 장착값으로 저장합니다.
+		// 카드 세트라면 card와 card_back PATCH 요청이 각각 나갑니다.
+		if (SkinItem.Type.IsEmpty() || SkinItem.Id.IsEmpty())
 		{
-			TargetSkin = Skin;
-			bFoundSkin = true;
-			break;
+			continue;
 		}
+
+		TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
+			CreateAuthorizedRequest(
+				FString::Printf(
+					TEXT("/rest/v1/player_equipment?user_id=eq.%s&skin_type=eq.%s"),
+					*UserId,
+					*SkinItem.Type
+				),
+				TEXT("PATCH")
+			);
+
+		Request->SetHeader(TEXT("Prefer"), TEXT("return=representation"));
+
+		TSharedPtr<FJsonObject> BodyObject = MakeShared<FJsonObject>();
+		BodyObject->SetStringField(TEXT("equipped_skin_id"), SkinItem.Id);
+
+		FString BodyString;
+		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyString);
+		FJsonSerializer::Serialize(BodyObject.ToSharedRef(), Writer);
+
+		Request->SetContentAsString(BodyString);
+		Request->OnProcessRequestComplete().BindUObject(
+			this,
+			&USupabaseSubsystem::HandleEquipSkinResponse
+		);
+
+		Request->ProcessRequest();
 	}
 
-	if (!bFoundSkin)
+	OnSkinEquipped.Broadcast(false, TEXT("Equipping shop item..."));
+}
+
+void USupabaseSubsystem::PurchaseSkinSet(const FString& SetId)
+{
+	// 구매는 coin 차감, player_skin_sets 추가, player_skins 추가가 모두 맞물린 작업입니다.
+	// 클라이언트에서 여러 REST 요청으로 나누지 않고 DB의 purchase_skin_set RPC에서 한 번에 처리합니다.
+	if (AccessToken.IsEmpty())
 	{
-		OnSkinEquipped.Broadcast(false, TEXT("Skin was not found."));
+		OnSkinSetPurchased.Broadcast(false, TEXT("Access token is empty."));
 		return;
 	}
 
-	if (TargetSkin.Type.IsEmpty())
+	if (SetId.IsEmpty())
 	{
-		OnSkinEquipped.Broadcast(false, TEXT("Skin type is empty."));
+		OnSkinSetPurchased.Broadcast(false, TEXT("Shop item id is empty."));
+		return;
+	}
+
+	if (IsSkinOwned(SetId))
+	{
+		OnSkinSetPurchased.Broadcast(false, TEXT("Shop item is already owned."));
 		return;
 	}
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
-		CreateAuthorizedRequest(
-			FString::Printf(
-				TEXT("/rest/v1/player_equipment?user_id=eq.%s&skin_type=eq.%s"),
-				*UserId,
-				*TargetSkin.Type
-			),
-			TEXT("PATCH")
-		);
-
-	Request->SetHeader(TEXT("Prefer"), TEXT("return=representation"));
+		CreateAuthorizedRequest(TEXT("/rest/v1/rpc/purchase_skin_set"), TEXT("POST"));
 
 	TSharedPtr<FJsonObject> BodyObject = MakeShared<FJsonObject>();
-	BodyObject->SetStringField(TEXT("equipped_skin_id"), TargetSkin.Id);
+	BodyObject->SetStringField(TEXT("p_set_id"), SetId);
 
 	FString BodyString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyString);
@@ -667,12 +879,12 @@ void USupabaseSubsystem::EquipSkin(const FString& SkinId)
 	Request->SetContentAsString(BodyString);
 	Request->OnProcessRequestComplete().BindUObject(
 		this,
-		&USupabaseSubsystem::HandleEquipSkinResponse
+		&USupabaseSubsystem::HandlePurchaseSkinSetResponse
 	);
 
 	Request->ProcessRequest();
 
-	OnSkinEquipped.Broadcast(false, TEXT("Equipping skin..."));
+	OnSkinSetPurchased.Broadcast(false, TEXT("Purchasing shop item..."));
 }
 
 void USupabaseSubsystem::UpdateNickname(const FString& NewNickname)
@@ -845,4 +1057,62 @@ void USupabaseSubsystem::HandleEquipSkinResponse(
 
 	UE_LOG(LogTemp, Log, TEXT("Skin equipped: %s -> %s"), *SkinType, *EquippedSkinId);
 	OnSkinEquipped.Broadcast(true, TEXT("Skin equipped."));
+}
+
+void USupabaseSubsystem::HandlePurchaseSkinSetResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnSkinSetPurchased.Broadcast(false, TEXT("Purchase request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Purchase failed: %d / %s"), StatusCode, *ResponseText);
+		OnSkinSetPurchased.Broadcast(false, TEXT("Purchase failed."));
+		return;
+	}
+
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		OnSkinSetPurchased.Broadcast(false, TEXT("Purchase response parse failed."));
+		return;
+	}
+
+	bool bSuccess = false;
+	JsonObject->TryGetBoolField(TEXT("success"), bSuccess);
+
+	if (!bSuccess)
+	{
+		OnSkinSetPurchased.Broadcast(false, TEXT("Purchase was not successful."));
+		return;
+	}
+
+	double UpdatedCoin = 0.0;
+	if (JsonObject->TryGetNumberField(TEXT("coin"), UpdatedCoin))
+	{
+		Coin = FMath::RoundToInt(UpdatedCoin);
+	}
+
+	FString PurchasedSetId;
+	JsonObject->TryGetStringField(TEXT("set_id"), PurchasedSetId);
+
+	UE_LOG(LogTemp, Log, TEXT("Shop item purchased: %s / coin=%d"), *PurchasedSetId, Coin);
+
+	// RPC가 DB를 갱신했으므로 클라이언트 캐시도 다시 맞춥니다.
+	LoadPlayerData();
+	LoadCosmeticData();
+
+	OnSkinSetPurchased.Broadcast(true, TEXT("Shop item purchased."));
 }

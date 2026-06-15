@@ -8,11 +8,15 @@
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Input/Reply.h"
+#include "InputCoreTypes.h"
 #include "ShowDownMainMenuWidget.h"
 #include "SupabaseSubsystem.h"
 
 TSharedRef<SWidget> UShowDownShopWidget::RebuildWidget()
 {
+	// WBP 기반 위젯은 에디터가 WidgetTree를 만들어주지만,
+	// 이 데모 Shop은 C++만으로 만들기 때문에 Slate 위젯 생성 전에 트리를 직접 구성합니다.
 	BuildWidgetTreeIfNeeded();
 	return Super::RebuildWidget();
 }
@@ -26,6 +30,10 @@ void UShowDownShopWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+	// 방향키/Enter/Escape 단축키를 받기 위해 Shop 위젯 자체가 포커스를 가져야 합니다.
+	SetIsFocusable(true);
+	SetKeyboardFocus();
+
 	if (USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()->GetSubsystem<USupabaseSubsystem>())
 	{
 		SupabaseSubsystem->OnCosmeticDataLoaded.AddDynamic(
@@ -36,6 +44,11 @@ void UShowDownShopWidget::NativeConstruct()
 		SupabaseSubsystem->OnSkinEquipped.AddDynamic(
 			this,
 			&UShowDownShopWidget::HandleSkinEquipped
+		);
+
+		SupabaseSubsystem->OnSkinSetPurchased.AddDynamic(
+			this,
+			&UShowDownShopWidget::HandleSkinSetPurchased
 		);
 	}
 
@@ -50,6 +63,11 @@ void UShowDownShopWidget::NativeConstruct()
 	if (Button_Equip)
 	{
 		Button_Equip->OnClicked.AddDynamic(this, &UShowDownShopWidget::HandleEquipClicked);
+	}
+
+	if (Button_Buy)
+	{
+		Button_Buy->OnClicked.AddDynamic(this, &UShowDownShopWidget::HandleBuyClicked);
 	}
 
 	if (Button_Refresh)
@@ -67,6 +85,7 @@ void UShowDownShopWidget::NativeConstruct()
 
 void UShowDownShopWidget::NativeDestruct()
 {
+	// Shop을 열고 닫을 때 이벤트가 중복 연결되지 않도록 제거합니다.
 	if (USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()->GetSubsystem<USupabaseSubsystem>())
 	{
 		SupabaseSubsystem->OnCosmeticDataLoaded.RemoveDynamic(
@@ -78,13 +97,57 @@ void UShowDownShopWidget::NativeDestruct()
 			this,
 			&UShowDownShopWidget::HandleSkinEquipped
 		);
+
+		SupabaseSubsystem->OnSkinSetPurchased.RemoveDynamic(
+			this,
+			&UShowDownShopWidget::HandleSkinSetPurchased
+		);
 	}
 
 	Super::NativeDestruct();
 }
 
+FReply UShowDownShopWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+{
+	const FKey PressedKey = InKeyEvent.GetKey();
+
+	// 좌/우 입력은 실제 3D carousel을 붙이기 전까지 선택 index만 이동시킵니다.
+	if (PressedKey == EKeys::Left || PressedKey == EKeys::A)
+	{
+		SelectSkinByOffset(-1);
+		return FReply::Handled();
+	}
+
+	if (PressedKey == EKeys::Right || PressedKey == EKeys::D)
+	{
+		SelectSkinByOffset(1);
+		return FReply::Handled();
+	}
+
+	if (PressedKey == EKeys::Enter || PressedKey == EKeys::SpaceBar)
+	{
+		HandleEquipClicked();
+		return FReply::Handled();
+	}
+
+	if (PressedKey == EKeys::B)
+	{
+		HandleBuyClicked();
+		return FReply::Handled();
+	}
+
+	if (PressedKey == EKeys::Escape)
+	{
+		HandleBackClicked();
+		return FReply::Handled();
+	}
+
+	return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
+}
+
 void UShowDownShopWidget::BuildWidgetTreeIfNeeded()
 {
+	// RebuildWidget이 여러 번 호출될 수 있으므로 이미 만든 경우에는 다시 만들지 않습니다.
 	if (!WidgetTree || Text_Title)
 	{
 		return;
@@ -104,7 +167,7 @@ void UShowDownShopWidget::BuildWidgetTreeIfNeeded()
 	RootBox->AddChildToVerticalBox(Text_Title);
 
 	Text_Status = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("Text_Status"));
-	Text_Status->SetText(FText::FromString(TEXT("Select an owned skin to equip.")));
+	Text_Status->SetText(FText::FromString(TEXT("Left/Right: select. Enter/Space: equip. B: buy. Escape: back.")));
 	Text_Status->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	RootBox->AddChildToVerticalBox(Text_Status);
 
@@ -135,6 +198,13 @@ void UShowDownShopWidget::BuildWidgetTreeIfNeeded()
 	Button_Equip->AddChild(Text_Equip);
 	ButtonRow->AddChild(Button_Equip);
 
+	Button_Buy = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("Button_Buy"));
+	UTextBlock* Text_Buy = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("Text_Buy"));
+	Text_Buy->SetText(FText::FromString(TEXT("Buy")));
+	Text_Buy->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+	Button_Buy->AddChild(Text_Buy);
+	ButtonRow->AddChild(Button_Buy);
+
 	Button_Refresh = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("Button_Refresh"));
 	UTextBlock* Text_Refresh = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("Text_Refresh"));
 	Text_Refresh->SetText(FText::FromString(TEXT("Refresh")));
@@ -160,12 +230,15 @@ void UShowDownShopWidget::RefreshSkinOptions()
 	FString PreviousSelectedSkinId;
 	if (const FShowDownSkin* PreviousSelectedSkin = SkinsByOption.Find(SelectedOption))
 	{
+		// Refresh 후에도 가능하면 같은 상품을 계속 보고 있게 유지합니다.
 		PreviousSelectedSkinId = PreviousSelectedSkin->Id;
 	}
 
 	ComboBox_Skins->ClearOptions();
 	SkinsByOption.Empty();
+	OrderedSkinOptions.Empty();
 	SelectedOption.Empty();
+	SelectedSkinIndex = INDEX_NONE;
 
 	USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()
 		? GetGameInstance()->GetSubsystem<USupabaseSubsystem>()
@@ -186,9 +259,17 @@ void UShowDownShopWidget::RefreshSkinOptions()
 
 	for (const FShowDownSkin& Skin : ShopSkins)
 	{
+		// 현재는 모든 skin_sets 상품을 보여줍니다.
+		// 나중에 개발용/숨김 상품이 생기면 ShouldShowSkinAsShopOption에서 제외하면 됩니다.
+		if (!ShouldShowSkinAsShopOption(Skin))
+		{
+			continue;
+		}
+
 		const FString OptionText = MakeSkinOptionText(Skin);
 		ComboBox_Skins->AddOption(OptionText);
 		SkinsByOption.Add(OptionText, Skin);
+		OrderedSkinOptions.Add(OptionText);
 
 		if (!PreviousSelectedSkinId.IsEmpty() && Skin.Id == PreviousSelectedSkinId)
 		{
@@ -202,18 +283,25 @@ void UShowDownShopWidget::RefreshSkinOptions()
 
 	if (SelectedOption.IsEmpty() && ShopSkins.Num() > 0)
 	{
-		SelectedOption = MakeSkinOptionText(ShopSkins[0]);
+		for (const FShowDownSkin& Skin : ShopSkins)
+		{
+			if (ShouldShowSkinAsShopOption(Skin))
+			{
+				SelectedOption = MakeSkinOptionText(Skin);
+				break;
+			}
+		}
 	}
 
 	if (!SelectedOption.IsEmpty())
 	{
-		ComboBox_Skins->SetSelectedOption(SelectedOption);
+		SelectSkinOption(SelectedOption);
 	}
 
 	if (Text_Status)
 	{
 		Text_Status->SetText(
-			FText::FromString(FString::Printf(TEXT("Loaded %d shop skins."), ShopSkins.Num()))
+			FText::FromString(FString::Printf(TEXT("Loaded %d shop items."), OrderedSkinOptions.Num()))
 		);
 	}
 
@@ -239,12 +327,16 @@ void UShowDownShopWidget::RefreshSelectedSkinText()
 	}
 
 	const bool bOwned = SupabaseSubsystem->IsSkinOwned(SelectedSkin->Id);
-	const bool bEquipped = SupabaseSubsystem->GetEquippedSkinId(SelectedSkin->Type) == SelectedSkin->Id;
+	const bool bEquipped = SupabaseSubsystem->IsShopItemEquipped(SelectedSkin->Id);
 
+	// SelectedSkin은 skin_sets의 상품 정보입니다.
+	// Equipped는 세트 안의 실제 스킨들이 모두 player_equipment와 일치하는지로 판단합니다.
 	Text_SelectedSkin->SetText(
 		FText::FromString(
 			FString::Printf(
-				TEXT("%s\nType: %s\nRarity: %s\nPrice: %d\nOwned: %s\nEquipped: %s"),
+				TEXT("%d / %d\n%s\nItem Type: %s\nRarity: %s\nPrice: %d\nOwned: %s\nEquipped: %s"),
+				SelectedSkinIndex + 1,
+				OrderedSkinOptions.Num(),
 				*SelectedSkin->Name,
 				*SelectedSkin->Type,
 				*SelectedSkin->Rarity,
@@ -256,6 +348,42 @@ void UShowDownShopWidget::RefreshSelectedSkinText()
 	);
 }
 
+void UShowDownShopWidget::SelectSkinByOffset(int32 Offset)
+{
+	if (OrderedSkinOptions.Num() == 0)
+	{
+		return;
+	}
+
+	int32 NextIndex = SelectedSkinIndex;
+
+	if (NextIndex == INDEX_NONE)
+	{
+		NextIndex = 0;
+	}
+	else
+	{
+		// 배열 끝에서 한 번 더 이동하면 반대쪽 끝으로 순환합니다.
+		NextIndex = (NextIndex + Offset + OrderedSkinOptions.Num()) % OrderedSkinOptions.Num();
+	}
+
+	SelectSkinOption(OrderedSkinOptions[NextIndex]);
+}
+
+void UShowDownShopWidget::SelectSkinOption(const FString& OptionText)
+{
+	// ComboBox 선택, 내부 선택 문자열, carousel index를 한 곳에서 동기화합니다.
+	SelectedOption = OptionText;
+	SelectedSkinIndex = OrderedSkinOptions.IndexOfByKey(SelectedOption);
+
+	if (ComboBox_Skins && ComboBox_Skins->GetSelectedOption() != SelectedOption)
+	{
+		ComboBox_Skins->SetSelectedOption(SelectedOption);
+	}
+
+	RefreshSelectedSkinText();
+}
+
 FString UShowDownShopWidget::MakeSkinOptionText(const FShowDownSkin& Skin) const
 {
 	USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()
@@ -263,7 +391,7 @@ FString UShowDownShopWidget::MakeSkinOptionText(const FShowDownSkin& Skin) const
 		: nullptr;
 
 	const bool bOwned = SupabaseSubsystem && SupabaseSubsystem->IsSkinOwned(Skin.Id);
-	const bool bEquipped = SupabaseSubsystem && SupabaseSubsystem->GetEquippedSkinId(Skin.Type) == Skin.Id;
+	const bool bEquipped = SupabaseSubsystem && SupabaseSubsystem->IsShopItemEquipped(Skin.Id);
 
 	return FString::Printf(
 		TEXT("%s%s [%s] %s - %d (%s)"),
@@ -276,10 +404,16 @@ FString UShowDownShopWidget::MakeSkinOptionText(const FShowDownSkin& Skin) const
 	);
 }
 
+bool UShowDownShopWidget::ShouldShowSkinAsShopOption(const FShowDownSkin& Skin) const
+{
+	// card/card_back 중복 문제는 DB의 skin_sets 구조로 해결했으므로,
+	// 코드에서는 별도 타입 필터 없이 모든 활성 상품을 보여줍니다.
+	return true;
+}
+
 void UShowDownShopWidget::HandleSkinSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
-	SelectedOption = SelectedItem;
-	RefreshSelectedSkinText();
+	SelectSkinOption(SelectedItem);
 }
 
 void UShowDownShopWidget::HandleEquipClicked()
@@ -308,7 +442,39 @@ void UShowDownShopWidget::HandleEquipClicked()
 			return;
 		}
 
+		// SelectedSkin->Id는 skin_sets.id입니다.
+		// SupabaseSubsystem이 세트 안의 실제 skins를 찾아 slot별로 장착 저장합니다.
 		SupabaseSubsystem->EquipSkin(SelectedSkin->Id);
+	}
+}
+
+void UShowDownShopWidget::HandleBuyClicked()
+{
+	const FShowDownSkin* SelectedSkin = SkinsByOption.Find(SelectedOption);
+
+	if (!SelectedSkin)
+	{
+		if (Text_Status)
+		{
+			Text_Status->SetText(FText::FromString(TEXT("No shop item selected.")));
+		}
+
+		return;
+	}
+
+	if (USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()->GetSubsystem<USupabaseSubsystem>())
+	{
+		if (SupabaseSubsystem->IsSkinOwned(SelectedSkin->Id))
+		{
+			if (Text_Status)
+			{
+				Text_Status->SetText(FText::FromString(TEXT("Shop item is already owned.")));
+			}
+
+			return;
+		}
+
+		SupabaseSubsystem->PurchaseSkinSet(SelectedSkin->Id);
 	}
 }
 
@@ -339,11 +505,28 @@ void UShowDownShopWidget::HandleCosmeticDataLoaded(bool bSuccess, const FString&
 
 	if (bSuccess)
 	{
+		// skin_sets / player_skin_sets / skin_set_items / equipment 중 하나라도 갱신되면
+		// 화면의 owned/equipped 상태가 바뀔 수 있으므로 목록을 다시 구성합니다.
 		RefreshSkinOptions();
 	}
 }
 
 void UShowDownShopWidget::HandleSkinEquipped(bool bSuccess, const FString& Message)
+{
+	if (Text_Status)
+	{
+		Text_Status->SetText(FText::FromString(Message));
+	}
+
+	if (bSuccess)
+	{
+		// 장착 요청은 세트 안의 slot 수만큼 여러 PATCH가 나갈 수 있습니다.
+		// 각 응답이 올 때마다 최신 장착 상태를 화면에 반영합니다.
+		RefreshSkinOptions();
+	}
+}
+
+void UShowDownShopWidget::HandleSkinSetPurchased(bool bSuccess, const FString& Message)
 {
 	if (Text_Status)
 	{

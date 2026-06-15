@@ -222,13 +222,12 @@ void UShowDownMainMenuWidget::HandleShopClicked()
 		for (const FShowDownSkin& Skin : ShopSkins)
 		{
 			const bool bOwned = SupabaseSubsystem->IsSkinOwned(Skin.Id);
-			const FString EquippedSkinId = SupabaseSubsystem->GetEquippedSkinId(Skin.Type);
-			const bool bEquipped = EquippedSkinId == Skin.Id;
+			const bool bEquipped = SupabaseSubsystem->IsShopItemEquipped(Skin.Id);
 
 			UE_LOG(
 				LogTemp,
 				Log,
-				TEXT("Skin: %s / %s / %s / %d / owned=%s / equipped=%s"),
+				TEXT("Shop item: %s / %s / %s / %d / owned=%s / equipped=%s"),
 				*Skin.Id,
 				*Skin.Name,
 				*Skin.Type,
@@ -249,6 +248,7 @@ void UShowDownMainMenuWidget::HandleShopClicked()
 		ShopWidget->SetMainMenuWidget(this);
 		SetVisibility(ESlateVisibility::Collapsed);
 		ShopWidget->AddToViewport();
+		ShopWidget->SetKeyboardFocus();
 	}
 }
 
