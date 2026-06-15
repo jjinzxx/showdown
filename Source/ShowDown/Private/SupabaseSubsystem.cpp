@@ -600,6 +600,81 @@ bool USupabaseSubsystem::IsSkinOwned(const FString& SkinId) const
 	return OwnedSkinIds.Contains(SkinId);
 }
 
+void USupabaseSubsystem::EquipSkin(const FString& SkinId)
+{
+	if (AccessToken.IsEmpty())
+	{
+		OnSkinEquipped.Broadcast(false, TEXT("Access token is empty."));
+		return;
+	}
+
+	if (UserId.IsEmpty())
+	{
+		OnSkinEquipped.Broadcast(false, TEXT("User id is empty."));
+		return;
+	}
+
+	if (!IsSkinOwned(SkinId))
+	{
+		OnSkinEquipped.Broadcast(false, TEXT("Skin is not owned."));
+		return;
+	}
+
+	FShowDownSkin TargetSkin;
+	bool bFoundSkin = false;
+
+	for (const FShowDownSkin& Skin : ShopSkins)
+	{
+		if (Skin.Id == SkinId)
+		{
+			TargetSkin = Skin;
+			bFoundSkin = true;
+			break;
+		}
+	}
+
+	if (!bFoundSkin)
+	{
+		OnSkinEquipped.Broadcast(false, TEXT("Skin was not found."));
+		return;
+	}
+
+	if (TargetSkin.Type.IsEmpty())
+	{
+		OnSkinEquipped.Broadcast(false, TEXT("Skin type is empty."));
+		return;
+	}
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
+		CreateAuthorizedRequest(
+			FString::Printf(
+				TEXT("/rest/v1/player_equipment?user_id=eq.%s&skin_type=eq.%s"),
+				*UserId,
+				*TargetSkin.Type
+			),
+			TEXT("PATCH")
+		);
+
+	Request->SetHeader(TEXT("Prefer"), TEXT("return=representation"));
+
+	TSharedPtr<FJsonObject> BodyObject = MakeShared<FJsonObject>();
+	BodyObject->SetStringField(TEXT("equipped_skin_id"), TargetSkin.Id);
+
+	FString BodyString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyString);
+	FJsonSerializer::Serialize(BodyObject.ToSharedRef(), Writer);
+
+	Request->SetContentAsString(BodyString);
+	Request->OnProcessRequestComplete().BindUObject(
+		this,
+		&USupabaseSubsystem::HandleEquipSkinResponse
+	);
+
+	Request->ProcessRequest();
+
+	OnSkinEquipped.Broadcast(false, TEXT("Equipping skin..."));
+}
+
 void USupabaseSubsystem::UpdateNickname(const FString& NewNickname)
 {
 	// 입력값 앞뒤 공백을 제거해서 "  Player  " 같은 입력을 "Player"로 정리합니다.
@@ -713,4 +788,61 @@ void USupabaseSubsystem::HandleUpdateNicknameResponse(
 
 	// UI에 닉네임 변경 성공을 알립니다.
 	OnNicknameUpdated.Broadcast(true, TEXT("Nickname updated."));
+}
+
+void USupabaseSubsystem::HandleEquipSkinResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnSkinEquipped.Broadcast(false, TEXT("Equip skin request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Equip skin failed: %d / %s"), StatusCode, *ResponseText);
+		OnSkinEquipped.Broadcast(false, TEXT("Equip skin failed."));
+		return;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonArray) || JsonArray.Num() == 0)
+	{
+		OnSkinEquipped.Broadcast(false, TEXT("Equip skin response parse failed."));
+		return;
+	}
+
+	const TSharedPtr<FJsonObject> EquipmentObject = JsonArray[0]->AsObject();
+
+	if (!EquipmentObject.IsValid())
+	{
+		OnSkinEquipped.Broadcast(false, TEXT("Equip skin response was empty."));
+		return;
+	}
+
+	FString SkinType;
+	FString EquippedSkinId;
+
+	if (
+		!EquipmentObject->TryGetStringField(TEXT("skin_type"), SkinType) ||
+		!EquipmentObject->TryGetStringField(TEXT("equipped_skin_id"), EquippedSkinId)
+	)
+	{
+		OnSkinEquipped.Broadcast(false, TEXT("Equip skin fields were missing."));
+		return;
+	}
+
+	EquippedSkinIdsByType.Add(SkinType, EquippedSkinId);
+
+	UE_LOG(LogTemp, Log, TEXT("Skin equipped: %s -> %s"), *SkinType, *EquippedSkinId);
+	OnSkinEquipped.Broadcast(true, TEXT("Skin equipped."));
 }
