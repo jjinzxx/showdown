@@ -61,6 +61,32 @@ struct FShowDownSkin
 	bool bIsActive = false;
 };
 
+// 리더보드 한 줄(한 유저)의 정보입니다. get_leaderboard RPC 응답을 담습니다.
+// user_id/email 같은 민감 정보는 포함하지 않고, 공개해도 되는 닉네임/점수만 담습니다.
+USTRUCT(BlueprintType)
+struct FShowDownRankEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	int32 Rank = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	FString Nickname;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Supabase")
+	int32 Score = 0;
+};
+
+// 리더보드 로딩 결과를 알려주는 이벤트입니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnLeaderboardLoaded,
+	bool,
+	bSuccess,
+	const FString&,
+	Message
+);
+
 // 상점/스킨 데이터 로딩 결과를 알려주는 이벤트입니다.
 // skins, player_skins, player_equipment 요청이 각각 끝날 때마다 호출됩니다.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -119,10 +145,21 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnSkinSetPurchased OnSkinSetPurchased;
 
+	// 리더보드 로딩 결과를 외부에 알리는 이벤트입니다.
+	UPROPERTY(BlueprintAssignable)
+	FOnLeaderboardLoaded OnLeaderboardLoaded;
+
 	// 이메일과 비밀번호로 Supabase Auth에 로그인 요청을 보냅니다.
 	// 성공하면 AccessToken과 UserId를 저장하고 LoadPlayerData를 호출합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	void LoginWithEmail(const FString& Email, const FString& Password);
+
+	// 아이디(username)와 비밀번호로 로그인합니다.
+	// 아이디->이메일 매핑과 로그인을 모두 login-with-id Edge Function이 서버에서 처리하고
+	// 세션만 돌려줍니다(이메일이 클라이언트로 노출되지 않음).
+	// 성공 처리는 LoginWithEmail과 동일하게 AccessToken/UserId 저장 + LoadPlayerData입니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void LoginWithId(const FString& Id, const FString& Password);
 
 	// 로그인 후 AccessToken을 이용해서 플레이어 기본 데이터를 불러옵니다.
 	// profiles, player_wallets, player_ranks 테이블에 각각 GET 요청을 보냅니다.
@@ -155,6 +192,15 @@ public:
 	// 서버에서 불러온 랭크 점수를 반환합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	int32 GetScore() const;
+
+	// get_leaderboard RPC를 호출해 전체 랭킹(닉네임+점수)을 불러옵니다.
+	// 완료되면 OnLeaderboardLoaded를 broadcast합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void LoadLeaderboard(int32 Limit = 100);
+
+	// 마지막으로 불러온 리더보드 목록을 반환합니다(점수 내림차순 정렬).
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	TArray<FShowDownRankEntry> GetLeaderboard() const;
 
 	// skin_sets 테이블에서 불러온 활성 상점 상품 목록을 반환합니다.
 	// 이름은 기존 코드 호환을 위해 GetShopSkins로 유지합니다.
@@ -198,6 +244,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	void UpdateNickname(const FString& NewNickname);
 
+	// 싱글플레이 승리 보상으로 랭크 점수(10~50)와 코인(50~100)을 지급합니다.
+	// 보상 금액은 클라이언트가 정하지 못하도록 서버의 award_win_reward RPC에서 결정합니다.
+	// 성공하면 응답의 새 score/coin으로 내부 값을 갱신하고 OnPlayerDataLoaded를 broadcast해
+	// UI(메인메뉴 점수/코인 표시)를 새로고침합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void AwardWinReward();
+
 private:
 	// Supabase 프로젝트 기본 URL입니다.
 	FString SupabaseUrl = TEXT("https://xfyzrqsbdweckjgxefjr.supabase.co");
@@ -222,6 +275,9 @@ private:
 	// player_ranks 테이블에서 불러온 score입니다.
 	int32 Score = 1000;
 
+	// get_leaderboard로 불러온 전체 랭킹 목록입니다.
+	TArray<FShowDownRankEntry> Leaderboard;
+
 	// skin_sets 테이블에서 불러온 활성 상점 상품 목록입니다.
 	TArray<FShowDownSkin> ShopSkins;
 
@@ -241,6 +297,10 @@ private:
 	// access_token과 user.id를 파싱하고, 성공하면 LoadPlayerData를 호출합니다.
 	void HandleLoginResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
+	// login-with-id Edge Function 응답을 처리합니다.
+	// access_token과 user_id를 파싱하고, 성공하면 LoadPlayerData를 호출합니다.
+	void HandleLoginWithIdResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
 	// profiles 테이블 응답을 처리해서 Nickname 값을 저장합니다.
 	void HandleProfileResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
@@ -249,6 +309,9 @@ private:
 
 	// player_ranks 테이블 응답을 처리해서 Score 값을 저장합니다.
 	void HandleRankResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// get_leaderboard RPC 응답(배열)을 처리해서 Leaderboard에 저장합니다.
+	void HandleLeaderboardResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	// skin_sets 테이블 응답을 처리해서 활성 상점 상품 목록을 저장합니다.
 	// 함수 이름은 기존 skins 구조에서 이어진 이름입니다.
@@ -276,6 +339,9 @@ private:
 	// Supabase에 보낸 닉네임 변경 PATCH 요청의 응답을 처리합니다.
 	// 성공하면 응답에서 변경된 nickname을 읽어 내부 변수에 저장합니다.
 	void HandleUpdateNicknameResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// award_win_reward RPC 응답({reward, score})을 처리해서 갱신된 Score를 저장합니다.
+	void HandleAwardWinRewardResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 
 	// Supabase에 보낸 스킨 장착 PATCH 요청의 응답을 처리합니다.
 	void HandleEquipSkinResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);

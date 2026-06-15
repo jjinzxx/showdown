@@ -10,6 +10,7 @@
 #include "InputActionValue.h"
 #include "Kismet/GameplayStatics.h"
 #include "ShowDownGameModeBase.h"
+#include "ShowDownGameStateBase.h"
 
 APlayerPawn::APlayerPawn()
 {
@@ -148,6 +149,25 @@ void APlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	{
 		PlayerInput->BindAction(ia_Turn, ETriggerEvent::Triggered, this, &APlayerPawn::Turn);
 	}
+}
+
+void APlayerPawn::SDWin()
+{
+	AShowDownGameStateBase* ShowDownGameState =
+		GetWorld() ? GetWorld()->GetGameState<AShowDownGameStateBase>() : nullptr;
+
+	if (!ShowDownGameState)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Debug] SDWin: ShowDownGameState not found."));
+		return;
+	}
+
+	// 실제 전 스테이지 클리어 승리와 동일한 이벤트를 발생시켜
+	// HubFlowManager의 보상 지급 + 허브 복귀 흐름을 그대로 태웁니다.
+	ShowDownGameState->SetPhase(EShowDownPhase::GameOver);
+	ShowDownGameState->OnGameOver.Broadcast(EShowDownSide::Player);
+
+	UE_LOG(LogTemp, Log, TEXT("[Debug] SDWin: forced player victory."));
 }
 
 void APlayerPawn::InputSelect(const FInputActionValue& InputValue)

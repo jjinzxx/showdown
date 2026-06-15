@@ -13,10 +13,16 @@
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
 #include "ShowDownGameStateBase.h"
+#include "ShowDownHubFlowManager.h"
 #include "Engine/Engine.h"
 
 AShowDownGameModeBase::AShowDownGameModeBase()
 {
+	// GameState를 AShowDownGameStateBase로 고정합니다.
+	// 이게 없으면 기본 AGameStateBase가 생성되어 GetGameState<AShowDownGameStateBase>()가
+	// 항상 null이 되고, OnGameOver를 포함한 모든 GameState 이벤트가 broadcast되지 않습니다.
+	GameStateClass = AShowDownGameStateBase::StaticClass();
+
 	CardSystem = CreateDefaultSubobject<UCardSystem>(TEXT("CardSystem"));
 	CollectorAISystem = CreateDefaultSubobject<UCollectorAISystem>(TEXT("CollectorAISystem"));
 	BettingSystem = CreateDefaultSubobject<UBettingSystem>(TEXT("BettingSystem"));
@@ -50,9 +56,36 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 void AShowDownGameModeBase::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+	// 레벨에 HubFlowManager가 있으면 싱글플레이 버튼을 누를 때까지 시작을 미룹니다.
+	// 허브가 없는 테스트 레벨(ShowDown_Test 등)에서는 기존처럼 곧장 시작합니다.
+	const bool bHubControlsStart =
+		UGameplayStatics::GetActorOfClass(GetWorld(), AShowDownHubFlowManager::StaticClass()) != nullptr;
+
+	if (bAutoStartOnBeginPlay && !bHubControlsStart)
+	{
+		StartSinglePlayer();
+	}
+}
+
+void AShowDownGameModeBase::StartSinglePlayer()
+{
 	FindCollector();
 	StartStage(0);
+}
+
+void AShowDownGameModeBase::ResetForHubReturn()
+{
+	GetWorldTimerManager().ClearTimer(RevealDelayHandle);
+
+	bBettingPhase = false;
+	bHasPendingRoundReveal = false;
+	bHasPendingFoldReveal = false;
+
+	ClearForeheadCards();
+	ClearHandCards();
+
+	UE_LOG(LogTemp, Log, TEXT("Board reset for hub return."));
 }
 
 void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)

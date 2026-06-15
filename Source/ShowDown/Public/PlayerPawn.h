@@ -82,6 +82,12 @@ public:
 	class ACard* CurrentSelectedCard;
 	
 
+	// 디버그용: 콜렉터 상대 승리를 강제로 발생시킵니다.
+	// 콘솔(`키)에서 SDWin 입력 시 실제 승리와 동일한 OnGameOver(Player) 흐름을 타
+	// 보상 지급과 허브 복귀까지 테스트할 수 있습니다.
+	UFUNCTION(Exec)
+	void SDWin();
+
 	//카드 감지
 	void InputSelect(const FInputActionValue& InputValue);
 	//카메라 회전

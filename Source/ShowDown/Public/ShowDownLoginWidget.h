@@ -39,10 +39,10 @@ protected:
 private:
 	bool bUseLegacyNavigation = true;
 
-	// WBP_Login 안에 있는 이메일 입력창과 연결됩니다.
-	// WBP에서 위젯 이름이 EditableTextBox_Email과 정확히 같아야 합니다.
+	// WBP_Login 안에 있는 아이디 입력창과 연결됩니다.
+	// WBP에서 위젯 이름이 EditableTextBox_Id와 정확히 같아야 합니다.
 	UPROPERTY(meta = (BindWidget))
-	UEditableTextBox* EditableTextBox_Email;
+	UEditableTextBox* EditableTextBox_Id;
 
 	// WBP_Login 안에 있는 비밀번호 입력창과 연결됩니다.
 	// 사용자가 입력한 비밀번호를 C++에서 읽기 위해 사용합니다.

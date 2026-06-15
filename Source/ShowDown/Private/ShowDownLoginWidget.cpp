@@ -50,10 +50,10 @@ void UShowDownLoginWidget::NativeDestruct()
 
 void UShowDownLoginWidget::HandleLoginClicked()
 {
-	// 이메일 입력창이 정상적으로 연결되어 있으면 사용자가 입력한 이메일을 가져옵니다.
+	// 입력창에서 사용자가 입력한 "아이디"를 가져옵니다.
 	// 연결되어 있지 않으면 빈 문자열을 사용해서 크래시를 막습니다.
-	const FString Email = EditableTextBox_Email
-		? EditableTextBox_Email->GetText().ToString()
+	const FString LoginId = EditableTextBox_Id
+		? EditableTextBox_Id->GetText().ToString()
 		: TEXT("");
 
 	// 비밀번호 입력창이 정상적으로 연결되어 있으면 사용자가 입력한 비밀번호를 가져옵니다.
@@ -72,7 +72,7 @@ void UShowDownLoginWidget::HandleLoginClicked()
 	// HTTP 요청과 토큰 처리는 SupabaseSubsystem 쪽에서 담당합니다.
 	if (USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()->GetSubsystem<USupabaseSubsystem>())
 	{
-		SupabaseSubsystem->LoginWithEmail(Email, Password);
+		SupabaseSubsystem->LoginWithId(LoginId, Password);
 	}
 	else if (Text_Status)
 	{

@@ -29,6 +29,9 @@ public:
 	FOnShowDownMainMenuRequest OnShopRequested;
 
 	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Flow")
+	FOnShowDownMainMenuRequest OnRankingRequested;
+
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Flow")
 	FOnShowDownMainMenuRequest OnQuitRequested;
 
 	// true면 기존처럼 MainMenuWidget이 직접 ShopWidget 생성/종료 처리를 합니다.
@@ -79,6 +82,10 @@ private:
 	UPROPERTY(meta = (BindWidget))
 	UButton* Button_Shop;
 
+	// 랭킹(점수 확인) 버튼입니다. WBP에서 Shop 버튼 위에 배치합니다.
+	UPROPERTY(meta = (BindWidget))
+	UButton* Button_Ranking;
+
 	// 게임 종료 버튼입니다.
 	UPROPERTY(meta = (BindWidget))
 	UButton* Button_Quit;
@@ -105,6 +112,10 @@ private:
 	// Shop 버튼을 눌렀을 때 실행됩니다.
 	UFUNCTION()
 	void HandleShopClicked();
+
+	// Ranking 버튼을 눌렀을 때 실행됩니다.
+	UFUNCTION()
+	void HandleRankingClicked();
 
 	// Quit 버튼을 눌렀을 때 실행됩니다.
 	UFUNCTION()

@@ -157,8 +157,21 @@ public:
 	//연출팀이 Phase 연출 종료를 코어에 알릴 때 호출
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation", meta = (DisplayName = "eventEnd"))
 	void EventEnd(EShowDownPhase FinishedPhase);
-	
-	
+
+	// 싱글플레이 한 판을 시작합니다. 콜렉터를 찾고 1스테이지부터 진행합니다.
+	// 허브(L_Hub)에서는 싱글플레이 버튼을 눌렀을 때 HubFlowManager가 이 함수를 호출합니다.
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
+	void StartSinglePlayer();
+
+	// 게임 종료 후 허브(메인메뉴)로 돌아갈 때 게임판을 정리합니다.
+	// 진행 중인 타이머/베팅 상태를 끄고 테이블의 카드를 모두 제거합니다.
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
+	void ResetForHubReturn();
+
+	// true면 BeginPlay에서 곧장 게임을 시작합니다(테스트 레벨용 기본값).
+	// 단, 레벨에 HubFlowManager가 있으면 자동 시작을 미루고 허브 흐름이 시작을 제어합니다.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Flow")
+	bool bAutoStartOnBeginPlay = true;
 
 
 protected:

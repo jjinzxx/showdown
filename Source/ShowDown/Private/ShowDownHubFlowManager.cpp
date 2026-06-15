@@ -6,8 +6,11 @@
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "ShowDownGameModeBase.h"
+#include "ShowDownGameStateBase.h"
 #include "ShowDownLoginWidget.h"
 #include "ShowDownMainMenuWidget.h"
+#include "ShowDownRankWidget.h"
 #include "ShowDownShopWidget.h"
 #include "SupabaseSubsystem.h"
 
@@ -22,19 +25,42 @@ void AShowDownHubFlowManager::BeginPlay()
 	Super::BeginPlay();
 
 	// GameInstanceSubsystem survives level travel, so returning players can skip login.
+	bool bHasSession = false;
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (const USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
 		{
-			if (!SupabaseSubsystem->GetAccessToken().IsEmpty())
-			{
-				ShowMainMenu();
-				return;
-			}
+			bHasSession = !SupabaseSubsystem->GetAccessToken().IsEmpty();
 		}
 	}
 
-	ShowLogin();
+	// 시작 순간엔 폰 스폰 카메라에서 패닝되지 않도록 시작 화면 카메라로 즉시 컷합니다.
+	// 이후 ShowLogin/ShowMainMenu의 블렌드는 같은 카메라로의 블렌드라 화면 이동이 보이지 않습니다.
+	if (APlayerController* PlayerController = GetPrimaryPlayerController())
+	{
+		if (ACameraActor* StartCamera = bHasSession ? MainMenuCamera : LoginCamera)
+		{
+			PlayerController->SetViewTarget(StartCamera);
+		}
+	}
+
+	// 게임 종료(승/패)를 받아 허브로 복귀하기 위해 GameState 이벤트를 구독합니다.
+	if (UWorld* World = GetWorld())
+	{
+		if (AShowDownGameStateBase* ShowDownGameState = World->GetGameState<AShowDownGameStateBase>())
+		{
+			ShowDownGameState->OnGameOver.AddDynamic(this, &AShowDownHubFlowManager::HandleGameOver);
+		}
+	}
+
+	if (bHasSession)
+	{
+		ShowMainMenu();
+	}
+	else
+	{
+		ShowLogin();
+	}
 }
 
 void AShowDownHubFlowManager::ShowLogin()
@@ -91,6 +117,7 @@ void AShowDownHubFlowManager::ShowMainMenu()
 	MainMenuWidget->OnSinglePlayRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleSinglePlayRequested);
 	MainMenuWidget->OnMultiplayerRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleMultiplayerRequested);
 	MainMenuWidget->OnShopRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleShopRequested);
+	MainMenuWidget->OnRankingRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleRankingRequested);
 	MainMenuWidget->OnQuitRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleQuitRequested);
 
 	SetActiveWidget(MainMenuWidget);
@@ -137,13 +164,78 @@ void AShowDownHubFlowManager::ShowShop()
 	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::Shop);
 }
 
+void AShowDownHubFlowManager::ShowRanking()
+{
+	if (!RankWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RankWidgetClass is not set on ShowDownHubFlowManager."));
+		return;
+	}
+
+	// 랭킹 전용 카메라가 지정돼 있으면 그쪽으로, 없으면 메뉴 카메라 시점으로 블렌드합니다.
+	BlendToCamera(RankingCamera ? RankingCamera : MainMenuCamera);
+
+	RankWidget = CreateWidget<UShowDownRankWidget>(
+		GetPrimaryPlayerController(),
+		RankWidgetClass
+	);
+
+	if (!RankWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to create RankWidget."));
+		return;
+	}
+
+	// 랭킹 화면의 "뒤로" 버튼을 메인메뉴 복귀에 연결합니다.
+	RankWidget->OnBackRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleRankBackRequested);
+
+	SetActiveWidget(RankWidget);
+	SetUiOnlyInput(RankWidget);
+	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::Ranking);
+}
+
 void AShowDownHubFlowManager::ShowSinglePlayPreview()
 {
-	// For now this only moves to the table camera inside the hub.
-	// The real single-play state/HUD can be attached here later.
-	BlendToCamera(GameCamera);
+	// 메뉴 UI를 걷어내 카드 클릭/베팅 입력이 폰으로 가도록 합니다.
+	SetActiveWidget(nullptr);
+
+	APlayerController* PlayerController = GetPrimaryPlayerController();
+
+	// GameCamera가 지정돼 있으면 고정 시네마틱 프레이밍으로 블렌드하고,
+	// 비어 있으면 플레이어 폰 카메라로 돌아가 폰의 시점 조작(Turn/LookUp)이 살아납니다.
+	if (GameCamera)
+	{
+		BlendToCamera(GameCamera);
+	}
+	else if (PlayerController && PlayerController->GetPawn())
+	{
+		PlayerController->SetViewTargetWithBlend(PlayerController->GetPawn(), CameraBlendTime);
+	}
+
+	// 카드 커서 트레이스·카메라 조작·베팅 핫키가 모두 폰에 전달되도록 게임 입력 모드로 전환합니다.
+	if (PlayerController)
+	{
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		PlayerController->SetInputMode(InputMode);
+		PlayerController->bShowMouseCursor = true;
+	}
+
+	// 실제 게임 한 판을 시작합니다.
+	if (UWorld* World = GetWorld())
+	{
+		if (AShowDownGameModeBase* GameMode = World->GetAuthGameMode<AShowDownGameModeBase>())
+		{
+			GameMode->StartSinglePlayer();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("L_Hub GameMode is not AShowDownGameModeBase. Single play cannot start."));
+		}
+	}
+
 	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::SinglePlayPreview);
-	UE_LOG(LogTemp, Log, TEXT("Single play requested from HubFlowManager."));
+	UE_LOG(LogTemp, Log, TEXT("Single play started from HubFlowManager."));
 }
 
 void AShowDownHubFlowManager::OpenMultiplayerLevel()
@@ -240,6 +332,11 @@ void AShowDownHubFlowManager::HandleShopRequested()
 	ShowShop();
 }
 
+void AShowDownHubFlowManager::HandleRankingRequested()
+{
+	ShowRanking();
+}
+
 void AShowDownHubFlowManager::HandleQuitRequested()
 {
 	QuitGame();
@@ -247,5 +344,91 @@ void AShowDownHubFlowManager::HandleQuitRequested()
 
 void AShowDownHubFlowManager::HandleShopBackRequested()
 {
+	ShowMainMenu();
+}
+
+void AShowDownHubFlowManager::HandleRankBackRequested()
+{
+	ShowMainMenu();
+}
+
+void AShowDownHubFlowManager::HandleGameOver(EShowDownSide Winner)
+{
+	UE_LOG(LogTemp, Log, TEXT("Game over. Winner: %s. Returning to hub in %.1fs."),
+		Winner == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
+		ReturnToHubDelay);
+
+	// 플레이어가 모든 스테이지를 클리어해 승리하면 랭크 점수 보상을 지급합니다.
+	// 보상 금액(10~50)은 서버의 award_win_reward RPC가 결정하므로 여기서는 호출만 합니다.
+	if (Winner == EShowDownSide::Player)
+	{
+		if (UGameInstance* GameInstance = GetGameInstance())
+		{
+			if (USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
+			{
+				SupabaseSubsystem->AwardWinReward();
+			}
+		}
+	}
+
+	// 연출 파트가 결과 카메라/위젯 연출을 붙일 수 있는 훅입니다(블루프린트에서 구현).
+	OnGameResultPresentation(Winner);
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	// 대기 시간이 0 이하면 즉시 복귀합니다.
+	// (연출 파트가 길이를 직접 제어하려면 ReturnToHubDelay를 충분히 크게 두고
+	//  연출이 끝날 때 FinishResultAndReturnToHub()를 호출하면 됩니다.)
+	if (ReturnToHubDelay <= 0.0f)
+	{
+		ReturnToHub();
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		ReturnToHubTimerHandle,
+		this,
+		&AShowDownHubFlowManager::ReturnToHub,
+		ReturnToHubDelay,
+		false);
+}
+
+void AShowDownHubFlowManager::FinishResultAndReturnToHub()
+{
+	// 자동 복귀 타이머가 걸려 있으면 취소하고 즉시 복귀합니다.
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReturnToHubTimerHandle);
+	}
+
+	ReturnToHub();
+}
+
+void AShowDownHubFlowManager::ReturnToHub()
+{
+	// 테이블의 카드와 진행 상태를 정리합니다.
+	if (UWorld* World = GetWorld())
+	{
+		if (AShowDownGameModeBase* GameMode = World->GetAuthGameMode<AShowDownGameModeBase>())
+		{
+			GameMode->ResetForHubReturn();
+		}
+	}
+
+	// 보상(점수/코인) 반영분을 서버에서 다시 불러와 캐시를 최신으로 맞춥니다.
+	// 새로 뜨는 메인메뉴가 OnPlayerDataLoaded를 받아 갱신된 값을 표시합니다.
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
+		{
+			SupabaseSubsystem->LoadPlayerData();
+		}
+	}
+
+	// 카메라/입력/위젯을 메인메뉴 상태로 되돌립니다.
 	ShowMainMenu();
 }

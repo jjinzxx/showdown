@@ -113,6 +113,181 @@ void USupabaseSubsystem::HandleLoginResponse(
 	OnLoginResult.Broadcast(true, TEXT("Login success."));
 }
 
+void USupabaseSubsystem::LoginWithId(const FString& Id, const FString& Password)
+{
+	// 아이디나 비밀번호가 비어 있으면 서버에 요청하지 않고 바로 실패 처리합니다.
+	if (Id.IsEmpty() || Password.IsEmpty())
+	{
+		OnLoginResult.Broadcast(false, TEXT("ID or password is empty."));
+		return;
+	}
+
+	// login-with-id Edge Function을 호출합니다.
+	// 아이디->이메일 매핑과 실제 로그인은 서버에서 처리되고, 응답으로 세션만 옵니다.
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+
+	Request->SetURL(SupabaseUrl + TEXT("/functions/v1/login-with-id"));
+	Request->SetVerb(TEXT("POST"));
+
+	// Edge Function 접근에도 anon 키가 필요합니다(아직 로그인 전이라 사용자 토큰은 없음).
+	Request->SetHeader(TEXT("apikey"), SupabaseAnonKey);
+	Request->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *SupabaseAnonKey));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+
+	// 요청 body: { "id": "...", "password": "..." }
+	TSharedPtr<FJsonObject> BodyObject = MakeShared<FJsonObject>();
+	BodyObject->SetStringField(TEXT("id"), Id);
+	BodyObject->SetStringField(TEXT("password"), Password);
+
+	FString BodyString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyString);
+	FJsonSerializer::Serialize(BodyObject.ToSharedRef(), Writer);
+	Request->SetContentAsString(BodyString);
+
+	Request->OnProcessRequestComplete().BindUObject(
+		this,
+		&USupabaseSubsystem::HandleLoginWithIdResponse
+	);
+
+	Request->ProcessRequest();
+
+	OnLoginResult.Broadcast(false, TEXT("Logging in..."));
+}
+
+void USupabaseSubsystem::HandleLoginWithIdResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnLoginResult.Broadcast(false, TEXT("Server request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	// Edge Function은 실패 시 아이디 존재 여부를 숨기려고 항상 동일한 401을 돌려줍니다.
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Login (id) failed: %d / %s"), StatusCode, *ResponseText);
+		OnLoginResult.Broadcast(false, TEXT("Login failed."));
+		return;
+	}
+
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		OnLoginResult.Broadcast(false, TEXT("Login response parse failed."));
+		return;
+	}
+
+	// Edge Function이 돌려준 세션에서 access_token과 user_id를 저장합니다.
+	if (!JsonObject->TryGetStringField(TEXT("access_token"), AccessToken))
+	{
+		OnLoginResult.Broadcast(false, TEXT("Access token not found."));
+		return;
+	}
+
+	JsonObject->TryGetStringField(TEXT("user_id"), UserId);
+
+	UE_LOG(LogTemp, Log, TEXT("Login (id) success. UserId: %s"), *UserId);
+
+	// 로그인 성공 후 닉네임/coin/score를 불러옵니다.
+	LoadPlayerData();
+
+	OnLoginResult.Broadcast(true, TEXT("Login success."));
+}
+
+void USupabaseSubsystem::LoadLeaderboard(int32 Limit)
+{
+	if (AccessToken.IsEmpty())
+	{
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Access token is empty."));
+		return;
+	}
+
+	// get_leaderboard RPC 호출. 닉네임+점수만 정렬해서 돌려받습니다.
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
+		CreateAuthorizedRequest(TEXT("/rest/v1/rpc/get_leaderboard"), TEXT("POST"));
+
+	TSharedPtr<FJsonObject> BodyObject = MakeShared<FJsonObject>();
+	BodyObject->SetNumberField(TEXT("p_limit"), Limit);
+
+	FString BodyString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyString);
+	FJsonSerializer::Serialize(BodyObject.ToSharedRef(), Writer);
+	Request->SetContentAsString(BodyString);
+
+	Request->OnProcessRequestComplete().BindUObject(
+		this,
+		&USupabaseSubsystem::HandleLeaderboardResponse
+	);
+
+	Request->ProcessRequest();
+}
+
+void USupabaseSubsystem::HandleLeaderboardResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Leaderboard request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Leaderboard load failed: %d / %s"), StatusCode, *ResponseText);
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Leaderboard load failed."));
+		return;
+	}
+
+	// 응답 형태: [{"rank":1,"nickname":"a","score":1300}, ...]
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonArray))
+	{
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Leaderboard response parse failed."));
+		return;
+	}
+
+	Leaderboard.Reset();
+	for (const TSharedPtr<FJsonValue>& Value : JsonArray)
+	{
+		const TSharedPtr<FJsonObject> Entry = Value->AsObject();
+		if (!Entry.IsValid())
+		{
+			continue;
+		}
+
+		FShowDownRankEntry RankEntry;
+		RankEntry.Rank = static_cast<int32>(Entry->GetIntegerField(TEXT("rank")));
+		Entry->TryGetStringField(TEXT("nickname"), RankEntry.Nickname);
+		RankEntry.Score = Entry->GetIntegerField(TEXT("score"));
+		Leaderboard.Add(RankEntry);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Leaderboard loaded: %d entries."), Leaderboard.Num());
+	OnLeaderboardLoaded.Broadcast(true, TEXT("Leaderboard loaded."));
+}
+
+TArray<FShowDownRankEntry> USupabaseSubsystem::GetLeaderboard() const
+{
+	return Leaderboard;
+}
+
 TSharedRef<IHttpRequest, ESPMode::ThreadSafe> USupabaseSubsystem::CreateAuthorizedRequest(
 	const FString& Endpoint,
 	const FString& Verb
@@ -156,8 +331,11 @@ void USupabaseSubsystem::LoadPlayerData()
 	ProfileRequest->ProcessRequest();
 
 	// player_wallets 테이블에서 현재 유저의 coin을 가져옵니다.
+	// rank GET과 동일하게 user_id 필터를 명시해 RLS 설정과 무관하게 본인 행만 읽습니다.
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> WalletRequest =
-		CreateAuthorizedRequest(TEXT("/rest/v1/player_wallets?select=coin"), TEXT("GET"));
+		CreateAuthorizedRequest(
+			FString::Printf(TEXT("/rest/v1/player_wallets?user_id=eq.%s&select=coin"), *UserId),
+			TEXT("GET"));
 
 	WalletRequest->OnProcessRequestComplete().BindUObject(
 		this,
@@ -167,8 +345,12 @@ void USupabaseSubsystem::LoadPlayerData()
 	WalletRequest->ProcessRequest();
 
 	// player_ranks 테이블에서 현재 유저의 score를 가져옵니다.
+	// user_id 필터를 명시해 RLS 설정과 무관하게 항상 본인 행만 읽도록 합니다.
+	// (필터가 없으면 RLS가 느슨할 때 다른 행을 읽어 score가 엉뚱하게 나올 수 있습니다.)
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> RankRequest =
-		CreateAuthorizedRequest(TEXT("/rest/v1/player_ranks?select=score"), TEXT("GET"));
+		CreateAuthorizedRequest(
+			FString::Printf(TEXT("/rest/v1/player_ranks?user_id=eq.%s&select=score"), *UserId),
+			TEXT("GET"));
 
 	RankRequest->OnProcessRequestComplete().BindUObject(
 		this,
@@ -999,6 +1181,91 @@ void USupabaseSubsystem::HandleUpdateNicknameResponse(
 
 	// UI에 닉네임 변경 성공을 알립니다.
 	OnNicknameUpdated.Broadcast(true, TEXT("Nickname updated."));
+}
+
+void USupabaseSubsystem::AwardWinReward()
+{
+	// 보상 지급은 로그인한 유저만 가능하므로 access_token이 필요합니다.
+	if (AccessToken.IsEmpty())
+	{
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Access token is empty."));
+		return;
+	}
+
+	// 점수 보상은 award_win_reward RPC에서 서버 권한으로 처리합니다.
+	// 보상 금액과 행 수정을 모두 서버가 결정/수행하므로 클라이언트는 score 값을 조작할 수 없습니다.
+	// (SECURITY DEFINER 함수라 RLS UPDATE 정책 없이도 동작합니다.)
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
+		CreateAuthorizedRequest(TEXT("/rest/v1/rpc/award_win_reward"), TEXT("POST"));
+
+	// 인자가 없는 함수지만 PostgREST는 빈 JSON 본문을 기대합니다.
+	Request->SetContentAsString(TEXT("{}"));
+
+	Request->OnProcessRequestComplete().BindUObject(
+		this,
+		&USupabaseSubsystem::HandleAwardWinRewardResponse
+	);
+
+	Request->ProcessRequest();
+
+	UE_LOG(LogTemp, Log, TEXT("AwardWinReward requested."));
+}
+
+void USupabaseSubsystem::HandleAwardWinRewardResponse(
+	FHttpRequestPtr Request,
+	FHttpResponsePtr Response,
+	bool bWasSuccessful
+)
+{
+	if (!bWasSuccessful || !Response.IsValid())
+	{
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward request failed."));
+		return;
+	}
+
+	const int32 StatusCode = Response->GetResponseCode();
+	const FString ResponseText = Response->GetContentAsString();
+
+	if (StatusCode < 200 || StatusCode >= 300)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Reward failed: %d / %s"), StatusCode, *ResponseText);
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward failed."));
+		return;
+	}
+
+	// 응답 형태: { "reward": 30, "score": 1230, "coin_reward": 70, "coin": 520 }
+	TSharedPtr<FJsonObject> JsonObject;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseText);
+
+	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+	{
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward response parse failed."));
+		return;
+	}
+
+	int32 ScoreReward = 0;
+	JsonObject->TryGetNumberField(TEXT("reward"), ScoreReward);
+
+	int32 NewScore = Score;
+	if (JsonObject->TryGetNumberField(TEXT("score"), NewScore))
+	{
+		Score = NewScore;
+	}
+
+	int32 CoinReward = 0;
+	JsonObject->TryGetNumberField(TEXT("coin_reward"), CoinReward);
+
+	int32 NewCoin = Coin;
+	if (JsonObject->TryGetNumberField(TEXT("coin"), NewCoin))
+	{
+		Coin = NewCoin;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Win reward granted: +%d score (=%d), +%d coin (=%d)"),
+		ScoreReward, Score, CoinReward, Coin);
+
+	// 메인메뉴 등 UI가 점수/코인 표시를 새로고침하도록 알립니다.
+	OnPlayerDataLoaded.Broadcast(true, TEXT("Win reward granted."));
 }
 
 void USupabaseSubsystem::HandleEquipSkinResponse(
