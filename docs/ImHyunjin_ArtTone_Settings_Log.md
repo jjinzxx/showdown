@@ -65,6 +65,19 @@
 | Vignette Intensity | 비네트 | `0.4` | 화면 가장자리를 어둡게 해 폐쇄감을 만든다. |
 | Film Grain Intensity | 그레인 | `0.25` | 화면에 거친 질감을 더한다. |
 
+## 검증 메모
+
+### Exposure / EV100
+
+- `Exposure Compensation`은 값이 낮아질수록 어두워지고, 높아질수록 밝아진다.
+  - 예: `-1`은 더 어둡게, `+1`은 더 밝게.
+- `Min EV100` / `Max EV100`은 값이 올라갈수록 화면이 어두워지는 방향이다.
+- 자동 노출을 고정하려면 `Min EV100`과 `Max EV100`을 같은 값으로 맞춘다.
+- 고정값을 바꿀 때의 감각:
+  - `Min EV100 = Max EV100 = 0`보다
+  - `Min EV100 = Max EV100 = 1`이 더 어둡다.
+- 따라서 호러 톤을 잡을 때는 값을 올리면 더 어두워지고, 값을 내리면 더 밝아지는 것으로 판단한다.
+
 ## 실제 적용 로그
 
 ### 기본 포스트 프로세스 1차
@@ -98,3 +111,6 @@
   - `SceneTexture(PostProcessInput0).Color` -> `Emissive Color`
   - `Scalar Parameter`: `PixelCount`
 - `M_PP_Pixelate`를 `PostProcessVolume`의 `Post Process Materials` / `Blendables`에 추가해 화면에 적용했다.
+- `PostProcessVolume`에서 색수차 / Chromatic Aberration 계열 값을 테스트했다.
+  - 기본 후보값: `0.2`
+  - `2.0`은 효과가 강하게 보이지만 기본 화면용으로는 과해 보여 연출 순간용 후보로 보류했다.
