@@ -7,6 +7,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "GameFramework/PlayerController.h"
+#include "ShowDownShopWidget.h"
 
 void UShowDownMainMenuWidget::NativeConstruct()
 {
@@ -203,7 +204,6 @@ void UShowDownMainMenuWidget::HandleMultiplayerClicked()
 
 void UShowDownMainMenuWidget::HandleShopClicked()
 {
-	// 상점 UI로 전환할 자리입니다.
 	UE_LOG(LogTemp, Log, TEXT("Shop clicked"));
 
 	if (USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()->GetSubsystem<USupabaseSubsystem>())
@@ -237,6 +237,18 @@ void UShowDownMainMenuWidget::HandleShopClicked()
 				bEquipped ? TEXT("true") : TEXT("false")
 			);
 		}
+	}
+
+	ShopWidget = CreateWidget<UShowDownShopWidget>(
+		GetOwningPlayer(),
+		UShowDownShopWidget::StaticClass()
+	);
+
+	if (ShopWidget)
+	{
+		ShopWidget->SetMainMenuWidget(this);
+		SetVisibility(ESlateVisibility::Collapsed);
+		ShopWidget->AddToViewport();
 	}
 }
 

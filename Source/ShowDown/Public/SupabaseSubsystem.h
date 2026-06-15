@@ -69,6 +69,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	Message
 );
 
+// 장착 스킨 변경 요청 결과를 알려주는 이벤트입니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnSkinEquipped,
+	bool,
+	bSuccess,
+	const FString&,
+	Message
+);
+
 // Supabase와 통신하는 전용 Subsystem입니다.
 // GameInstanceSubsystem이라 게임 실행 중 계속 유지되고, UI나 게임 로직에서 쉽게 꺼내 쓸 수 있습니다.
 UCLASS()
@@ -90,6 +99,10 @@ public:
 	// 상점 스킨, 보유 스킨, 장착 스킨 로딩 결과를 외부에 알리는 이벤트입니다.
 	UPROPERTY(BlueprintAssignable)
 	FOnCosmeticDataLoaded OnCosmeticDataLoaded;
+
+	// 스킨 장착 변경 결과를 외부에 알리는 이벤트입니다.
+	UPROPERTY(BlueprintAssignable)
+	FOnSkinEquipped OnSkinEquipped;
 
 	// 이메일과 비밀번호로 Supabase Auth에 로그인 요청을 보냅니다.
 	// 성공하면 AccessToken과 UserId를 저장하고 LoadPlayerData를 호출합니다.
@@ -143,6 +156,10 @@ public:
 	// 특정 스킨을 보유 중인지 확인합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
 	bool IsSkinOwned(const FString& SkinId) const;
+
+	// 보유 중인 스킨을 해당 타입의 장착 스킨으로 저장합니다.
+	UFUNCTION(BlueprintCallable, Category = "Supabase")
+	void EquipSkin(const FString& SkinId);
 	
 	// 닉네임 변경 결과를 외부에 알리는 이벤트입니다.
 	// MainMenu UI가 이 이벤트를 구독해서 화면의 닉네임을 새로고침할 수 있습니다.
@@ -219,4 +236,7 @@ private:
 	// Supabase에 보낸 닉네임 변경 PATCH 요청의 응답을 처리합니다.
 	// 성공하면 응답에서 변경된 nickname을 읽어 내부 변수에 저장합니다.
 	void HandleUpdateNicknameResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+
+	// Supabase에 보낸 스킨 장착 PATCH 요청의 응답을 처리합니다.
+	void HandleEquipSkinResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
 };

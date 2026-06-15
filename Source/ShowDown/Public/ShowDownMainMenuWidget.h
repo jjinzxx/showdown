@@ -7,6 +7,7 @@
 class UTextBlock;
 class UEditableTextBox;
 class UButton;
+class UShowDownShopWidget;
 
 UCLASS()
 class SHOWDOWN_API UShowDownMainMenuWidget : public UUserWidget
@@ -58,6 +59,10 @@ private:
 	// 게임 종료 버튼입니다.
 	UPROPERTY(meta = (BindWidget))
 	UButton* Button_Quit;
+
+	// 에셋 없이 C++에서 생성하는 데모 상점 위젯입니다.
+	UPROPERTY()
+	UShowDownShopWidget* ShopWidget;
 
 	// SupabaseSubsystem에 저장된 nickname, coin, score를 화면에 반영합니다.
 	void RefreshPlayerInfo();
