@@ -13,6 +13,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
 #include "ShowDownGameStateBase.h"
+#include "ShowDownHubFlowManager.h"
 #include "Engine/Engine.h"
 
 AShowDownGameModeBase::AShowDownGameModeBase()
@@ -50,7 +51,20 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 void AShowDownGameModeBase::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
+	// 레벨에 HubFlowManager가 있으면 싱글플레이 버튼을 누를 때까지 시작을 미룹니다.
+	// 허브가 없는 테스트 레벨(ShowDown_Test 등)에서는 기존처럼 곧장 시작합니다.
+	const bool bHubControlsStart =
+		UGameplayStatics::GetActorOfClass(GetWorld(), AShowDownHubFlowManager::StaticClass()) != nullptr;
+
+	if (bAutoStartOnBeginPlay && !bHubControlsStart)
+	{
+		StartSinglePlayer();
+	}
+}
+
+void AShowDownGameModeBase::StartSinglePlayer()
+{
 	FindCollector();
 	StartStage(0);
 }

@@ -6,6 +6,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "ShowDownGameModeBase.h"
 #include "ShowDownLoginWidget.h"
 #include "ShowDownMainMenuWidget.h"
 #include "ShowDownShopWidget.h"
@@ -22,19 +23,33 @@ void AShowDownHubFlowManager::BeginPlay()
 	Super::BeginPlay();
 
 	// GameInstanceSubsystem survives level travel, so returning players can skip login.
+	bool bHasSession = false;
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (const USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
 		{
-			if (!SupabaseSubsystem->GetAccessToken().IsEmpty())
-			{
-				ShowMainMenu();
-				return;
-			}
+			bHasSession = !SupabaseSubsystem->GetAccessToken().IsEmpty();
 		}
 	}
 
-	ShowLogin();
+	// 시작 순간엔 폰 스폰 카메라에서 패닝되지 않도록 시작 화면 카메라로 즉시 컷합니다.
+	// 이후 ShowLogin/ShowMainMenu의 블렌드는 같은 카메라로의 블렌드라 화면 이동이 보이지 않습니다.
+	if (APlayerController* PlayerController = GetPrimaryPlayerController())
+	{
+		if (ACameraActor* StartCamera = bHasSession ? MainMenuCamera : LoginCamera)
+		{
+			PlayerController->SetViewTarget(StartCamera);
+		}
+	}
+
+	if (bHasSession)
+	{
+		ShowMainMenu();
+	}
+	else
+	{
+		ShowLogin();
+	}
 }
 
 void AShowDownHubFlowManager::ShowLogin()
@@ -139,11 +154,46 @@ void AShowDownHubFlowManager::ShowShop()
 
 void AShowDownHubFlowManager::ShowSinglePlayPreview()
 {
-	// For now this only moves to the table camera inside the hub.
-	// The real single-play state/HUD can be attached here later.
-	BlendToCamera(GameCamera);
+	// 메뉴 UI를 걷어내 카드 클릭/베팅 입력이 폰으로 가도록 합니다.
+	SetActiveWidget(nullptr);
+
+	APlayerController* PlayerController = GetPrimaryPlayerController();
+
+	// GameCamera가 지정돼 있으면 고정 시네마틱 프레이밍으로 블렌드하고,
+	// 비어 있으면 플레이어 폰 카메라로 돌아가 폰의 시점 조작(Turn/LookUp)이 살아납니다.
+	if (GameCamera)
+	{
+		BlendToCamera(GameCamera);
+	}
+	else if (PlayerController && PlayerController->GetPawn())
+	{
+		PlayerController->SetViewTargetWithBlend(PlayerController->GetPawn(), CameraBlendTime);
+	}
+
+	// 카드 커서 트레이스·카메라 조작·베팅 핫키가 모두 폰에 전달되도록 게임 입력 모드로 전환합니다.
+	if (PlayerController)
+	{
+		FInputModeGameAndUI InputMode;
+		InputMode.SetHideCursorDuringCapture(false);
+		PlayerController->SetInputMode(InputMode);
+		PlayerController->bShowMouseCursor = true;
+	}
+
+	// 실제 게임 한 판을 시작합니다.
+	if (UWorld* World = GetWorld())
+	{
+		if (AShowDownGameModeBase* GameMode = World->GetAuthGameMode<AShowDownGameModeBase>())
+		{
+			GameMode->StartSinglePlayer();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("L_Hub GameMode is not AShowDownGameModeBase. Single play cannot start."));
+		}
+	}
+
 	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::SinglePlayPreview);
-	UE_LOG(LogTemp, Log, TEXT("Single play requested from HubFlowManager."));
+	UE_LOG(LogTemp, Log, TEXT("Single play started from HubFlowManager."));
 }
 
 void AShowDownHubFlowManager::OpenMultiplayerLevel()
