@@ -16,6 +16,7 @@ class UCollectorAISystem;
 class UBettingSystem;
 class URoundResolver;
 class URouletteSystem;
+class AShowDownGameStateBase;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
 USTRUCT(BlueprintType)
@@ -34,6 +35,33 @@ struct FShowDownParticipantState
 
 	UPROPERTY()
 	int32 CurrentBet = 0;
+};
+
+//스테이지 구조체
+USTRUCT(BlueprintType)
+struct FShowDownStageRule
+{
+	GENERATED_BODY()
+
+	//스테이지 시작 체력
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Stage")
+	int32 StartingLives = 3;
+
+	//스테이지 최소 베팅 총알 수
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Stage")
+	int32 MinimumBet = 1;
+
+	//콜렉터 블러핑 확률
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Stage")
+	float CollectorBluffRate = 0.15f;
+
+	//콜렉터 공격성
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Stage")
+	float CollectorAggression = 0.5f;
+
+	//자신이 7일 때 폴드하면 6발 장전할지 여부
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Stage")
+	bool bSevenFoldLoadsSix = true;
 };
 
 UCLASS()
@@ -90,6 +118,14 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Roulette")
 	URouletteSystem* RouletteSystem;
 
+	//스테이지별 규칙 목록
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Stage")
+	TArray<FShowDownStageRule> StageRules;
+
+	//현재 스테이지 인덱스
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Stage")
+	int32 CurrentStageIndex = 0;
+
 	// 플레이어가 선택한 카드를 게임모드에 전달
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Card")
 	void PlayerSelectedCard(ACard* SelectedCard);
@@ -106,9 +142,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void PlayerRaise();
 
+	// 플레이어가 지정한 최종 총알 수로 레이즈
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void PlayerRaiseTo(int32 BulletCount);
+
 	// 플레이어 폴드
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void PlayerFold();
+
+	//연출팀이 Phase 연출 종료를 코어에 알릴 때 호출
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation")
+	void NotifyPresentationFinished(EShowDownPhase FinishedPhase);
+
+	//연출팀이 Phase 연출 종료를 코어에 알릴 때 호출
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation", meta = (DisplayName = "eventEnd"))
+	void EventEnd(EShowDownPhase FinishedPhase);
+	
 	
 
 
@@ -126,6 +175,14 @@ private:
 	
 	bool bBettingPhase = false;
 	FTimerHandle RevealDelayHandle;
+	int32 BettingRaisesLeft = 6;
+	bool bHasLastRaiser = false;
+	EShowDownSide LastRaiser = EShowDownSide::Player;
+	bool bHasPendingRoundReveal = false;
+	bool bHasPendingFoldReveal = false;
+	EShowDownRoundResult PendingRoundResult = EShowDownRoundResult::Draw;
+	EShowDownSide PendingFoldedSide = EShowDownSide::Player;
+	int32 PendingFoldLoadCount = 1;
 	
 	//콜렉터 추적
 	UPROPERTY()
@@ -144,6 +201,12 @@ private:
 	void ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount);
 	void EndRound();
 	void ClearForeheadCards();
+	void ClearHandCards();
 	void SetPlayerHandSelectable(bool bSelectable);
+	void StartStage(int32 StageIndex);
+	void AdvanceStage();
+	const FShowDownStageRule* GetCurrentStageRule() const;
+	AShowDownGameStateBase* GetShowDownGameState() const;
+	void ShowEventDebugMessage(const FString& Message) const;
 	
 };

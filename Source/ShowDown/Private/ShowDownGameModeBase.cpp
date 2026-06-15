@@ -12,6 +12,8 @@
 #include "ShowDownTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
+#include "ShowDownGameStateBase.h"
+#include "Engine/Engine.h"
 
 AShowDownGameModeBase::AShowDownGameModeBase()
 {
@@ -20,6 +22,29 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 	BettingSystem = CreateDefaultSubobject<UBettingSystem>(TEXT("BettingSystem"));
 	RoundResolver = CreateDefaultSubobject<URoundResolver>(TEXT("RoundResolver"));
 	RouletteSystem = CreateDefaultSubobject<URouletteSystem>(TEXT("RouletteSystem"));
+
+	FShowDownStageRule Stage1;
+	Stage1.StartingLives = 3;
+	Stage1.MinimumBet = 1;
+	Stage1.CollectorBluffRate = 0.15f;
+	Stage1.CollectorAggression = 0.5f;
+	Stage1.bSevenFoldLoadsSix = true;
+
+	FShowDownStageRule Stage2;
+	Stage2.StartingLives = 3;
+	Stage2.MinimumBet = 1;
+	Stage2.CollectorBluffRate = 0.25f;
+	Stage2.CollectorAggression = 0.55f;
+	Stage2.bSevenFoldLoadsSix = true;
+
+	FShowDownStageRule Stage3;
+	Stage3.StartingLives = 3;
+	Stage3.MinimumBet = 2;
+	Stage3.CollectorBluffRate = 0.3f;
+	Stage3.CollectorAggression = 0.75f;
+	Stage3.bSevenFoldLoadsSix = true;
+
+	StageRules = { Stage1, Stage2, Stage3 };
 }
 
 void AShowDownGameModeBase::BeginPlay()
@@ -27,7 +52,7 @@ void AShowDownGameModeBase::BeginPlay()
 	Super::BeginPlay();
 	
 	FindCollector();
-	DealInitialHand();
+	StartStage(0);
 }
 
 void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
@@ -196,21 +221,34 @@ void AShowDownGameModeBase::CollectorGiveCardToPlayer()
 
 void AShowDownGameModeBase::StartBettingPhase()
 {
-	if (!BettingSystem)
+	const FShowDownStageRule* StageRule = GetCurrentStageRule();
+	if (!BettingSystem || !StageRule)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("BettingSystem is missing on %s."), *GetName());
 		return;
 	}
 
 	bBettingPhase = true;
-	PlayerState.CurrentBet = 0;
-	CollectorState.CurrentBet = 0;
+	PlayerState.CurrentBet = StageRule->MinimumBet;
+	CollectorState.CurrentBet = StageRule->MinimumBet;
+	BettingRaisesLeft = 6;
+	bHasLastRaiser = false;
 	SetPlayerHandSelectable(false);
 
-	// 일단 최소 베팅 0으로 시작. 나중에 1로 바꿔도 됨.
-	BettingSystem->ResetBetting(0);
+	BettingSystem->ResetBetting(StageRule->MinimumBet);
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetPhase(EShowDownPhase::Betting);
+		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
+		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
+	}
+	ShowEventDebugMessage(FString::Printf(TEXT("베팅 시작 - 플레이어 %d발 / 콜렉터 %d발"),
+		PlayerState.CurrentBet,
+		CollectorState.CurrentBet));
 
-	UE_LOG(LogTemp, Log, TEXT("Betting phase started. Q=Check, E=Raise, R=Fold"));
+	UE_LOG(LogTemp, Log, TEXT("Betting phase started. Stage %d, MinimumBet %d. Q=Check/Call, 1~5=Raise extra bullets, R=Fold"),
+		CurrentStageIndex + 1,
+		StageRule->MinimumBet);
 }
 
 void AShowDownGameModeBase::PlayerCheck()
@@ -226,6 +264,11 @@ void AShowDownGameModeBase::PlayerCheck()
 		BettingSystem->Call(EShowDownSide::Player);
 		PlayerState.CurrentBet = CurrentBet;
 		bBettingPhase = false;
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
+		}
+		ShowEventDebugMessage(FString::Printf(TEXT("플레이어 콜 - %d발"), PlayerState.CurrentBet));
 
 		UE_LOG(LogTemp, Log, TEXT("Player Call %d"), CurrentBet);
 		FinishBettingAndResolveRound();
@@ -234,6 +277,11 @@ void AShowDownGameModeBase::PlayerCheck()
 
 	BettingSystem->Check(EShowDownSide::Player);
 	PlayerState.CurrentBet = CurrentBet;
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
+	}
+	ShowEventDebugMessage(FString::Printf(TEXT("플레이어 체크 - %d발"), PlayerState.CurrentBet));
 
 	UE_LOG(LogTemp, Log, TEXT("Player Check"));
 
@@ -242,21 +290,43 @@ void AShowDownGameModeBase::PlayerCheck()
 
 void AShowDownGameModeBase::PlayerRaise()
 {
-	if (!bBettingPhase || !BettingSystem || !CollectorAISystem)
+	if (!BettingSystem)
 	{
 		return;
 	}
 
 	const int32 CurrentBet = BettingSystem->GetCurrentBet();
-	const int32 NewBet = FMath::Clamp(CurrentBet + 1, 1, 6);
+	PlayerRaiseTo(CurrentBet + 1);
+}
+
+void AShowDownGameModeBase::PlayerRaiseTo(int32 BulletCount)
+{
+	if (!bBettingPhase || !BettingSystem || !CollectorAISystem)
+	{
+		return;
+	}
+
+	const int32 NewBet = FMath::Clamp(BulletCount, 1, 6);
 
 	if (BettingSystem->RaiseTo(EShowDownSide::Player, NewBet))
 	{
 		PlayerState.CurrentBet = NewBet;
-
+		BettingRaisesLeft = FMath::Max(0, BettingRaisesLeft - 1);
+		bHasLastRaiser = true;
+		LastRaiser = EShowDownSide::Player;
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
+		}
+		ShowEventDebugMessage(FString::Printf(TEXT("플레이어 레이즈 - %d발"), PlayerState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Player Raise to %d"), NewBet);
-
 		ResolveCollectorBetResponse();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Player Raise failed. Current bet: %d, requested: %d"),
+			BettingSystem->GetCurrentBet(),
+			NewBet);
 	}
 }
 
@@ -270,9 +340,47 @@ void AShowDownGameModeBase::PlayerFold()
 	BettingSystem->Fold(EShowDownSide::Player);
 
 	bBettingPhase = false;
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
+	}
+	ShowEventDebugMessage(FString::Printf(TEXT("플레이어 폴드 - %d발"), PlayerState.CurrentBet));
 
 	UE_LOG(LogTemp, Log, TEXT("Player Fold"));
 	ResolveFold(EShowDownSide::Player);
+}
+
+void AShowDownGameModeBase::NotifyPresentationFinished(EShowDownPhase FinishedPhase)
+{
+	EventEnd(FinishedPhase);
+}
+
+void AShowDownGameModeBase::EventEnd(EShowDownPhase FinishedPhase)
+{
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->EventEnd(FinishedPhase);
+	}
+
+	ShowEventDebugMessage(FString::Printf(TEXT("연출 종료 알림 - Phase %d"), static_cast<int32>(FinishedPhase)));
+
+	if (FinishedPhase != EShowDownPhase::Reveal)
+	{
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(RevealDelayHandle);
+
+	if (bHasPendingFoldReveal)
+	{
+		ContinueFoldAfterReveal(PendingFoldedSide, PendingFoldLoadCount);
+		return;
+	}
+
+	if (bHasPendingRoundReveal)
+	{
+		ContinueRoundAfterReveal(PendingRoundResult);
+	}
 }
 
 float AShowDownGameModeBase::EstimateCollectorWinChance() const
@@ -307,9 +415,21 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 
 	const int32 CurrentBet = BettingSystem->GetCurrentBet();
 	const int32 GivenCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
-	const EShowDownBetAction CollectorAction = CollectorAISystem->ChooseBetActionByGivenCard(GivenCardRank, CurrentBet);
+	const FCollectorBetDecision CollectorDecision = CollectorAISystem->ChooseBetDecisionByModel(
+		CollectorState.HandCards,
+		GivenCardRank,
+		CurrentBet,
+		CollectorState.CurrentBet,
+		6,
+		BettingRaisesLeft,
+		bHasLastRaiser && LastRaiser == EShowDownSide::Collector);
+	const EShowDownBetAction CollectorAction = CollectorDecision.Action;
 
-	UE_LOG(LogTemp, Log, TEXT("Collector remembers given card rank: %d"), GivenCardRank);
+	UE_LOG(LogTemp, Log, TEXT("Collector model: given card rank %d, current bet %d, committed %d, raises left %d"),
+		GivenCardRank,
+		CurrentBet,
+		CollectorState.CurrentBet,
+		BettingRaisesLeft);
 
 	switch (CollectorAction)
 	{
@@ -317,6 +437,11 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		BettingSystem->Check(EShowDownSide::Collector);
 		CollectorState.CurrentBet = CurrentBet;
 		bBettingPhase = false;
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
+		}
+		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 체크 - %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Check"));
 		FinishBettingAndResolveRound();
 		break;
@@ -325,16 +450,29 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		BettingSystem->Call(EShowDownSide::Collector);
 		CollectorState.CurrentBet = CurrentBet;
 		bBettingPhase = false;
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
+		}
+		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 콜 - %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Call %d"), CurrentBet);
 		FinishBettingAndResolveRound();
 		break;
 
 	case EShowDownBetAction::Raise:
 		{
-			const int32 NewBet = FMath::Clamp(CurrentBet + 1, 1, 6);
+			const int32 NewBet = FMath::Clamp(CollectorDecision.TargetBet, CurrentBet + 1, 6);
 			if (BettingSystem->RaiseTo(EShowDownSide::Collector, NewBet))
 			{
 				CollectorState.CurrentBet = NewBet;
+				BettingRaisesLeft = FMath::Max(0, BettingRaisesLeft - 1);
+				bHasLastRaiser = true;
+				LastRaiser = EShowDownSide::Collector;
+				if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+				{
+					ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
+				}
+				ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 레이즈 - %d발"), CollectorState.CurrentBet));
 				UE_LOG(LogTemp, Log, TEXT("Collector Raise to %d"), NewBet);
 				UE_LOG(LogTemp, Log, TEXT("Player needs to respond."));
 			}
@@ -344,6 +482,11 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 	case EShowDownBetAction::Fold:
 		BettingSystem->Fold(EShowDownSide::Collector);
 		bBettingPhase = false;
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
+		}
+		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 폴드 - %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Fold"));
 		ResolveFold(EShowDownSide::Collector);
 		break;
@@ -367,9 +510,23 @@ void AShowDownGameModeBase::FinishBettingAndResolveRound()
 	const int32 PlayerCardRank = PlayerState.ForeheadCard->Rank;
 	const int32 CollectorCardRank = CollectorState.ForeheadCard->Rank;
 	const EShowDownRoundResult Result = RoundResolver->ResolveRevealedCards(PlayerCardRank, CollectorCardRank);
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetPhase(EShowDownPhase::Reveal);
+		ShowDownGameState->OnCardsRevealed.Broadcast(PlayerCardRank, CollectorCardRank);
+		ShowDownGameState->OnRoundResolved.Broadcast(Result);
+	}
+	ShowEventDebugMessage(FString::Printf(TEXT("카드 공개 - 플레이어 %d / 콜렉터 %d / 결과 %d"),
+		PlayerCardRank,
+		CollectorCardRank,
+		static_cast<int32>(Result)));
 
 	UE_LOG(LogTemp, Log, TEXT("Reveal cards. Player: %d, Collector: %d"), PlayerCardRank, CollectorCardRank);
 	UE_LOG(LogTemp, Log, TEXT("Roulette will start in 5 seconds."));
+
+	bHasPendingRoundReveal = true;
+	bHasPendingFoldReveal = false;
+	PendingRoundResult = Result;
 
 	GetWorldTimerManager().SetTimer(
 		RevealDelayHandle,
@@ -380,6 +537,12 @@ void AShowDownGameModeBase::FinishBettingAndResolveRound()
 
 void AShowDownGameModeBase::ContinueRoundAfterReveal(EShowDownRoundResult Result)
 {
+	bHasPendingRoundReveal = false;
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->EventEnd(EShowDownPhase::Reveal);
+	}
+
 	switch (Result)
 	{
 	case EShowDownRoundResult::PlayerWin:
@@ -416,7 +579,9 @@ void AShowDownGameModeBase::ResolveFold(EShowDownSide FoldedSide)
 
 	FShowDownParticipantState& FoldedState = FoldedSide == EShowDownSide::Player ? PlayerState : CollectorState;
 	const int32 FoldedCardRank = FoldedState.ForeheadCard ? FoldedState.ForeheadCard->Rank : 0;
-	const int32 LoadCount = RoundResolver->GetFoldLoadCount(FoldedCardRank, FoldedState.CurrentBet);
+	const FShowDownStageRule* StageRule = GetCurrentStageRule();
+	const bool bSevenFoldLoadsSix = StageRule ? StageRule->bSevenFoldLoadsSix : true;
+	const int32 LoadCount = RoundResolver->GetFoldLoadCount(FoldedCardRank, FoldedState.CurrentBet, bSevenFoldLoadsSix);
 
 	if (PlayerState.ForeheadCard)
 	{
@@ -427,12 +592,32 @@ void AShowDownGameModeBase::ResolveFold(EShowDownSide FoldedSide)
 	{
 		CollectorState.ForeheadCard->SetFaceUp(true);
 	}
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		const int32 PlayerCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
+		const int32 CollectorCardRank = CollectorState.ForeheadCard ? CollectorState.ForeheadCard->Rank : 0;
+		const EShowDownRoundResult FoldResult = FoldedSide == EShowDownSide::Player
+			? EShowDownRoundResult::CollectorWin
+			: EShowDownRoundResult::PlayerWin;
+		ShowDownGameState->SetPhase(EShowDownPhase::Reveal);
+		ShowDownGameState->OnCardsRevealed.Broadcast(PlayerCardRank, CollectorCardRank);
+		ShowDownGameState->OnRoundResolved.Broadcast(FoldResult);
+	}
+	ShowEventDebugMessage(FString::Printf(TEXT("폴드 후 카드 공개 - 결과 %d"),
+		static_cast<int32>(FoldedSide == EShowDownSide::Player
+			? EShowDownRoundResult::CollectorWin
+			: EShowDownRoundResult::PlayerWin)));
 
 	UE_LOG(LogTemp, Log, TEXT("%s folded. Forehead card: %d, roulette load: %d"),
 		FoldedSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
 		FoldedCardRank,
 		LoadCount);
 	UE_LOG(LogTemp, Log, TEXT("Roulette will start in 5 seconds."));
+
+	bHasPendingRoundReveal = false;
+	bHasPendingFoldReveal = true;
+	PendingFoldedSide = FoldedSide;
+	PendingFoldLoadCount = LoadCount;
 
 	GetWorldTimerManager().SetTimer(
 		RevealDelayHandle,
@@ -443,6 +628,12 @@ void AShowDownGameModeBase::ResolveFold(EShowDownSide FoldedSide)
 
 void AShowDownGameModeBase::ContinueFoldAfterReveal(EShowDownSide FoldedSide, int32 LoadCount)
 {
+	bHasPendingFoldReveal = false;
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->EventEnd(EShowDownPhase::Reveal);
+	}
+
 	ApplyRouletteResult(FoldedSide, LoadCount);
 	EndRound();
 }
@@ -455,9 +646,24 @@ void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 
 		return;
 	}
 
-	const int32 ClampedBulletCount = FMath::Clamp(BulletCount, 0, 6);
+	const int32 ClampedBulletCount = FMath::Clamp(BulletCount, 1, 6);
 	const float HitChance = RouletteSystem->GetHitChance(ClampedBulletCount);
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetPhase(EShowDownPhase::Roulette);
+		ShowDownGameState->OnRouletteStarted.Broadcast(TargetSide, ClampedBulletCount);
+	}
+	ShowEventDebugMessage(FString::Printf(TEXT("룰렛 시작 - 대상 %s / %d발"),
+		TargetSide == EShowDownSide::Player ? TEXT("플레이어") : TEXT("콜렉터"),
+		ClampedBulletCount));
 	const bool bHit = RouletteSystem->RollRoulette(ClampedBulletCount);
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->OnRouletteResult.Broadcast(TargetSide, bHit);
+	}
+	ShowEventDebugMessage(FString::Printf(TEXT("룰렛 결과 - %s %s"),
+		TargetSide == EShowDownSide::Player ? TEXT("플레이어") : TEXT("콜렉터"),
+		bHit ? TEXT("명중") : TEXT("불발")));
 
 	UE_LOG(LogTemp, Log, TEXT("%s roulette: %d/6, %.0f%% chance, result: %s"),
 		TargetSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
@@ -472,6 +678,13 @@ void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 
 
 	FShowDownParticipantState& TargetState = TargetSide == EShowDownSide::Player ? PlayerState : CollectorState;
 	TargetState.Lives = FMath::Max(0, TargetState.Lives - 1);
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->OnLifeChanged.Broadcast(TargetSide, TargetState.Lives);
+	}
+	ShowEventDebugMessage(FString::Printf(TEXT("목숨 변경 - %s 남은 목숨 %d"),
+		TargetSide == EShowDownSide::Player ? TEXT("플레이어") : TEXT("콜렉터"),
+		TargetState.Lives));
 
 	UE_LOG(LogTemp, Log, TEXT("%s lives: %d"),
 		TargetSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
@@ -481,19 +694,36 @@ void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 
 void AShowDownGameModeBase::EndRound()
 {
 	bBettingPhase = false;
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetPhase(EShowDownPhase::RoundEnd);
+	}
+	ShowEventDebugMessage(TEXT("라운드 종료"));
 
 	ClearForeheadCards();
 
 	if (PlayerState.Lives <= 0)
 	{
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->SetPhase(EShowDownPhase::GameOver);
+			ShowDownGameState->OnGameOver.Broadcast(EShowDownSide::Collector);
+		}
+		ShowEventDebugMessage(TEXT("게임 종료 - 콜렉터 승리"));
 		UE_LOG(LogTemp, Log, TEXT("Game Over. Player has no lives left."));
 		return;
 	}
 
 	if (CollectorState.Lives <= 0)
 	{
-		UE_LOG(LogTemp, Log, TEXT("Player wins. Collector has no lives left."));
+		UE_LOG(LogTemp, Log, TEXT("Stage %d cleared. Collector has no lives left."), CurrentStageIndex + 1);
+		AdvanceStage();
 		return;
+	}
+
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->CurrentRound++;
 	}
 
 	const bool bNeedRedeal = PlayerState.HandCards.Num() <= 0 || CollectorState.HandCards.Num() <= 0;
@@ -501,10 +731,19 @@ void AShowDownGameModeBase::EndRound()
 	{
 		UE_LOG(LogTemp, Log, TEXT("Hands are empty. Shuffling and dealing new 5-card hands."));
 		DealInitialHand();
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
+		}
 		return;
 	}
 
 	SetPlayerHandSelectable(true);
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
+	}
+	ShowEventDebugMessage(TEXT("다음 라운드 준비 - 카드 선택"));
 	UE_LOG(LogTemp, Log, TEXT("Next round ready. Player hand: %d, Collector hand: %d"),
 		PlayerState.HandCards.Num(),
 		CollectorState.HandCards.Num());
@@ -534,6 +773,27 @@ void AShowDownGameModeBase::ClearForeheadCards()
 	}
 }
 
+void AShowDownGameModeBase::ClearHandCards()
+{
+	for (ACard* Card : PlayerState.HandCards)
+	{
+		if (Card)
+		{
+			Card->Destroy();
+		}
+	}
+	PlayerState.HandCards.Reset();
+
+	for (ACard* Card : CollectorState.HandCards)
+	{
+		if (Card)
+		{
+			Card->Destroy();
+		}
+	}
+	CollectorState.HandCards.Reset();
+}
+
 void AShowDownGameModeBase::SetPlayerHandSelectable(bool bSelectable)
 {
 	for (ACard* Card : PlayerState.HandCards)
@@ -542,5 +802,92 @@ void AShowDownGameModeBase::SetPlayerHandSelectable(bool bSelectable)
 		{
 			Card->SetSelectable(bSelectable);
 		}
+	}
+}
+
+void AShowDownGameModeBase::StartStage(int32 StageIndex)
+{
+	if (!StageRules.IsValidIndex(StageIndex))
+	{
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->SetPhase(EShowDownPhase::GameOver);
+			ShowDownGameState->OnGameOver.Broadcast(EShowDownSide::Player);
+		}
+		ShowEventDebugMessage(TEXT("게임 종료 - 플레이어 승리"));
+		UE_LOG(LogTemp, Log, TEXT("All stages cleared. Player wins the game."));
+		return;
+	}
+
+	CurrentStageIndex = StageIndex;
+	const FShowDownStageRule& StageRule = StageRules[CurrentStageIndex];
+
+	bBettingPhase = false;
+	GetWorldTimerManager().ClearTimer(RevealDelayHandle);
+
+	ClearForeheadCards();
+	ClearHandCards();
+
+	PlayerState.Lives = StageRule.StartingLives;
+	CollectorState.Lives = StageRule.StartingLives;
+	PlayerState.CurrentBet = StageRule.MinimumBet;
+	CollectorState.CurrentBet = StageRule.MinimumBet;
+	BettingRaisesLeft = 6;
+	bHasLastRaiser = false;
+
+	if (CollectorAISystem)
+	{
+		CollectorAISystem->Settings.BluffRate = StageRule.CollectorBluffRate;
+		CollectorAISystem->Settings.Aggression = StageRule.CollectorAggression;
+	}
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->CurrentStage = CurrentStageIndex + 1;
+		ShowDownGameState->CurrentRound = 1;
+		ShowDownGameState->OnStageChanged.Broadcast(CurrentStageIndex + 1);
+		ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
+	}
+	ShowEventDebugMessage(FString::Printf(TEXT("스테이지 %d 시작 - 카드 선택"), CurrentStageIndex + 1));
+
+	UE_LOG(LogTemp, Log, TEXT("Stage %d started. Lives: %d, MinBet: %d, Collector Bluff: %.2f, Aggression: %.2f"),
+		CurrentStageIndex + 1,
+		StageRule.StartingLives,
+		StageRule.MinimumBet,
+		StageRule.CollectorBluffRate,
+		StageRule.CollectorAggression);
+
+	DealInitialHand();
+}
+
+void AShowDownGameModeBase::AdvanceStage()
+{
+	StartStage(CurrentStageIndex + 1);
+}
+
+const FShowDownStageRule* AShowDownGameModeBase::GetCurrentStageRule() const
+{
+	return StageRules.IsValidIndex(CurrentStageIndex) ? &StageRules[CurrentStageIndex] : nullptr;
+}
+
+AShowDownGameStateBase* AShowDownGameModeBase::GetShowDownGameState() const
+{
+	return GetGameState<AShowDownGameStateBase>();
+}
+
+void AShowDownGameModeBase::ShowEventDebugMessage(const FString& Message) const
+{
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Cyan, FString::Printf(TEXT("[상황] %s"), *Message));
+		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Orange, FString::Printf(TEXT("[호출] %s"), *Message));
+
+		const AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState();
+		const bool bHasPresentationEvent = ShowDownGameState && ShowDownGameState->OnPresentationStarted.IsBound();
+		if (!bHasPresentationEvent)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::White, TEXT("*"));
+		}
+
+		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Green, FString::Printf(TEXT("[호출종료] %s"), *Message));
 	}
 }

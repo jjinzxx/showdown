@@ -262,13 +262,38 @@ void APlayerPawn::HandleBettingHotkeys()
 		ModeBase->PlayerCheck();
 	}
 
+	if (PC->WasInputKeyJustPressed(EKeys::R))
+	{
+		ModeBase->PlayerFold();
+	}
+
 	if (PC->WasInputKeyJustPressed(EKeys::E))
 	{
 		ModeBase->PlayerRaise();
 	}
 
-	if (PC->WasInputKeyJustPressed(EKeys::R))
+	if (PC->WasInputKeyJustPressed(EKeys::One))
 	{
-		ModeBase->PlayerFold();
+		ModeBase->PlayerRaiseTo(2);
+	}
+
+	if (PC->WasInputKeyJustPressed(EKeys::Two))
+	{
+		ModeBase->PlayerRaiseTo(3);
+	}
+
+	if (PC->WasInputKeyJustPressed(EKeys::Three))
+	{
+		ModeBase->PlayerRaiseTo(4);
+	}
+
+	if (PC->WasInputKeyJustPressed(EKeys::Four))
+	{
+		ModeBase->PlayerRaiseTo(5);
+	}
+
+	if (PC->WasInputKeyJustPressed(EKeys::Five))
+	{
+		ModeBase->PlayerRaiseTo(6);
 	}
 }

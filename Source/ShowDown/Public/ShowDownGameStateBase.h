@@ -14,6 +14,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownRouletteResultSignature, E
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownLifeChangedSignature, EShowDownSide, Target, int32, Life);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FShowDownStageChangedSignature, int32, Stage);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FShowDownGameOverSignature, EShowDownSide, Winner);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FShowDownPresentationSignature, EShowDownPhase, Phase);
 
 UCLASS()
 class SHOWDOWN_API AShowDownGameStateBase : public AGameStateBase
@@ -49,7 +50,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
 	FShowDownLifeChangedSignature OnLifeChanged;
 
-	//스테이지가 바뀔 때 UI/연출에 알리는 이벤트
+	//스테이지가 바뀔 때 UI/연출에 알리는 이벤트(
 	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
 	FShowDownStageChangedSignature OnStageChanged;
 
@@ -57,9 +58,25 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
 	FShowDownGameOverSignature OnGameOver;
 
+	//현재 Phase 연출이 시작될 때 UI/연출에 알리는 이벤트
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
+	FShowDownPresentationSignature OnPresentationStarted;
+
+	//현재 Phase 연출이 끝났을 때 UI/연출에 알리는 이벤트
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
+	FShowDownPresentationSignature OnPresentationFinished;
+
 	//현재 게임 진행 단계
 	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
 	EShowDownPhase CurrentPhase = EShowDownPhase::None;
+
+	//현재 연출 중인 Phase
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
+	EShowDownPhase CurrentPresentationPhase = EShowDownPhase::None;
+
+	//연출 진행 중인지 여부
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
+	bool bPresentationPlaying = false;
 
 	//현재 스테이지 번호
 	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
@@ -72,4 +89,21 @@ public:
 	//현재 게임 진행 단계 변경
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|State")
 	void SetPhase(EShowDownPhase NewPhase);
+
+	//연출 시작 알림
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation", meta = (DisplayName = "eventStart"))
+	void EventStart(EShowDownPhase Phase);
+
+	//연출 종료 알림
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation", meta = (DisplayName = "eventEnd"))
+	void EventEnd(EShowDownPhase Phase);
+
+	//Phase 연출 시작 알림
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation")
+	void StartPresentation(EShowDownPhase Phase);
+
+	//Phase 연출 종료 알림
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation")
+	void FinishPresentation(EShowDownPhase Phase);
+	
 };
