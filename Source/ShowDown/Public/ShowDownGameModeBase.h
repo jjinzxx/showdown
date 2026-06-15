@@ -44,9 +44,6 @@ class SHOWDOWN_API AShowDownGameModeBase : public AGameModeBase
 public:
 	AShowDownGameModeBase();
 
-	UFUNCTION(BlueprintCallable, Category = "ShowDown|Card")
-	void PlayerSelectedCard(ACard* SelectedCard);
-
 	// 덱 관리 컴포넌트
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Deck")
 	UCardSystem* CardSystem;
@@ -85,21 +82,31 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Betting")
 	UBettingSystem* BettingSystem;
 
+	// 라운드 판정 시스템
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Round")
 	URoundResolver* RoundResolver;
 
+	// 룰렛 판정 시스템
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "ShowDown|Roulette")
 	URouletteSystem* RouletteSystem;
 
+	// 플레이어가 선택한 카드를 게임모드에 전달
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Card")
+	void PlayerSelectedCard(ACard* SelectedCard);
+
+	// 베팅 단계 시작
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void StartBettingPhase();
 
+	// 플레이어 체크 또는 콜
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void PlayerCheck();
 
+	// 플레이어 레이즈
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void PlayerRaise();
 
+	// 플레이어 폴드
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void PlayerFold();
 	
@@ -109,12 +116,10 @@ protected:
 	virtual void BeginPlay() override;
 
 private:
-	// 덱을 만들고 섞은 뒤에 플레이어에게 5장 스폰
-	void DealInitialHand();
-	
 	//플레이어 스탯
 	UPROPERTY()
 	FShowDownParticipantState PlayerState;
+
 	//콜렉터 스탯
 	UPROPERTY()
 	FShowDownParticipantState CollectorState;
@@ -125,6 +130,9 @@ private:
 	//콜렉터 추적
 	UPROPERTY()
 	ACollector* Collector = nullptr;
+
+	// 덱을 만들고 섞은 뒤에 플레이어와 콜렉터에게 5장 스폰
+	void DealInitialHand();
 	void FindCollector();
 	void CollectorGiveCardToPlayer();
 	float EstimateCollectorWinChance() const;

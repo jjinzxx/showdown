@@ -13,9 +13,11 @@ class SHOWDOWN_API URoundResolver : public UActorComponent
 public:
 	URoundResolver();
 
+	//공개된 플레이어/콜렉터 카드 숫자를 비교해서 라운드 결과 반환
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "ShowDown|Round")
 	EShowDownRoundResult ResolveRevealedCards(int32 PlayerCard, int32 CollectorCard) const;
 
+	//폴드 시 룰렛 장전 수 계산. 폴드한 쪽 이마 카드가 7이면 6발
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "ShowDown|Round")
 	int32 GetFoldLoadCount(int32 FoldedForeheadCard, int32 CurrentBet) const;
 };

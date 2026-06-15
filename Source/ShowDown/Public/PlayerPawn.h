@@ -17,7 +17,6 @@ class SHOWDOWN_API APlayerPawn : public APawn
 	GENERATED_BODY()
 
 public:
-	// Sets default values for this pawn's properties
 	APlayerPawn();
 	
 	//루트 컴포넌트
@@ -83,18 +82,6 @@ public:
 	class ACard* CurrentSelectedCard;
 	
 
-protected:
-	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
-	virtual void PossessedBy(AController* NewController) override;
-
-public:
-	// Called every frame
-	virtual void Tick(float DeltaTime) override;
-
-	// Called to bind functionality to input
-	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
-	
 	//카드 감지
 	void InputSelect(const FInputActionValue& InputValue);
 	//카메라 회전
@@ -106,6 +93,18 @@ public:
 	void SelectCard(ACard* SelectedCard);
 	//선택된 카드를 게임 모드 베이스를 통해 전달
 	void SubmitSelectedCard(ACard* SelectedCard);
+
+protected:
+	// Called when the game starts or when spawned
+	virtual void BeginPlay() override;
+	virtual void PossessedBy(AController* NewController) override;
+
+public:
+	// Called every frame
+	virtual void Tick(float DeltaTime) override;
+
+	// Called to bind functionality to input
+	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
 private:
 	//IMC등록

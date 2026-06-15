@@ -12,7 +12,6 @@ class SHOWDOWN_API ACard : public AActor
 	GENERATED_BODY()
 
 public:
-	// Sets default values for this actor's properties
 	ACard();
 
 	//루트 컴프
@@ -39,7 +38,16 @@ public:
 	//카드 선택 위치까지 이동하는 속도
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Select")
 	float MoveSpeed = 10.0f;
+
+private:
+	//현재 카드 선택 상태
+	UPROPERTY(VisibleAnywhere, Category = "Card")
+	bool bSelected = false;
+
+	FVector DefaultLocation;
+	FVector TargetLocation;
 	
+public:
 	//카드의 무늬와 숫자를 설정하는 함수
 	UFUNCTION(BlueprintCallable, Category = "Card")
 	void SetCard(int32 NewRank);
@@ -72,11 +80,4 @@ protected:
 public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
-
-private:
-	UPROPERTY(VisibleAnywhere, Category = "Card")
-	bool bSelected = false;
-
-	FVector DefaultLocation;
-	FVector TargetLocation;
 };
