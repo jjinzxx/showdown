@@ -82,16 +82,39 @@
 
 ### 기본 포스트 프로세스 1차
 
-아래 값은 초반 분위기 테스트용 기준값입니다. 실제 에디터 값이 다르면 추후 수정합니다.
+아래 값은 현진님이 `ArtToneTest`에서 실제로 잡은 초반 분위기 테스트 기준값입니다.
 
 | 맵 | 액터 | 설정 | 값 | 의도 |
 | --- | --- | --- | --- | --- |
 | `ArtToneTest` | `PostProcessVolume` | `Infinite Extent (Unbound)` | On | 볼륨 위치와 상관없이 화면 전체에 적용 |
-| `ArtToneTest` | `PostProcessVolume` | `Exposure Compensation` | `-0.5` | 화면을 살짝 어둡게 만들어 긴장감 형성 |
+| `ArtToneTest` | `PostProcessVolume` | `Exposure Compensation` | `0.5` | 전체 밝기 기준 조절 |
 | `ArtToneTest` | `PostProcessVolume` | `Saturation` | `0.7` | 채도를 낮춰 낡고 건조한 톤 형성 |
-| `ArtToneTest` | `PostProcessVolume` | `Contrast` | `1.15` | 어둠과 밝음 차이를 약간 강화 |
-| `ArtToneTest` | `PostProcessVolume` | `Vignette Intensity` | `0.4` | 화면 가장자리 어둡게 처리 |
-| `ArtToneTest` | `PostProcessVolume` | `Film Grain Intensity` | `0.25` | 거친 화면 질감 추가 |
+| `ArtToneTest` | `PostProcessVolume` | `Contrast` | `0.8` | 대비를 낮춰 색이 더 눌린 느낌 형성 |
+| `ArtToneTest` | `PostProcessVolume` | `Temperature` | 기본값 | 색온도는 아직 적극적으로 조절하지 않음 |
+| `ArtToneTest` | `PostProcessVolume` | `Tint` | `0.2` | 화면 색조에 약한 편향 추가 |
+| `ArtToneTest` | `PostProcessVolume` | `Vignette Intensity` | `0.55` | 화면 가장자리 어둡게 처리, 폐쇄감 강화 |
+| `ArtToneTest` | `PostProcessVolume` | `Film Grain Intensity` | `0.2` | 거친 화면 질감 추가 |
+| `ArtToneTest` | `PostProcessVolume` | `Film Grain Texel Size` | `1.0` | 그레인 입자 크기 기준 |
+| `ArtToneTest` | `PostProcessVolume` | `Bloom Intensity` | `0.3` | 밝은 부분의 빛 번짐 후보값 |
+| `ArtToneTest` | `PostProcessVolume` | `Bloom Threshold` | `0.5` | 블룸이 적용되기 시작하는 밝기 기준 |
+| `ArtToneTest` | `PostProcessVolume` | `Min EV100` | `0` | 자동 노출 고정 |
+| `ArtToneTest` | `PostProcessVolume` | `Max EV100` | `0` | 자동 노출 고정 |
+
+### 현재 포스트 프로세스 머티리얼 값
+
+| 머티리얼 | 파라미터 | 값 | 의도 |
+| --- | --- | --- | --- |
+| `M_PP_Pixelate` | `PixelCount` | `480` | 화면 전체를 약한 저해상도 느낌으로 처리 |
+| `M_PP_Pixelate` | `ScanlineCount` | `480` | CRT/VHS 가로줄 간격 기준 |
+| `M_PP_Pixelate` | `ScanlineStrength` | `0.02` | 가로줄 강도를 약하게 유지 |
+| `M_PP_Pixelate` | `ColorSteps` | `6` | 색 단계 수를 크게 줄여 강한 포스터라이즈/저비트 느낌 형성 |
+
+### 현재 화면 느낌 메모
+
+- 전체적으로 강한 포스터라이즈와 스캔라인이 보여서 저비트 VHS/Lo-fi 분위기가 확실하다.
+- 어두운 영역이 크게 눌려 있고, 밝은 테이블 영역은 색 단계가 뚝뚝 끊겨 보인다.
+- `ColorSteps = 6`은 효과가 강한 편이라, 나중에 카드 숫자나 버튼 가독성 테스트가 필요하다.
+- 현재 단계에서는 게임플레이 오브젝트가 없으므로 분위기 방향 테스트값으로 유지한다.
 
 앞으로 현진님이 에디터에서 값을 바꾸거나 에셋을 추가하면 이 아래에 날짜별로 누적 기록한다.
 
@@ -114,3 +137,24 @@
 - `PostProcessVolume`에서 색수차 / Chromatic Aberration 계열 값을 테스트했다.
   - 기본 후보값: `0.2`
   - `2.0`은 효과가 강하게 보이지만 기본 화면용으로는 과해 보여 연출 순간용 후보로 보류했다.
+
+### 2026-06-15
+
+- 카메라 전환 테스트용 C++ 액터 `ASDCameraBlendTester`를 추가했다.
+  - Header: `Source/ShowDown/Public/Presentation/SDCameraBlendTester.h`
+  - Source: `Source/ShowDown/Private/Presentation/SDCameraBlendTester.cpp`
+- 목적:
+  - 테스트 레벨에 액터를 배치하고 카메라 2개를 지정한 뒤, 키보드 `1` / `2`로 `SetViewTargetWithBlend` 카메라 전환을 공부한다.
+- 사용 방식:
+  - 레벨에 `CameraActor` 2개 배치
+  - `ASDCameraBlendTester` 액터 배치
+  - 디테일 패널에서 `DefaultCamera`, `CloseCamera`에 카메라 액터 지정
+  - `BlendTime`, `BlendFunction`, `BlendExponent`로 전환 느낌 조절
+  - 플레이 중 `1`: 기본 카메라, `2`: 가까운 카메라, `3`: 플레이어 자유시점으로 전환
+- 추가 설정:
+  - `FreeViewBlendTime`: 자유시점으로 돌아갈 때의 전환 시간
+  - `bRestoreGameInputOnFreeView`: 자유시점 복귀 시 이동/시야 입력을 다시 활성화할지 여부
+- 빌드 메모:
+  - UnrealHeaderTool 코드 생성은 통과했다.
+  - 정식 빌드는 에디터 Live Coding 활성화 상태 때문에 중단되었다.
+  - 에디터를 닫고 다시 빌드하거나, 에디터에서 `Ctrl + Alt + F11`로 Live Coding 컴파일을 사용해 확인한다.
