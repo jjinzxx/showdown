@@ -13,4 +13,4 @@
 #
 *.cpp text
 *.h   text
-*.cs  text
+*.cs  text linguist-vendored
