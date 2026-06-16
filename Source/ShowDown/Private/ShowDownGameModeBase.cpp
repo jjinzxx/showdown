@@ -9,6 +9,7 @@
 #include "BettingSystem.h"
 #include "RoundResolver.h"
 #include "RouletteSystem.h"
+#include "SDLLMSubsystem.h"
 #include "ShowDownTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
@@ -102,6 +103,9 @@ void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 		return;
 	}
 
+	ResetCurrentRoundMemory();
+	CurrentRoundPlayerGaveRank = SelectedCard->Rank;
+	RecordCurrentRoundAction(FString::Printf(TEXT("Player gave Collector forehead card rank %d."), CurrentRoundPlayerGaveRank));
 	UE_LOG(LogTemp, Log, TEXT("GameMode received selected card: %s"), *SelectedCard->GetName());
 
 	CardSystem->RemoveCardFromHand(PlayerState.HandCards, SelectedCard);
@@ -243,6 +247,8 @@ void AShowDownGameModeBase::CollectorGiveCardToPlayer()
 	CardSystem->RemoveCardFromHand(CollectorState.HandCards, ChosenCard);
 
 	PlayerState.ForeheadCard = ChosenCard;
+	CurrentRoundCollectorGaveRank = ChosenCard->Rank;
+	RecordCurrentRoundAction(FString::Printf(TEXT("Collector gave Player forehead card rank %d."), CurrentRoundCollectorGaveRank));
 
 	// 플레이어는 자기 이마 카드를 보면 안 되므로 false
 	CardSystem->MoveCardToSlot(ChosenCard, PlayerPawn->PlayerHeadCard, false);
@@ -301,6 +307,7 @@ void AShowDownGameModeBase::PlayerCheck()
 		{
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
 		}
+		RecordCurrentRoundAction(FString::Printf(TEXT("Player called to %d."), PlayerState.CurrentBet));
 		ShowEventDebugMessage(FString::Printf(TEXT("플레이어 콜 - %d발"), PlayerState.CurrentBet));
 
 		UE_LOG(LogTemp, Log, TEXT("Player Call %d"), CurrentBet);
@@ -314,6 +321,7 @@ void AShowDownGameModeBase::PlayerCheck()
 	{
 		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
 	}
+	RecordCurrentRoundAction(FString::Printf(TEXT("Player checked at %d."), PlayerState.CurrentBet));
 	ShowEventDebugMessage(FString::Printf(TEXT("플레이어 체크 - %d발"), PlayerState.CurrentBet));
 
 	UE_LOG(LogTemp, Log, TEXT("Player Check"));
@@ -351,6 +359,7 @@ void AShowDownGameModeBase::PlayerRaiseTo(int32 BulletCount)
 		{
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
 		}
+		RecordCurrentRoundAction(FString::Printf(TEXT("Player raised to %d."), PlayerState.CurrentBet));
 		ShowEventDebugMessage(FString::Printf(TEXT("플레이어 레이즈 - %d발"), PlayerState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Player Raise to %d"), NewBet);
 		ResolveCollectorBetResponse();
@@ -377,10 +386,87 @@ void AShowDownGameModeBase::PlayerFold()
 	{
 		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
 	}
+	RecordCurrentRoundAction(FString::Printf(TEXT("Player folded at %d."), PlayerState.CurrentBet));
 	ShowEventDebugMessage(FString::Printf(TEXT("플레이어 폴드 - %d발"), PlayerState.CurrentBet));
 
 	UE_LOG(LogTemp, Log, TEXT("Player Fold"));
 	ResolveFold(EShowDownSide::Player);
+}
+
+void AShowDownGameModeBase::SubmitPlayerDialogueInput(const FString& PlayerDialogue)
+{
+	SubmitPlayerDialogueInputFromPlayer(PlayerDialogue, TEXT("Player"));
+}
+
+void AShowDownGameModeBase::SubmitPlayerDialogueInputFromPlayer(const FString& PlayerDialogue, const FString& SenderName)
+{
+	const FString TrimmedDialogue = PlayerDialogue.TrimStartAndEnd().Left(240);
+	if (TrimmedDialogue.IsEmpty())
+	{
+		return;
+	}
+
+	const FString SafeSenderName = SenderName.TrimStartAndEnd().IsEmpty()
+		? TEXT("Player")
+		: SenderName.TrimStartAndEnd().Left(32);
+	const FString DisplaySenderName = SafeSenderName.StartsWith(TEXT("DESKTOP-"))
+		? TEXT("Player")
+		: SafeSenderName;
+
+	LatestPlayerDialogueInput = TrimmedDialogue;
+	AppendRecentDialogueLine(DisplaySenderName, TrimmedDialogue);
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->BroadcastChatMessage(DisplaySenderName, TrimmedDialogue);
+	}
+
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (USDLLMSubsystem* LLMSubsystem = GameInstance->GetSubsystem<USDLLMSubsystem>())
+		{
+			const float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+			const bool bCooldownReady =
+				(CurrentTime - LastBossChatReplyRequestTime) >= LLMSubsystem->BossChatReplyCooldownSeconds;
+			const bool bCanRequestInstantReply =
+				LLMSubsystem->bEnableInstantBossChatReply
+				&& LLMSubsystem->IsConfigured()
+				&& bCooldownReady
+				&& (LLMSubsystem->bAllowOverlappingBossChatReplies || !bBossChatReplyInFlight);
+
+			if (bCanRequestInstantReply)
+			{
+				bBossChatReplyInFlight = true;
+				LastBossChatReplyRequestTime = CurrentTime;
+				if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+				{
+					ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("Boss is typing..."));
+				}
+
+				const FSDLLMBossContext ChatContext = BuildLLMChatContext(TrimmedDialogue);
+				LLMSubsystem->RequestBossChatReply(
+					ChatContext,
+					FSDLLMBossChatCallback::CreateWeakLambda(
+						this,
+						[this](bool bSuccess, const FString& Dialogue, const FString& Intent)
+						{
+							bBossChatReplyInFlight = false;
+							if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+							{
+								if (bSuccess)
+								{
+									AppendRecentDialogueLine(TEXT("Collector"), Dialogue);
+									ShowDownGameState->BroadcastChatMessage(TEXT("Collector"), Dialogue);
+									ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("Boss answered."));
+								}
+								else
+								{
+									ShowDownGameState->BroadcastCollectorLLMStatus(false, TEXT("Boss chat failed."));
+								}
+							}
+						}));
+			}
+		}
+	}
 }
 
 void AShowDownGameModeBase::NotifyPresentationFinished(EShowDownPhase FinishedPhase)
@@ -448,6 +534,83 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 
 	const int32 CurrentBet = BettingSystem->GetCurrentBet();
 	const int32 GivenCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
+	UE_LOG(LogTemp, Log, TEXT("Collector model: given card rank %d, current bet %d, committed %d, raises left %d"),
+		GivenCardRank,
+		CurrentBet,
+		CollectorState.CurrentBet,
+		BettingRaisesLeft);
+
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (USDLLMSubsystem* LLMSubsystem = GameInstance->GetSubsystem<USDLLMSubsystem>())
+		{
+			if (LLMSubsystem->IsConfigured())
+			{
+				if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+				{
+					ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("Waiting for boss..."));
+				}
+				const FSDLLMBossContext LLMContext = BuildLLMBossContext(CurrentBet, GivenCardRank);
+				LLMSubsystem->RequestBossResponse(
+					LLMContext,
+					FSDLLMBossResponseCallback::CreateWeakLambda(
+						this,
+						[this, GivenCardRank](bool bSuccess, const FSDLLMBossResponse& LLMResponse)
+						{
+							if (!bBettingPhase || !BettingSystem || !CollectorAISystem)
+							{
+								return;
+							}
+
+							const int32 LatestCurrentBet = BettingSystem->GetCurrentBet();
+							FCollectorBetDecision CollectorDecision;
+							if (bSuccess)
+							{
+								CollectorDecision = SanitizeCollectorDecision(LLMResponse.Decision);
+								UE_LOG(LogTemp, Log, TEXT("Collector LLM decision: %d target %d / dialogue: %s / intent: %s"),
+									static_cast<int32>(CollectorDecision.Action),
+									CollectorDecision.TargetBet,
+									*LLMResponse.Dialogue,
+									*LLMResponse.Intent);
+								if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+								{
+									ShowDownGameState->BroadcastCollectorLLMDecision(
+										LLMResponse.Dialogue,
+										LLMResponse.Intent,
+										CollectorDecision.Action,
+										CollectorDecision.TargetBet);
+								}
+								AppendRecentDialogueLine(TEXT("Collector"), LLMResponse.Dialogue);
+								ShowEventDebugMessage(FString::Printf(TEXT("Collector: %s"), *LLMResponse.Dialogue));
+							}
+							else
+							{
+								if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+								{
+									ShowDownGameState->BroadcastCollectorLLMStatus(false, TEXT("Boss API failed. Using fallback AI."));
+								}
+								CollectorDecision = CollectorAISystem->ChooseBetDecisionByModel(
+									CollectorState.HandCards,
+									GivenCardRank,
+									LatestCurrentBet,
+									CollectorState.CurrentBet,
+									6,
+									BettingRaisesLeft,
+									bHasLastRaiser && LastRaiser == EShowDownSide::Collector);
+							}
+
+							ExecuteCollectorBetDecision(CollectorDecision, GivenCardRank);
+						}));
+				return;
+			}
+
+			if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+			{
+				ShowDownGameState->BroadcastCollectorLLMStatus(false, TEXT("OPENAI_API_KEY not found. Using fallback AI."));
+			}
+		}
+	}
+
 	const FCollectorBetDecision CollectorDecision = CollectorAISystem->ChooseBetDecisionByModel(
 		CollectorState.HandCards,
 		GivenCardRank,
@@ -456,13 +619,55 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		6,
 		BettingRaisesLeft,
 		bHasLastRaiser && LastRaiser == EShowDownSide::Collector);
-	const EShowDownBetAction CollectorAction = CollectorDecision.Action;
 
-	UE_LOG(LogTemp, Log, TEXT("Collector model: given card rank %d, current bet %d, committed %d, raises left %d"),
-		GivenCardRank,
-		CurrentBet,
-		CollectorState.CurrentBet,
-		BettingRaisesLeft);
+	ExecuteCollectorBetDecision(CollectorDecision, GivenCardRank);
+}
+
+FCollectorBetDecision AShowDownGameModeBase::SanitizeCollectorDecision(const FCollectorBetDecision& RawDecision) const
+{
+	FCollectorBetDecision SanitizedDecision = RawDecision;
+	if (!BettingSystem)
+	{
+		return SanitizedDecision;
+	}
+
+	const int32 CurrentBet = BettingSystem->GetCurrentBet();
+	const bool bMustRespond = CollectorState.CurrentBet < CurrentBet;
+
+	if (SanitizedDecision.Action == EShowDownBetAction::Check && bMustRespond)
+	{
+		SanitizedDecision.Action = EShowDownBetAction::Call;
+	}
+	else if (SanitizedDecision.Action == EShowDownBetAction::Call && !bMustRespond)
+	{
+		SanitizedDecision.Action = EShowDownBetAction::Check;
+	}
+
+	if (SanitizedDecision.Action == EShowDownBetAction::Raise)
+	{
+		if (BettingRaisesLeft <= 0 || CurrentBet >= 6)
+		{
+			SanitizedDecision.Action = bMustRespond ? EShowDownBetAction::Call : EShowDownBetAction::Check;
+			SanitizedDecision.TargetBet = CurrentBet;
+		}
+		else
+		{
+			SanitizedDecision.TargetBet = FMath::Clamp(SanitizedDecision.TargetBet, CurrentBet + 1, 6);
+		}
+	}
+
+	return SanitizedDecision;
+}
+
+void AShowDownGameModeBase::ExecuteCollectorBetDecision(const FCollectorBetDecision& CollectorDecision, int32 GivenCardRank)
+{
+	if (!BettingSystem)
+	{
+		return;
+	}
+
+	const int32 CurrentBet = BettingSystem->GetCurrentBet();
+	const EShowDownBetAction CollectorAction = CollectorDecision.Action;
 
 	switch (CollectorAction)
 	{
@@ -474,6 +679,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		{
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
 		}
+		RecordCurrentRoundAction(FString::Printf(TEXT("Collector checked at %d."), CollectorState.CurrentBet));
 		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 체크 - %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Check"));
 		FinishBettingAndResolveRound();
@@ -487,6 +693,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		{
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
 		}
+		RecordCurrentRoundAction(FString::Printf(TEXT("Collector called to %d."), CollectorState.CurrentBet));
 		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 콜 - %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Call %d"), CurrentBet);
 		FinishBettingAndResolveRound();
@@ -505,6 +712,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 				{
 					ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
 				}
+				RecordCurrentRoundAction(FString::Printf(TEXT("Collector raised to %d."), CollectorState.CurrentBet));
 				ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 레이즈 - %d발"), CollectorState.CurrentBet));
 				UE_LOG(LogTemp, Log, TEXT("Collector Raise to %d"), NewBet);
 				UE_LOG(LogTemp, Log, TEXT("Player needs to respond."));
@@ -519,6 +727,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		{
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
 		}
+		RecordCurrentRoundAction(FString::Printf(TEXT("Collector folded at %d."), CollectorState.CurrentBet));
 		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 폴드 - %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Fold"));
 		ResolveFold(EShowDownSide::Collector);
@@ -526,6 +735,158 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 
 	default:
 		break;
+	}
+}
+
+FSDLLMBossContext AShowDownGameModeBase::BuildLLMBossContext(int32 CurrentBet, int32 GivenCardRank) const
+{
+	FSDLLMBossContext Context;
+	Context.PlayerForeheadRank = GivenCardRank;
+	Context.CollectorForeheadRank = CollectorState.ForeheadCard ? CollectorState.ForeheadCard->Rank : 0;
+	Context.CurrentBet = CurrentBet;
+	Context.PlayerCommittedBet = PlayerState.CurrentBet;
+	Context.CollectorCommittedBet = CollectorState.CurrentBet;
+	Context.PlayerLives = PlayerState.Lives;
+	Context.CollectorLives = CollectorState.Lives;
+	Context.RaisesLeft = BettingRaisesLeft;
+	Context.Stage = CurrentStageIndex + 1;
+	Context.PlayerDialogue = LatestPlayerDialogueInput;
+	Context.RecentDialogue = RecentDialogueHistory;
+	Context.RecentRoundHistory = RecentRoundHistory;
+	Context.CurrentRoundActions = CurrentRoundActionHistory;
+	Context.DiscardedCardsSummary = DiscardedCardsSummary.IsEmpty()
+		? TEXT("none")
+		: DiscardedCardsSummary;
+	if (CollectorAISystem)
+	{
+		Context.CollectorSettings = CollectorAISystem->Settings;
+	}
+
+	if (const AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		Context.Round = ShowDownGameState->CurrentRound;
+	}
+
+	for (const ACard* Card : CollectorState.HandCards)
+	{
+		if (Card)
+		{
+			Context.CollectorHandRanks.Add(Card->Rank);
+		}
+	}
+
+	return Context;
+}
+
+FSDLLMBossContext AShowDownGameModeBase::BuildLLMChatContext(const FString& PlayerDialogue) const
+{
+	const int32 CurrentBet = BettingSystem ? BettingSystem->GetCurrentBet() : 1;
+	const int32 GivenCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
+	FSDLLMBossContext Context = BuildLLMBossContext(CurrentBet, GivenCardRank);
+	Context.PlayerDialogue = PlayerDialogue;
+	Context.RecentDialogue = RecentDialogueHistory;
+	return Context;
+}
+
+void AShowDownGameModeBase::AppendRecentDialogueLine(const FString& Speaker, const FString& Message)
+{
+	const FString TrimmedMessage = Message.TrimStartAndEnd();
+	if (TrimmedMessage.IsEmpty())
+	{
+		return;
+	}
+
+	if (!RecentDialogueHistory.IsEmpty())
+	{
+		RecentDialogueHistory += TEXT("\n");
+	}
+	RecentDialogueHistory += FString::Printf(TEXT("%s: %s"), *Speaker.Left(32), *TrimmedMessage.Left(160));
+	RecentDialogueHistory = RecentDialogueHistory.Right(900);
+}
+
+void AShowDownGameModeBase::ResetCurrentRoundMemory()
+{
+	CurrentRoundActionHistory.Reset();
+	CurrentRoundPlayerGaveRank = 0;
+	CurrentRoundCollectorGaveRank = 0;
+	LastRoundPlayerCardRank = 0;
+	LastRoundCollectorCardRank = 0;
+	bCurrentRoundSummaryRecorded = false;
+}
+
+void AShowDownGameModeBase::RecordCurrentRoundAction(const FString& ActionText)
+{
+	const FString TrimmedAction = ActionText.TrimStartAndEnd();
+	if (TrimmedAction.IsEmpty())
+	{
+		return;
+	}
+
+	if (!CurrentRoundActionHistory.IsEmpty())
+	{
+		CurrentRoundActionHistory += TEXT(" ");
+	}
+	CurrentRoundActionHistory += TrimmedAction.Left(180);
+	CurrentRoundActionHistory = CurrentRoundActionHistory.Right(900);
+}
+
+void AShowDownGameModeBase::AppendRecentRoundSummary(EShowDownRoundResult Result, const FString& Reason)
+{
+	if (bCurrentRoundSummaryRecorded)
+	{
+		return;
+	}
+
+	bCurrentRoundSummaryRecorded = true;
+
+	const int32 RoundNumber = GetShowDownGameState() ? GetShowDownGameState()->CurrentRound : 0;
+	const FString SafeActions = CurrentRoundActionHistory.IsEmpty()
+		? TEXT("none")
+		: CurrentRoundActionHistory;
+	const FString Summary = FString::Printf(
+		TEXT("Stage %d Round %d: reason=%s, result=%s, player_gave_collector=%d, collector_gave_player=%d, revealed_player=%d, revealed_collector=%d, player_bet=%d, collector_bet=%d, player_lives=%d, collector_lives=%d, actions=[%s]."),
+		CurrentStageIndex + 1,
+		RoundNumber,
+		*Reason.Left(64),
+		*GetRoundResultText(Result),
+		CurrentRoundPlayerGaveRank,
+		CurrentRoundCollectorGaveRank,
+		LastRoundPlayerCardRank,
+		LastRoundCollectorCardRank,
+		PlayerState.CurrentBet,
+		CollectorState.CurrentBet,
+		PlayerState.Lives,
+		CollectorState.Lives,
+		*SafeActions.Left(700));
+
+	if (!RecentRoundHistory.IsEmpty())
+	{
+		RecentRoundHistory += TEXT("\n");
+	}
+	RecentRoundHistory += Summary;
+	RecentRoundHistory = RecentRoundHistory.Right(1400);
+}
+
+FString AShowDownGameModeBase::GetSideText(EShowDownSide Side) const
+{
+	return Side == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector");
+}
+
+FString AShowDownGameModeBase::GetRoundResultText(EShowDownRoundResult Result) const
+{
+	switch (Result)
+	{
+	case EShowDownRoundResult::PlayerWin:
+		return TEXT("PlayerWin");
+
+	case EShowDownRoundResult::CollectorWin:
+		return TEXT("CollectorWin");
+
+	case EShowDownRoundResult::Draw:
+		return TEXT("Draw");
+
+	default:
+		return TEXT("Unknown");
 	}
 }
 
@@ -542,6 +903,8 @@ void AShowDownGameModeBase::FinishBettingAndResolveRound()
 
 	const int32 PlayerCardRank = PlayerState.ForeheadCard->Rank;
 	const int32 CollectorCardRank = CollectorState.ForeheadCard->Rank;
+	LastRoundPlayerCardRank = PlayerCardRank;
+	LastRoundCollectorCardRank = CollectorCardRank;
 	const EShowDownRoundResult Result = RoundResolver->ResolveRevealedCards(PlayerCardRank, CollectorCardRank);
 	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 	{
@@ -576,17 +939,22 @@ void AShowDownGameModeBase::ContinueRoundAfterReveal(EShowDownRoundResult Result
 		ShowDownGameState->EventEnd(EShowDownPhase::Reveal);
 	}
 
+	// 결과 공개 직후 보스가 승/패/무에 대한 반응 채팅을 남긴다.
+	BroadcastBossResultReaction(Result);
+
 	switch (Result)
 	{
 	case EShowDownRoundResult::PlayerWin:
 		UE_LOG(LogTemp, Log, TEXT("Round result: Player wins. Collector roulette with %d bullet(s)."), CollectorState.CurrentBet);
 		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet);
+		AppendRecentRoundSummary(Result, TEXT("card reveal"));
 		EndRound();
 		break;
 
 	case EShowDownRoundResult::CollectorWin:
 		UE_LOG(LogTemp, Log, TEXT("Round result: Collector wins. Player roulette with %d bullet(s)."), PlayerState.CurrentBet);
 		ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet);
+		AppendRecentRoundSummary(Result, TEXT("card reveal"));
 		EndRound();
 		break;
 
@@ -594,12 +962,76 @@ void AShowDownGameModeBase::ContinueRoundAfterReveal(EShowDownRoundResult Result
 		UE_LOG(LogTemp, Log, TEXT("Round result: Draw. Both sides roulette."));
 		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet);
 		ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet);
+		AppendRecentRoundSummary(Result, TEXT("card reveal"));
 		EndRound();
 		break;
 
 	default:
 		break;
 	}
+}
+
+void AShowDownGameModeBase::BroadcastBossResultReaction(EShowDownRoundResult Result)
+{
+	AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState();
+	if (!ShowDownGameState)
+	{
+		return;
+	}
+
+	// Collector(보스) 관점의 결과와 LLM 실패 시 쓸 정적 폴백 대사
+	FString Outcome;
+	FString FallbackLine;
+	switch (Result)
+	{
+	case EShowDownRoundResult::PlayerWin: // 보스 패배
+		Outcome = TEXT("collector_lost");
+		FallbackLine = TEXT("아쉽군… 다음엔 다르다.");
+		break;
+	case EShowDownRoundResult::CollectorWin: // 보스 승리
+		Outcome = TEXT("collector_won");
+		FallbackLine = TEXT("예상대로군.");
+		break;
+	case EShowDownRoundResult::Draw:
+	default:
+		Outcome = TEXT("draw");
+		FallbackLine = TEXT("무승부라… 시시하군.");
+		break;
+	}
+
+	UGameInstance* GameInstance = GetGameInstance();
+	USDLLMSubsystem* LLMSubsystem = GameInstance ? GameInstance->GetSubsystem<USDLLMSubsystem>() : nullptr;
+	if (!LLMSubsystem || !LLMSubsystem->IsConfigured())
+	{
+		// LLM 비활성/미설정 → 정적 대사로 대체
+		AppendRecentDialogueLine(TEXT("Collector"), FallbackLine);
+		ShowDownGameState->BroadcastChatMessage(TEXT("Collector"), FallbackLine);
+		return;
+	}
+
+	const int32 CurrentBet = BettingSystem ? BettingSystem->GetCurrentBet() : 1;
+	const int32 GivenCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
+	FSDLLMBossContext Context = BuildLLMBossContext(CurrentBet, GivenCardRank);
+	Context.RoundOutcome = Outcome;
+
+	LLMSubsystem->RequestBossResultReaction(
+		Context,
+		FSDLLMBossChatCallback::CreateWeakLambda(
+			this,
+			[this, FallbackLine](bool bSuccess, const FString& Dialogue, const FString& Intent)
+			{
+				AShowDownGameStateBase* CallbackGameState = GetShowDownGameState();
+				if (!CallbackGameState)
+				{
+					return;
+				}
+
+				const FString Line = (bSuccess && !Dialogue.TrimStartAndEnd().IsEmpty())
+					? Dialogue
+					: FallbackLine;
+				AppendRecentDialogueLine(TEXT("Collector"), Line);
+				CallbackGameState->BroadcastChatMessage(TEXT("Collector"), Line);
+			}));
 }
 
 void AShowDownGameModeBase::ResolveFold(EShowDownSide FoldedSide)
@@ -625,10 +1057,14 @@ void AShowDownGameModeBase::ResolveFold(EShowDownSide FoldedSide)
 	{
 		CollectorState.ForeheadCard->SetFaceUp(true);
 	}
+
+	const int32 PlayerCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
+	const int32 CollectorCardRank = CollectorState.ForeheadCard ? CollectorState.ForeheadCard->Rank : 0;
+	LastRoundPlayerCardRank = PlayerCardRank;
+	LastRoundCollectorCardRank = CollectorCardRank;
+
 	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 	{
-		const int32 PlayerCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
-		const int32 CollectorCardRank = CollectorState.ForeheadCard ? CollectorState.ForeheadCard->Rank : 0;
 		const EShowDownRoundResult FoldResult = FoldedSide == EShowDownSide::Player
 			? EShowDownRoundResult::CollectorWin
 			: EShowDownRoundResult::PlayerWin;
@@ -667,7 +1103,14 @@ void AShowDownGameModeBase::ContinueFoldAfterReveal(EShowDownSide FoldedSide, in
 		ShowDownGameState->EventEnd(EShowDownPhase::Reveal);
 	}
 
+	// 폴드로 끝난 라운드도 보스 반응 채팅을 남긴다.
+	BroadcastBossResultReaction(
+		FoldedSide == EShowDownSide::Player ? EShowDownRoundResult::CollectorWin : EShowDownRoundResult::PlayerWin);
+
 	ApplyRouletteResult(FoldedSide, LoadCount);
+	AppendRecentRoundSummary(
+		FoldedSide == EShowDownSide::Player ? EShowDownRoundResult::CollectorWin : EShowDownRoundResult::PlayerWin,
+		FString::Printf(TEXT("%s folded"), *GetSideText(FoldedSide)));
 	EndRound();
 }
 
@@ -804,6 +1247,15 @@ void AShowDownGameModeBase::ClearForeheadCards()
 	{
 		CardSystem->DiscardCards(DiscardRanks);
 	}
+	for (int32 Rank : DiscardRanks)
+	{
+		if (!DiscardedCardsSummary.IsEmpty())
+		{
+			DiscardedCardsSummary += TEXT(", ");
+		}
+		DiscardedCardsSummary += FString::FromInt(Rank);
+	}
+	DiscardedCardsSummary = DiscardedCardsSummary.Right(240);
 }
 
 void AShowDownGameModeBase::ClearHandCards()
@@ -867,6 +1319,11 @@ void AShowDownGameModeBase::StartStage(int32 StageIndex)
 	CollectorState.CurrentBet = StageRule.MinimumBet;
 	BettingRaisesLeft = 6;
 	bHasLastRaiser = false;
+	RecentRoundHistory.Reset();
+	CurrentRoundActionHistory.Reset();
+	DiscardedCardsSummary.Reset();
+	RecentDialogueHistory.Reset();
+	ResetCurrentRoundMemory();
 
 	if (CollectorAISystem)
 	{

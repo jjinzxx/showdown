@@ -16,6 +16,8 @@ class UCollectorAISystem;
 class UBettingSystem;
 class URoundResolver;
 class URouletteSystem;
+struct FCollectorBetDecision;
+struct FSDLLMBossContext;
 class AShowDownGameStateBase;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
@@ -150,6 +152,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void PlayerFold();
 
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|LLM")
+	void SubmitPlayerDialogueInput(const FString& PlayerDialogue);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
+	void SubmitPlayerDialogueInputFromPlayer(const FString& PlayerDialogue, const FString& SenderName);
+
 	//연출팀이 Phase 연출 종료를 코어에 알릴 때 호출
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation")
 	void NotifyPresentationFinished(EShowDownPhase FinishedPhase);
@@ -196,6 +204,18 @@ private:
 	EShowDownRoundResult PendingRoundResult = EShowDownRoundResult::Draw;
 	EShowDownSide PendingFoldedSide = EShowDownSide::Player;
 	int32 PendingFoldLoadCount = 1;
+	FString LatestPlayerDialogueInput;
+	FString RecentDialogueHistory;
+	FString RecentRoundHistory;
+	FString CurrentRoundActionHistory;
+	FString DiscardedCardsSummary;
+	int32 CurrentRoundPlayerGaveRank = 0;
+	int32 CurrentRoundCollectorGaveRank = 0;
+	int32 LastRoundPlayerCardRank = 0;
+	int32 LastRoundCollectorCardRank = 0;
+	bool bCurrentRoundSummaryRecorded = false;
+	bool bBossChatReplyInFlight = false;
+	float LastBossChatReplyRequestTime = -1000.0f;
 	
 	//콜렉터 추적
 	UPROPERTY()
@@ -207,7 +227,18 @@ private:
 	void CollectorGiveCardToPlayer();
 	float EstimateCollectorWinChance() const;
 	void ResolveCollectorBetResponse();
+	FCollectorBetDecision SanitizeCollectorDecision(const FCollectorBetDecision& RawDecision) const;
+	void ExecuteCollectorBetDecision(const FCollectorBetDecision& CollectorDecision, int32 GivenCardRank);
+	FSDLLMBossContext BuildLLMBossContext(int32 CurrentBet, int32 GivenCardRank) const;
+	FSDLLMBossContext BuildLLMChatContext(const FString& PlayerDialogue) const;
+	void AppendRecentDialogueLine(const FString& Speaker, const FString& Message);
+	void ResetCurrentRoundMemory();
+	void RecordCurrentRoundAction(const FString& ActionText);
+	void AppendRecentRoundSummary(EShowDownRoundResult Result, const FString& Reason);
+	FString GetSideText(EShowDownSide Side) const;
+	FString GetRoundResultText(EShowDownRoundResult Result) const;
 	void FinishBettingAndResolveRound();
+	void BroadcastBossResultReaction(EShowDownRoundResult Result);
 	void ResolveFold(EShowDownSide FoldedSide);
 	void ContinueRoundAfterReveal(EShowDownRoundResult Result);
 	void ContinueFoldAfterReveal(EShowDownSide FoldedSide, int32 LoadCount);

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "InputActionValue.h"
+#include "InputCoreTypes.h"
 
 
 #include "PlayerPawn.generated.h"
@@ -48,6 +49,15 @@ public:
 	class UInputAction* ia_LookUp;//상하
 	UPROPERTY(EditDefaultsOnly, Category = Input)
 	class UInputAction* ia_Turn;//좌우
+
+	UPROPERTY(EditDefaultsOnly, Category = "ShowDown|Chat")
+	TSubclassOf<class UShowDownChatWidget> ChatWidgetClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
+	FKey ToggleChatKey = EKeys::T;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
+	FKey CloseChatKey = EKeys::Escape;
 	
 	//카메라 회전 감도
 	UPROPERTY(EditAnywhere, Category = Camera)
@@ -100,6 +110,21 @@ public:
 	//선택된 카드를 게임 모드 베이스를 통해 전달
 	void SubmitSelectedCard(ACard* SelectedCard);
 
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
+	void ToggleChat();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
+	void OpenChat();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
+	void CloseChat();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
+	void SubmitDialogueInput(const FString& Text);
+
+	UFUNCTION(Server, Reliable)
+	void ServerSubmitDialogueInput(const FString& Text, const FString& SenderName);
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
@@ -120,6 +145,13 @@ private:
 	bool bHasPreviousMousePosition = false;
 	float PreviousMouseX = 0.0f;
 	float PreviousMouseY = 0.0f;
+	bool bChatOpen = false;
+
+	UPROPERTY()
+	class UShowDownChatWidget* ChatWidget = nullptr;
 	
 	void HandleBettingHotkeys();
+	void EnsureChatWidget();
+	void ApplyChatInputMode(bool bOpen);
+	FString GetChatSenderName() const;
 };

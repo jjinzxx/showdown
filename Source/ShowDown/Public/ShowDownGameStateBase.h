@@ -15,6 +15,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownLifeChangedSignature, ESho
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FShowDownStageChangedSignature, int32, Stage);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FShowDownGameOverSignature, EShowDownSide, Winner);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FShowDownPresentationSignature, EShowDownPhase, Phase);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownCollectorDialogueSignature, const FString&, Dialogue, const FString&, Intent);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FShowDownCollectorLLMDecisionSignature, const FString&, Dialogue, const FString&, Intent, EShowDownBetAction, Action, int32, TargetBet);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownCollectorLLMStatusSignature, bool, bSuccess, const FString&, Message);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownChatMessageSignature, const FString&, SenderName, const FString&, Message);
 
 UCLASS()
 class SHOWDOWN_API AShowDownGameStateBase : public AGameStateBase
@@ -66,6 +70,18 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
 	FShowDownPresentationSignature OnPresentationFinished;
 
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
+	FShowDownCollectorDialogueSignature OnCollectorDialogue;
+
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
+	FShowDownCollectorLLMDecisionSignature OnCollectorLLMDecision;
+
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
+	FShowDownCollectorLLMStatusSignature OnCollectorLLMStatus;
+
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
+	FShowDownChatMessageSignature OnChatMessageReceived;
+
 	//현재 게임 진행 단계
 	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
 	EShowDownPhase CurrentPhase = EShowDownPhase::None;
@@ -105,5 +121,26 @@ public:
 	//Phase 연출 종료 알림
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation")
 	void FinishPresentation(EShowDownPhase Phase);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation")
+	void BroadcastCollectorDialogue(const FString& Dialogue, const FString& Intent);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation")
+	void BroadcastCollectorLLMDecision(const FString& Dialogue, const FString& Intent, EShowDownBetAction Action, int32 TargetBet);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation")
+	void BroadcastCollectorLLMStatus(bool bSuccess, const FString& Message);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
+	void BroadcastChatMessage(const FString& SenderName, const FString& Message);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastCollectorLLMDecision(const FString& Dialogue, const FString& Intent, EShowDownBetAction Action, int32 TargetBet);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastCollectorLLMStatus(bool bSuccess, const FString& Message);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastChatMessage(const FString& SenderName, const FString& Message);
 	
 };

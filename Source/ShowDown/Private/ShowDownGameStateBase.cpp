@@ -111,3 +111,60 @@ void AShowDownGameStateBase::FinishPresentation(EShowDownPhase Phase)
 {
 	EventEnd(Phase);
 }
+
+void AShowDownGameStateBase::BroadcastCollectorDialogue(const FString& Dialogue, const FString& Intent)
+{
+	OnCollectorDialogue.Broadcast(Dialogue, Intent);
+}
+
+void AShowDownGameStateBase::BroadcastCollectorLLMDecision(const FString& Dialogue, const FString& Intent, EShowDownBetAction Action, int32 TargetBet)
+{
+	if (HasAuthority())
+	{
+		MulticastCollectorLLMDecision(Dialogue, Intent, Action, TargetBet);
+		return;
+	}
+
+	OnCollectorDialogue.Broadcast(Dialogue, Intent);
+	OnCollectorLLMDecision.Broadcast(Dialogue, Intent, Action, TargetBet);
+	OnCollectorLLMStatus.Broadcast(true, TEXT("Boss answered."));
+}
+
+void AShowDownGameStateBase::BroadcastCollectorLLMStatus(bool bSuccess, const FString& Message)
+{
+	if (HasAuthority())
+	{
+		MulticastCollectorLLMStatus(bSuccess, Message);
+		return;
+	}
+
+	OnCollectorLLMStatus.Broadcast(bSuccess, Message);
+}
+
+void AShowDownGameStateBase::BroadcastChatMessage(const FString& SenderName, const FString& Message)
+{
+	if (HasAuthority())
+	{
+		MulticastChatMessage(SenderName, Message);
+		return;
+	}
+
+	OnChatMessageReceived.Broadcast(SenderName, Message);
+}
+
+void AShowDownGameStateBase::MulticastCollectorLLMDecision_Implementation(const FString& Dialogue, const FString& Intent, EShowDownBetAction Action, int32 TargetBet)
+{
+	OnCollectorDialogue.Broadcast(Dialogue, Intent);
+	OnCollectorLLMDecision.Broadcast(Dialogue, Intent, Action, TargetBet);
+	OnCollectorLLMStatus.Broadcast(true, TEXT("Boss answered."));
+}
+
+void AShowDownGameStateBase::MulticastCollectorLLMStatus_Implementation(bool bSuccess, const FString& Message)
+{
+	OnCollectorLLMStatus.Broadcast(bSuccess, Message);
+}
+
+void AShowDownGameStateBase::MulticastChatMessage_Implementation(const FString& SenderName, const FString& Message)
+{
+	OnChatMessageReceived.Broadcast(SenderName, Message);
+}

@@ -133,7 +133,32 @@ FCollectorBetDecision UCollectorAISystem::ChooseBetDecisionByModel(
 	int32 RaisesLeft,
 	bool bLastRaiserWasCollector) const
 {
+	const FCollectorLLMInfluence NoInfluence;
+	return ChooseBetDecisionByModelWithInfluence(
+		OwnHandCards,
+		OpponentForeheadCard,
+		CurrentBet,
+		OwnCommittedBet,
+		MaxRaise,
+		RaisesLeft,
+		bLastRaiserWasCollector,
+		NoInfluence);
+}
+
+FCollectorBetDecision UCollectorAISystem::ChooseBetDecisionByModelWithInfluence(
+	const TArray<ACard*>& OwnHandCards,
+	int32 OpponentForeheadCard,
+	int32 CurrentBet,
+	int32 OwnCommittedBet,
+	int32 MaxRaise,
+	int32 RaisesLeft,
+	bool bLastRaiserWasCollector,
+	const FCollectorLLMInfluence& LLMInfluence) const
+{
 	FCollectorBetDecision Decision;
+	const float EffectiveAggression = FMath::Clamp(Settings.Aggression + LLMInfluence.AggressionDelta, 0.0f, 1.0f);
+	const float EffectiveBluffRate = FMath::Clamp(Settings.BluffRate + LLMInfluence.BluffRateDelta, 0.0f, 1.0f);
+	const float EffectiveTimidity = FMath::Clamp(Settings.Timidity + LLMInfluence.TimidityDelta, 0.0f, 1.0f);
 
 	const int32 ClampedCurrentBet = FMath::Clamp(CurrentBet, 1, 6);
 	const int32 ClampedCommittedBet = FMath::Clamp(OwnCommittedBet, 0, 6);
@@ -195,7 +220,7 @@ FCollectorBetDecision UCollectorAISystem::ChooseBetDecisionByModel(
 	const float FoldNet = -(P7 * 1.0f + (1.0f - P7) * (static_cast<float>(ClampedCommittedBet) / 6.0f));
 	const bool bMustRespond = ClampedCommittedBet < ClampedCurrentBet;
 
-	if (bMustRespond && FoldNet > CallNet + Settings.Timidity * 0.05f)
+	if (bMustRespond && FoldNet > CallNet + EffectiveTimidity * 0.05f)
 	{
 		Decision.Action = EShowDownBetAction::Fold;
 		return Decision;
@@ -207,10 +232,10 @@ FCollectorBetDecision UCollectorAISystem::ChooseBetDecisionByModel(
 	{
 		TargetBet = FMath::RoundToInt(
 			static_cast<float>(ClampedCurrentBet)
-			+ Confidence * Settings.Aggression * static_cast<float>(RaiseCap - ClampedCurrentBet));
+			+ Confidence * EffectiveAggression * static_cast<float>(RaiseCap - ClampedCurrentBet));
 	}
 
-	const float BluffChance = Settings.BluffRate * (1.0f - FMath::Max(0.0f, Confidence));
+	const float BluffChance = EffectiveBluffRate * (1.0f - FMath::Max(0.0f, Confidence));
 	if (FMath::FRand() < BluffChance && RaiseCap > ClampedCurrentBet)
 	{
 		TargetBet = FMath::Max(
@@ -221,8 +246,8 @@ FCollectorBetDecision UCollectorAISystem::ChooseBetDecisionByModel(
 	TargetBet = FMath::Clamp(TargetBet, 0, RaiseCap);
 
 	const float RaiseChance = bLastRaiserWasCollector
-		? Settings.BluffRate * 0.5f
-		: FMath::Min(1.0f, 0.35f + FMath::Max(0.0f, Confidence) * Settings.Aggression * 1.2f);
+		? EffectiveBluffRate * 0.5f
+		: FMath::Min(1.0f, 0.35f + FMath::Max(0.0f, Confidence) * EffectiveAggression * 1.2f);
 
 	if (TargetBet > ClampedCurrentBet && RaisesLeft > 0 && FMath::FRand() < RaiseChance)
 	{
