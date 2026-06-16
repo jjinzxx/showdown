@@ -5,12 +5,65 @@
 #include "Json.h"
 #include "JsonUtilities.h"
 
+namespace
+{
+FString MakeLoginFailureMessage(int32 StatusCode)
+{
+	if (StatusCode == 400 || StatusCode == 401)
+	{
+		return TEXT("ID or password is incorrect.");
+	}
+
+	if (StatusCode == 429)
+	{
+		return TEXT("Too many login attempts. Try again later.");
+	}
+
+	if (StatusCode >= 500)
+	{
+		return TEXT("Login server is unavailable. Try again later.");
+	}
+
+	return TEXT("Login failed. Check your connection and try again.");
+}
+
+FString MakeLeaderboardFailureMessage(int32 StatusCode)
+{
+	if (StatusCode == 401 || StatusCode == 403)
+	{
+		return TEXT("Please log in again to view rankings.");
+	}
+
+	if (StatusCode >= 500)
+	{
+		return TEXT("Ranking server is unavailable. Try again later.");
+	}
+
+	return TEXT("Could not load rankings. Check your connection and try again.");
+}
+
+FString MakeRewardFailureMessage(int32 StatusCode)
+{
+	if (StatusCode == 401 || StatusCode == 403)
+	{
+		return TEXT("Reward failed. Please log in again.");
+	}
+
+	if (StatusCode >= 500)
+	{
+		return TEXT("Reward server is unavailable. Your reward was not applied.");
+	}
+
+	return TEXT("Reward failed. Please try again later.");
+}
+}
+
 void USupabaseSubsystem::LoginWithEmail(const FString& Email, const FString& Password)
 {
 	// 이메일이나 비밀번호가 비어 있으면 서버에 요청하지 않고 바로 실패 처리합니다.
 	if (Email.IsEmpty() || Password.IsEmpty())
 	{
-		OnLoginResult.Broadcast(false, TEXT("Email or password is empty."));
+		OnLoginResult.Broadcast(false, TEXT("Enter your email and password."));
 		return;
 	}
 
@@ -61,7 +114,7 @@ void USupabaseSubsystem::HandleLoginResponse(
 	// 네트워크 요청 자체가 실패했거나 응답 객체가 없으면 실패 처리합니다.
 	if (!bWasSuccessful || !Response.IsValid())
 	{
-		OnLoginResult.Broadcast(false, TEXT("Server request failed."));
+		OnLoginResult.Broadcast(false, TEXT("Network error. Check your connection and try again."));
 		return;
 	}
 
@@ -73,7 +126,7 @@ void USupabaseSubsystem::HandleLoginResponse(
 	if (StatusCode < 200 || StatusCode >= 300)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Supabase login failed: %d / %s"), StatusCode, *ResponseText);
-		OnLoginResult.Broadcast(false, TEXT("Login failed."));
+		OnLoginResult.Broadcast(false, MakeLoginFailureMessage(StatusCode));
 		return;
 	}
 
@@ -118,7 +171,7 @@ void USupabaseSubsystem::LoginWithId(const FString& Id, const FString& Password)
 	// 아이디나 비밀번호가 비어 있으면 서버에 요청하지 않고 바로 실패 처리합니다.
 	if (Id.IsEmpty() || Password.IsEmpty())
 	{
-		OnLoginResult.Broadcast(false, TEXT("ID or password is empty."));
+		OnLoginResult.Broadcast(false, TEXT("Enter your ID and password."));
 		return;
 	}
 
@@ -162,7 +215,7 @@ void USupabaseSubsystem::HandleLoginWithIdResponse(
 {
 	if (!bWasSuccessful || !Response.IsValid())
 	{
-		OnLoginResult.Broadcast(false, TEXT("Server request failed."));
+		OnLoginResult.Broadcast(false, TEXT("Network error. Check your connection and try again."));
 		return;
 	}
 
@@ -173,7 +226,7 @@ void USupabaseSubsystem::HandleLoginWithIdResponse(
 	if (StatusCode < 200 || StatusCode >= 300)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Login (id) failed: %d / %s"), StatusCode, *ResponseText);
-		OnLoginResult.Broadcast(false, TEXT("Login failed."));
+		OnLoginResult.Broadcast(false, MakeLoginFailureMessage(StatusCode));
 		return;
 	}
 
@@ -207,7 +260,7 @@ void USupabaseSubsystem::LoadLeaderboard(int32 Limit)
 {
 	if (AccessToken.IsEmpty())
 	{
-		OnLeaderboardLoaded.Broadcast(false, TEXT("Access token is empty."));
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Please log in again to view rankings."));
 		return;
 	}
 
@@ -229,6 +282,7 @@ void USupabaseSubsystem::LoadLeaderboard(int32 Limit)
 	);
 
 	Request->ProcessRequest();
+	OnLeaderboardLoaded.Broadcast(false, TEXT("Loading rankings..."));
 }
 
 void USupabaseSubsystem::HandleLeaderboardResponse(
@@ -239,7 +293,7 @@ void USupabaseSubsystem::HandleLeaderboardResponse(
 {
 	if (!bWasSuccessful || !Response.IsValid())
 	{
-		OnLeaderboardLoaded.Broadcast(false, TEXT("Leaderboard request failed."));
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Could not load rankings. Check your connection and try again."));
 		return;
 	}
 
@@ -249,7 +303,7 @@ void USupabaseSubsystem::HandleLeaderboardResponse(
 	if (StatusCode < 200 || StatusCode >= 300)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Leaderboard load failed: %d / %s"), StatusCode, *ResponseText);
-		OnLeaderboardLoaded.Broadcast(false, TEXT("Leaderboard load failed."));
+		OnLeaderboardLoaded.Broadcast(false, MakeLeaderboardFailureMessage(StatusCode));
 		return;
 	}
 
@@ -259,7 +313,7 @@ void USupabaseSubsystem::HandleLeaderboardResponse(
 
 	if (!FJsonSerializer::Deserialize(Reader, JsonArray))
 	{
-		OnLeaderboardLoaded.Broadcast(false, TEXT("Leaderboard response parse failed."));
+		OnLeaderboardLoaded.Broadcast(false, TEXT("Ranking data could not be read. Try again later."));
 		return;
 	}
 
@@ -1183,12 +1237,24 @@ void USupabaseSubsystem::HandleUpdateNicknameResponse(
 	OnNicknameUpdated.Broadcast(true, TEXT("Nickname updated."));
 }
 
-void USupabaseSubsystem::AwardWinReward()
+void USupabaseSubsystem::AwardWinReward(const FString& MatchId)
 {
+	if (bAwardWinRewardInFlight)
+	{
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward is already being processed."));
+		return;
+	}
+
+	if (MatchId.IsEmpty())
+	{
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward failed. Match id is missing."));
+		return;
+	}
+
 	// 보상 지급은 로그인한 유저만 가능하므로 access_token이 필요합니다.
 	if (AccessToken.IsEmpty())
 	{
-		OnPlayerDataLoaded.Broadcast(false, TEXT("Access token is empty."));
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward failed. Please log in again."));
 		return;
 	}
 
@@ -1198,8 +1264,13 @@ void USupabaseSubsystem::AwardWinReward()
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request =
 		CreateAuthorizedRequest(TEXT("/rest/v1/rpc/award_win_reward"), TEXT("POST"));
 
-	// 인자가 없는 함수지만 PostgREST는 빈 JSON 본문을 기대합니다.
-	Request->SetContentAsString(TEXT("{}"));
+	TSharedPtr<FJsonObject> BodyObject = MakeShared<FJsonObject>();
+	BodyObject->SetStringField(TEXT("p_match_id"), MatchId);
+
+	FString BodyString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyString);
+	FJsonSerializer::Serialize(BodyObject.ToSharedRef(), Writer);
+	Request->SetContentAsString(BodyString);
 
 	Request->OnProcessRequestComplete().BindUObject(
 		this,
@@ -1208,7 +1279,9 @@ void USupabaseSubsystem::AwardWinReward()
 
 	Request->ProcessRequest();
 
-	UE_LOG(LogTemp, Log, TEXT("AwardWinReward requested."));
+	bAwardWinRewardInFlight = true;
+	UE_LOG(LogTemp, Log, TEXT("AwardWinReward requested. MatchId=%s"), *MatchId);
+	OnPlayerDataLoaded.Broadcast(false, TEXT("Processing win reward..."));
 }
 
 void USupabaseSubsystem::HandleAwardWinRewardResponse(
@@ -1219,7 +1292,8 @@ void USupabaseSubsystem::HandleAwardWinRewardResponse(
 {
 	if (!bWasSuccessful || !Response.IsValid())
 	{
-		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward request failed."));
+		bAwardWinRewardInFlight = false;
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward failed. Check your connection and try again."));
 		return;
 	}
 
@@ -1229,7 +1303,8 @@ void USupabaseSubsystem::HandleAwardWinRewardResponse(
 	if (StatusCode < 200 || StatusCode >= 300)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Reward failed: %d / %s"), StatusCode, *ResponseText);
-		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward failed."));
+		bAwardWinRewardInFlight = false;
+		OnPlayerDataLoaded.Broadcast(false, MakeRewardFailureMessage(StatusCode));
 		return;
 	}
 
@@ -1239,7 +1314,8 @@ void USupabaseSubsystem::HandleAwardWinRewardResponse(
 
 	if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
 	{
-		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward response parse failed."));
+		bAwardWinRewardInFlight = false;
+		OnPlayerDataLoaded.Broadcast(false, TEXT("Reward response could not be read. Please check your score later."));
 		return;
 	}
 
@@ -1261,11 +1337,18 @@ void USupabaseSubsystem::HandleAwardWinRewardResponse(
 		Coin = NewCoin;
 	}
 
+	bool bAlreadyClaimed = false;
+	JsonObject->TryGetBoolField(TEXT("already_claimed"), bAlreadyClaimed);
+
 	UE_LOG(LogTemp, Log, TEXT("Win reward granted: +%d score (=%d), +%d coin (=%d)"),
 		ScoreReward, Score, CoinReward, Coin);
 
 	// 메인메뉴 등 UI가 점수/코인 표시를 새로고침하도록 알립니다.
-	OnPlayerDataLoaded.Broadcast(true, TEXT("Win reward granted."));
+	bAwardWinRewardInFlight = false;
+	OnPlayerDataLoaded.Broadcast(
+		true,
+		bAlreadyClaimed ? TEXT("Win reward was already claimed.") : TEXT("Win reward granted.")
+	);
 }
 
 void USupabaseSubsystem::HandleEquipSkinResponse(

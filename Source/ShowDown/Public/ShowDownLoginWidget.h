@@ -38,6 +38,7 @@ protected:
 
 private:
 	bool bUseLegacyNavigation = true;
+	bool bLoginRequestInFlight = false;
 
 	// WBP_Login 안에 있는 아이디 입력창과 연결됩니다.
 	// WBP에서 위젯 이름이 EditableTextBox_Id와 정확히 같아야 합니다.

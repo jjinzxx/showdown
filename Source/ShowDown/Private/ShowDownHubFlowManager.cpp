@@ -6,6 +6,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Misc/Guid.h"
 #include "ShowDownGameModeBase.h"
 #include "ShowDownGameStateBase.h"
 #include "ShowDownLoginWidget.h"
@@ -196,6 +197,9 @@ void AShowDownHubFlowManager::ShowRanking()
 
 void AShowDownHubFlowManager::ShowSinglePlayPreview()
 {
+	CurrentRewardMatchId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+	UE_LOG(LogTemp, Log, TEXT("Single play reward match id: %s"), *CurrentRewardMatchId);
+
 	// 메뉴 UI를 걷어내 카드 클릭/베팅 입력이 폰으로 가도록 합니다.
 	SetActiveWidget(nullptr);
 
@@ -366,7 +370,7 @@ void AShowDownHubFlowManager::HandleGameOver(EShowDownSide Winner)
 		{
 			if (USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
 			{
-				SupabaseSubsystem->AwardWinReward();
+				SupabaseSubsystem->AwardWinReward(CurrentRewardMatchId);
 			}
 		}
 	}
@@ -430,5 +434,6 @@ void AShowDownHubFlowManager::ReturnToHub()
 	}
 
 	// 카메라/입력/위젯을 메인메뉴 상태로 되돌립니다.
+	CurrentRewardMatchId.Empty();
 	ShowMainMenu();
 }

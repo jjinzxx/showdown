@@ -33,6 +33,7 @@ void UShowDownLoginWidget::NativeConstruct()
 	if (Text_Status)
 	{
 		Text_Status->SetText(FText::FromString(TEXT("Ready")));
+		Text_Status->SetColorAndOpacity(FSlateColor(FLinearColor::White));
 	}
 }
 
@@ -50,6 +51,16 @@ void UShowDownLoginWidget::NativeDestruct()
 
 void UShowDownLoginWidget::HandleLoginClicked()
 {
+	if (bLoginRequestInFlight)
+	{
+		if (Text_Status)
+		{
+			Text_Status->SetText(FText::FromString(TEXT("Login is already in progress.")));
+			Text_Status->SetColorAndOpacity(FSlateColor(FLinearColor::Yellow));
+		}
+		return;
+	}
+
 	// 입력창에서 사용자가 입력한 "아이디"를 가져옵니다.
 	// 연결되어 있지 않으면 빈 문자열을 사용해서 크래시를 막습니다.
 	const FString LoginId = EditableTextBox_Id
@@ -62,10 +73,27 @@ void UShowDownLoginWidget::HandleLoginClicked()
 		? EditableTextBox_Password->GetText().ToString()
 		: TEXT("");
 
+	if (LoginId.TrimStartAndEnd().IsEmpty() || Password.IsEmpty())
+	{
+		if (Text_Status)
+		{
+			Text_Status->SetText(FText::FromString(TEXT("Enter your ID and password.")));
+			Text_Status->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+		}
+		return;
+	}
+
 	// 버튼을 누른 직후에는 서버 응답을 기다리는 중이라는 메시지를 보여줍니다.
+	bLoginRequestInFlight = true;
+	if (Button_Login)
+	{
+		Button_Login->SetIsEnabled(false);
+	}
+
 	if (Text_Status)
 	{
 		Text_Status->SetText(FText::FromString(TEXT("Logging in...")));
+		Text_Status->SetColorAndOpacity(FSlateColor(FLinearColor::Yellow));
 	}
 
 	// SupabaseSubsystem을 가져와서 실제 로그인 요청을 보냅니다.
@@ -74,29 +102,52 @@ void UShowDownLoginWidget::HandleLoginClicked()
 	{
 		SupabaseSubsystem->LoginWithId(LoginId, Password);
 	}
-	else if (Text_Status)
+	else
 	{
 		// Subsystem을 찾지 못하면 로그인 요청을 보낼 수 없으므로 UI에 오류를 표시합니다.
-		Text_Status->SetText(FText::FromString(TEXT("Supabase subsystem not found")));
+		bLoginRequestInFlight = false;
+		if (Button_Login)
+		{
+			Button_Login->SetIsEnabled(true);
+		}
+		if (Text_Status)
+		{
+			Text_Status->SetText(FText::FromString(TEXT("Supabase subsystem not found")));
+			Text_Status->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+		}
 	}
 }
 
 void UShowDownLoginWidget::HandleLoginResult(bool bSuccess, const FString& Message)
 {
+	const bool bIsProgressMessage = Message == TEXT("Logging in...");
+
 	// SupabaseSubsystem에서 전달한 로그인 결과 메시지를 로그인 화면의 상태 텍스트에 표시합니다.
 	// 예: Logging in..., Login success., Login failed.
 	if (Text_Status)
 	{
 		Text_Status->SetText(FText::FromString(Message));
+		Text_Status->SetColorAndOpacity(FSlateColor(
+			bSuccess ? FLinearColor::Green : (bIsProgressMessage ? FLinearColor::Yellow : FLinearColor::Red)
+		));
 	}
 
 	// 로그인에 실패한 경우에는 메인 메뉴로 넘어가면 안 되므로 여기서 함수를 끝냅니다.
 	// 실패 메시지는 위에서 Text_Status에 이미 표시된 상태입니다.
 	if (!bSuccess)
 	{
+		if (!bIsProgressMessage)
+		{
+			bLoginRequestInFlight = false;
+			if (Button_Login)
+			{
+				Button_Login->SetIsEnabled(true);
+			}
+		}
 		return;
 	}
 
+	bLoginRequestInFlight = false;
 	OnLoginSucceeded.Broadcast();
 
 	// HubFlowManager가 화면 전환을 담당하는 경우 여기서 멈춥니다.

@@ -62,6 +62,9 @@ private:
 	UPROPERTY(meta = (BindWidget))
 	UTextBlock* Text_Score;
 
+	UPROPERTY(meta = (BindWidgetOptional))
+	UTextBlock* Text_Status;
+
 	// 새 닉네임을 입력하는 입력창입니다.
 	UPROPERTY(meta = (BindWidget))
 	UEditableTextBox* EditableTextBox_Nickname;
@@ -96,6 +99,7 @@ private:
 
 	// SupabaseSubsystem에 저장된 nickname, coin, score를 화면에 반영합니다.
 	void RefreshPlayerInfo();
+	void SetStatusMessage(const FString& Message, const FLinearColor& Color);
 
 	// Change Nickname 버튼을 눌렀을 때 실행됩니다.
 	UFUNCTION()

@@ -71,6 +71,7 @@ void UShowDownMainMenuWidget::NativeConstruct()
 
 	// 위젯이 처음 뜰 때 로그인 후 불러온 플레이어 정보를 표시합니다.
 	RefreshPlayerInfo();
+	SetStatusMessage(TEXT(""), FLinearColor::White);
 }
 
 void UShowDownMainMenuWidget::NativeDestruct()
@@ -146,6 +147,15 @@ void UShowDownMainMenuWidget::RefreshPlayerInfo()
 	}
 }
 
+void UShowDownMainMenuWidget::SetStatusMessage(const FString& Message, const FLinearColor& Color)
+{
+	if (Text_Status)
+	{
+		Text_Status->SetText(FText::FromString(Message));
+		Text_Status->SetColorAndOpacity(FSlateColor(Color));
+	}
+}
+
 void UShowDownMainMenuWidget::HandleChangeNicknameClicked()
 {
 	// 닉네임 입력창에서 사용자가 입력한 새 닉네임을 읽어옵니다.
@@ -172,6 +182,7 @@ void UShowDownMainMenuWidget::HandleNicknameUpdated(bool bSuccess, const FString
 	// SupabaseSubsystem 내부 Nickname 값이 이미 새 닉네임으로 갱신된 상태입니다.
 	if (bSuccess)
 	{
+		SetStatusMessage(Message, FLinearColor::Green);
 		RefreshPlayerInfo();
 
 		// 닉네임 변경이 끝났으니 입력창을 비워 다음 입력을 준비합니다.
@@ -179,17 +190,39 @@ void UShowDownMainMenuWidget::HandleNicknameUpdated(bool bSuccess, const FString
 		{
 			EditableTextBox_Nickname->SetText(FText::GetEmpty());
 		}
+		return;
 	}
+
+	SetStatusMessage(Message, FLinearColor::Red);
 }
 
 void UShowDownMainMenuWidget::HandlePlayerDataLoaded(bool bSuccess, const FString& Message)
 {
 	UE_LOG(LogTemp, Log, TEXT("Player data load result: %s"), *Message);
 
+	if (Message == TEXT("Processing win reward..."))
+	{
+		SetStatusMessage(Message, FLinearColor::Yellow);
+		return;
+	}
+
+	if (Message == TEXT("Reward is already being processed."))
+	{
+		SetStatusMessage(Message, FLinearColor::Yellow);
+		return;
+	}
+
 	if (bSuccess)
 	{
 		RefreshPlayerInfo();
+		if (Message == TEXT("Win reward granted.") || Message == TEXT("Win reward was already claimed."))
+		{
+			SetStatusMessage(Message, FLinearColor::Green);
+		}
+		return;
 	}
+
+	SetStatusMessage(Message, FLinearColor::Red);
 }
 
 void UShowDownMainMenuWidget::HandleCosmeticDataLoaded(bool bSuccess, const FString& Message)

@@ -19,6 +19,8 @@ void UShowDownRankWidget::NativeConstruct()
 			SupabaseSubsystem->OnLeaderboardLoaded.AddDynamic(this, &UShowDownRankWidget::HandleLeaderboardLoaded);
 
 			// 화면이 뜰 때 전체 리더보드를 서버에서 불러옵니다.
+			bLeaderboardRequestInFlight = true;
+			SetStatusMessage(TEXT("Loading rankings..."), FLinearColor::Yellow);
 			SupabaseSubsystem->LoadLeaderboard();
 		}
 	}
@@ -31,7 +33,10 @@ void UShowDownRankWidget::NativeConstruct()
 
 	// 위젯이 뜰 때 현재 캐시된 내 점수를 즉시 표시합니다(리더보드는 응답 오면 채워짐).
 	RefreshRank();
-	PopulateLeaderboard();
+	if (!bLeaderboardRequestInFlight)
+	{
+		PopulateLeaderboard();
+	}
 }
 
 void UShowDownRankWidget::NativeDestruct()
@@ -79,6 +84,14 @@ void UShowDownRankWidget::RequestRankRefresh()
 	{
 		if (USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
 		{
+			if (bLeaderboardRequestInFlight)
+			{
+				SetStatusMessage(TEXT("Ranking refresh is already in progress."), FLinearColor::Yellow);
+				return;
+			}
+
+			bLeaderboardRequestInFlight = true;
+			SetStatusMessage(TEXT("Loading rankings..."), FLinearColor::Yellow);
 			SupabaseSubsystem->LoadPlayerData();
 			SupabaseSubsystem->LoadLeaderboard();
 		}
@@ -134,6 +147,40 @@ void UShowDownRankWidget::PopulateLeaderboard()
 
 		Box_Entries->AddChildToVerticalBox(Row);
 	}
+
+	if (SupabaseSubsystem->GetLeaderboard().Num() == 0)
+	{
+		UTextBlock* Row = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+		if (Row)
+		{
+			Row->SetText(FText::FromString(TEXT("No ranking data yet.")));
+			Row->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+			Box_Entries->AddChildToVerticalBox(Row);
+		}
+	}
+}
+
+void UShowDownRankWidget::SetStatusMessage(const FString& Message, const FLinearColor& Color)
+{
+	if (Text_Status)
+	{
+		Text_Status->SetText(FText::FromString(Message));
+		Text_Status->SetColorAndOpacity(FSlateColor(Color));
+		return;
+	}
+
+	if (Box_Entries && WidgetTree)
+	{
+		Box_Entries->ClearChildren();
+
+		UTextBlock* Row = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+		if (Row)
+		{
+			Row->SetText(FText::FromString(Message));
+			Row->SetColorAndOpacity(FSlateColor(Color));
+			Box_Entries->AddChildToVerticalBox(Row);
+		}
+	}
 }
 
 void UShowDownRankWidget::HandlePlayerDataLoaded(bool bSuccess, const FString& Message)
@@ -146,10 +193,22 @@ void UShowDownRankWidget::HandlePlayerDataLoaded(bool bSuccess, const FString& M
 
 void UShowDownRankWidget::HandleLeaderboardLoaded(bool bSuccess, const FString& Message)
 {
+	if (Message == TEXT("Loading rankings..."))
+	{
+		SetStatusMessage(Message, FLinearColor::Yellow);
+		return;
+	}
+
+	bLeaderboardRequestInFlight = false;
+
 	if (bSuccess)
 	{
+		SetStatusMessage(Message, FLinearColor::Green);
 		PopulateLeaderboard();
+		return;
 	}
+
+	SetStatusMessage(Message, FLinearColor::Red);
 }
 
 void UShowDownRankWidget::HandleBackClicked()

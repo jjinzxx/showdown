@@ -125,6 +125,7 @@ private:
 	float ReturnToHubDelay = 4.0f;
 
 	FTimerHandle ReturnToHubTimerHandle;
+	FString CurrentRewardMatchId;
 
 	UPROPERTY()
 	UShowDownLoginWidget* LoginWidget;

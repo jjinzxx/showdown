@@ -249,9 +249,11 @@ public:
 	// 성공하면 응답의 새 score/coin으로 내부 값을 갱신하고 OnPlayerDataLoaded를 broadcast해
 	// UI(메인메뉴 점수/코인 표시)를 새로고침합니다.
 	UFUNCTION(BlueprintCallable, Category = "Supabase")
-	void AwardWinReward();
+	void AwardWinReward(const FString& MatchId);
 
 private:
+	bool bAwardWinRewardInFlight = false;
+
 	// Supabase 프로젝트 기본 URL입니다.
 	FString SupabaseUrl = TEXT("https://xfyzrqsbdweckjgxefjr.supabase.co");
 

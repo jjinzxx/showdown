@@ -48,6 +48,8 @@ protected:
 	virtual void NativeDestruct() override;
 
 private:
+	bool bLeaderboardRequestInFlight = false;
+
 	// WBP_Rank 안의 점수 표시 TextBlock과 연결됩니다(있을 때만).
 	UPROPERTY(meta = (BindWidgetOptional))
 	UTextBlock* Text_RankScore;
@@ -66,8 +68,12 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional))
 	UVerticalBox* Box_Entries;
 
+	UPROPERTY(meta = (BindWidgetOptional))
+	UTextBlock* Text_Status;
+
 	// 리더보드 목록을 Box_Entries에 다시 그립니다.
 	void PopulateLeaderboard();
+	void SetStatusMessage(const FString& Message, const FLinearColor& Color);
 
 	UFUNCTION()
 	void HandlePlayerDataLoaded(bool bSuccess, const FString& Message);
