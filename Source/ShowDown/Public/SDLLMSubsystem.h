@@ -67,6 +67,10 @@ struct FSDLLMBossContext
 
 	UPROPERTY(BlueprintReadWrite, Category = "ShowDown|LLM")
 	int32 Round = 1;
+
+	// 라운드 결과 반응 요청 시 보스(Collector) 관점의 결과: "collector_won" / "collector_lost" / "draw"
+	UPROPERTY(BlueprintReadWrite, Category = "ShowDown|LLM")
+	FString RoundOutcome;
 };
 
 USTRUCT(BlueprintType)
@@ -120,12 +124,14 @@ public:
 	bool IsConfigured() const;
 	void RequestBossResponse(const FSDLLMBossContext& Context, FSDLLMBossResponseCallback Callback);
 	void RequestBossChatReply(const FSDLLMBossContext& Context, FSDLLMBossChatCallback Callback);
+	void RequestBossResultReaction(const FSDLLMBossContext& Context, FSDLLMBossChatCallback Callback);
 
 private:
 	FString ResolveApiKey() const;
 	FString BuildPrompt(const FSDLLMBossContext& Context) const;
 	FString BuildRequestBody(const FSDLLMBossContext& Context) const;
 	FString BuildChatReplyRequestBody(const FSDLLMBossContext& Context) const;
+	FString BuildResultReactionRequestBody(const FSDLLMBossContext& Context) const;
 	bool ParseBossResponse(const FString& ResponseBody, FSDLLMBossResponse& OutResponse) const;
 	bool ParseBossChatReply(const FString& ResponseBody, FString& OutDialogue, FString& OutIntent) const;
 	FString ExtractOutputText(const TSharedPtr<FJsonObject>& RootObject) const;

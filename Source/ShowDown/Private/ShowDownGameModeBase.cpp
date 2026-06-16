@@ -939,6 +939,9 @@ void AShowDownGameModeBase::ContinueRoundAfterReveal(EShowDownRoundResult Result
 		ShowDownGameState->EventEnd(EShowDownPhase::Reveal);
 	}
 
+	// 결과 공개 직후 보스가 승/패/무에 대한 반응 채팅을 남긴다.
+	BroadcastBossResultReaction(Result);
+
 	switch (Result)
 	{
 	case EShowDownRoundResult::PlayerWin:
@@ -966,6 +969,69 @@ void AShowDownGameModeBase::ContinueRoundAfterReveal(EShowDownRoundResult Result
 	default:
 		break;
 	}
+}
+
+void AShowDownGameModeBase::BroadcastBossResultReaction(EShowDownRoundResult Result)
+{
+	AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState();
+	if (!ShowDownGameState)
+	{
+		return;
+	}
+
+	// Collector(보스) 관점의 결과와 LLM 실패 시 쓸 정적 폴백 대사
+	FString Outcome;
+	FString FallbackLine;
+	switch (Result)
+	{
+	case EShowDownRoundResult::PlayerWin: // 보스 패배
+		Outcome = TEXT("collector_lost");
+		FallbackLine = TEXT("아쉽군… 다음엔 다르다.");
+		break;
+	case EShowDownRoundResult::CollectorWin: // 보스 승리
+		Outcome = TEXT("collector_won");
+		FallbackLine = TEXT("예상대로군.");
+		break;
+	case EShowDownRoundResult::Draw:
+	default:
+		Outcome = TEXT("draw");
+		FallbackLine = TEXT("무승부라… 시시하군.");
+		break;
+	}
+
+	UGameInstance* GameInstance = GetGameInstance();
+	USDLLMSubsystem* LLMSubsystem = GameInstance ? GameInstance->GetSubsystem<USDLLMSubsystem>() : nullptr;
+	if (!LLMSubsystem || !LLMSubsystem->IsConfigured())
+	{
+		// LLM 비활성/미설정 → 정적 대사로 대체
+		AppendRecentDialogueLine(TEXT("Collector"), FallbackLine);
+		ShowDownGameState->BroadcastChatMessage(TEXT("Collector"), FallbackLine);
+		return;
+	}
+
+	const int32 CurrentBet = BettingSystem ? BettingSystem->GetCurrentBet() : 1;
+	const int32 GivenCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
+	FSDLLMBossContext Context = BuildLLMBossContext(CurrentBet, GivenCardRank);
+	Context.RoundOutcome = Outcome;
+
+	LLMSubsystem->RequestBossResultReaction(
+		Context,
+		FSDLLMBossChatCallback::CreateWeakLambda(
+			this,
+			[this, FallbackLine](bool bSuccess, const FString& Dialogue, const FString& Intent)
+			{
+				AShowDownGameStateBase* CallbackGameState = GetShowDownGameState();
+				if (!CallbackGameState)
+				{
+					return;
+				}
+
+				const FString Line = (bSuccess && !Dialogue.TrimStartAndEnd().IsEmpty())
+					? Dialogue
+					: FallbackLine;
+				AppendRecentDialogueLine(TEXT("Collector"), Line);
+				CallbackGameState->BroadcastChatMessage(TEXT("Collector"), Line);
+			}));
 }
 
 void AShowDownGameModeBase::ResolveFold(EShowDownSide FoldedSide)
@@ -1036,6 +1102,10 @@ void AShowDownGameModeBase::ContinueFoldAfterReveal(EShowDownSide FoldedSide, in
 	{
 		ShowDownGameState->EventEnd(EShowDownPhase::Reveal);
 	}
+
+	// 폴드로 끝난 라운드도 보스 반응 채팅을 남긴다.
+	BroadcastBossResultReaction(
+		FoldedSide == EShowDownSide::Player ? EShowDownRoundResult::CollectorWin : EShowDownRoundResult::PlayerWin);
 
 	ApplyRouletteResult(FoldedSide, LoadCount);
 	AppendRecentRoundSummary(

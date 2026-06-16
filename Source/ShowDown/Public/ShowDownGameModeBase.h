@@ -238,6 +238,7 @@ private:
 	FString GetSideText(EShowDownSide Side) const;
 	FString GetRoundResultText(EShowDownRoundResult Result) const;
 	void FinishBettingAndResolveRound();
+	void BroadcastBossResultReaction(EShowDownRoundResult Result);
 	void ResolveFold(EShowDownSide FoldedSide);
 	void ContinueRoundAfterReveal(EShowDownRoundResult Result);
 	void ContinueFoldAfterReveal(EShowDownSide FoldedSide, int32 LoadCount);

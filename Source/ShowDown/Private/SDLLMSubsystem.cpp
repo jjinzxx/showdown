@@ -105,6 +105,51 @@ void USDLLMSubsystem::RequestBossChatReply(const FSDLLMBossContext& Context, FSD
 	}
 }
 
+void USDLLMSubsystem::RequestBossResultReaction(const FSDLLMBossContext& Context, FSDLLMBossChatCallback Callback)
+{
+	if (!IsConfigured())
+	{
+		Callback.ExecuteIfBound(false, FString(), FString());
+		return;
+	}
+
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+	Request->SetURL(TEXT("https://api.openai.com/v1/responses"));
+	Request->SetVerb(TEXT("POST"));
+	Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+	Request->SetHeader(TEXT("Authorization"), FString::Printf(TEXT("Bearer %s"), *ResolveApiKey()));
+	Request->SetTimeout(RequestTimeoutSeconds);
+	Request->SetContentAsString(BuildResultReactionRequestBody(Context));
+
+	Request->OnProcessRequestComplete().BindWeakLambda(
+		this,
+		[this, Callback](FHttpRequestPtr RequestPtr, FHttpResponsePtr ResponsePtr, bool bWasSuccessful)
+		{
+			FString Dialogue;
+			FString Intent;
+			const bool bHttpOk = bWasSuccessful
+				&& ResponsePtr.IsValid()
+				&& EHttpResponseCodes::IsOk(ResponsePtr->GetResponseCode());
+
+			const bool bParsed = bHttpOk && ParseBossChatReply(ResponsePtr->GetContentAsString(), Dialogue, Intent);
+			if (!bParsed)
+			{
+				const int32 ResponseCode = ResponsePtr.IsValid() ? ResponsePtr->GetResponseCode() : 0;
+				const FString ResponsePreview = ResponsePtr.IsValid()
+					? ResponsePtr->GetContentAsString().Left(512)
+					: TEXT("No HTTP response");
+				UE_LOG(LogTemp, Warning, TEXT("LLM boss result reaction failed. HTTP %d. Body: %s"), ResponseCode, *ResponsePreview);
+			}
+
+			Callback.ExecuteIfBound(bParsed, Dialogue, Intent);
+		});
+
+	if (!Request->ProcessRequest())
+	{
+		Callback.ExecuteIfBound(false, FString(), FString());
+	}
+}
+
 FString USDLLMSubsystem::ResolveApiKey() const
 {
 	FString Key = FPlatformMisc::GetEnvironmentVariable(*ApiKeyEnvironmentVariable).TrimStartAndEnd();
@@ -319,6 +364,84 @@ FString USDLLMSubsystem::BuildChatReplyRequestBody(const FSDLLMBossContext& Cont
 	TSharedRef<FJsonObject> FormatObject = MakeShared<FJsonObject>();
 	FormatObject->SetStringField(TEXT("type"), TEXT("json_schema"));
 	FormatObject->SetStringField(TEXT("name"), TEXT("showdown_boss_chat_reply"));
+	FormatObject->SetBoolField(TEXT("strict"), true);
+	FormatObject->SetObjectField(TEXT("schema"), SchemaObject);
+
+	TSharedRef<FJsonObject> TextObject = MakeShared<FJsonObject>();
+	TextObject->SetObjectField(TEXT("format"), FormatObject);
+	RootObject->SetObjectField(TEXT("text"), TextObject);
+
+	FString OutputString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	FJsonSerializer::Serialize(RootObject, Writer);
+	return OutputString;
+}
+
+FString USDLLMSubsystem::BuildResultReactionRequestBody(const FSDLLMBossContext& Context) const
+{
+	TSharedRef<FJsonObject> RootObject = MakeShared<FJsonObject>();
+	RootObject->SetStringField(TEXT("model"), Model);
+	RootObject->SetNumberField(TEXT("max_output_tokens"), 80);
+
+	TArray<TSharedPtr<FJsonValue>> InputMessages;
+
+	TSharedRef<FJsonObject> DeveloperMessage = MakeShared<FJsonObject>();
+	DeveloperMessage->SetStringField(TEXT("role"), TEXT("developer"));
+	DeveloperMessage->SetStringField(
+		TEXT("content"),
+		TEXT("Return only schema-valid JSON. You are the Collector and a betting round just ended; the cards are revealed. React to the outcome in one short in-character Korean line based on round_outcome. ")
+		TEXT("round_outcome=collector_won means you won: be smug, menacing, or coldly satisfied. round_outcome=collector_lost means you lost: sound reluctantly impressed or regretful, like \"아쉽군\" — never celebrate. round_outcome=draw means a tie: be coldly indifferent or unsettled. ")
+		TEXT("Use the recent chat and round history so the line feels like a continuation, not a random shout. Do not choose or mention a betting action. Intent must be one of cautious, steady, aggressive, bluff. Do not use hate slurs, sexual harassment, or real-person doxxing."));
+	InputMessages.Add(MakeShared<FJsonValueObject>(DeveloperMessage));
+
+	TSharedRef<FJsonObject> UserMessage = MakeShared<FJsonObject>();
+	UserMessage->SetStringField(TEXT("role"), TEXT("user"));
+	UserMessage->SetStringField(
+		TEXT("content"),
+		FString::Printf(
+			TEXT("Speech style: %s Round just ended. round_outcome=%s\nRecent chat:\n%s\nRecent rounds:\n%s\nThis round actions:\n%s\nGame state: stage=%d, round=%d, player_lives=%d, collector_lives=%d, player_forehead_rank=%d, collector_forehead_rank=%d.\nReply in Korean under 32 characters as a reaction to the result. Match the tone to round_outcome."),
+			*BossSpeechStylePrompt,
+			*Context.RoundOutcome,
+			*Context.RecentDialogue.Left(700),
+			*Context.RecentRoundHistory.Left(900),
+			*Context.CurrentRoundActions.Left(700),
+			Context.Stage,
+			Context.Round,
+			Context.PlayerLives,
+			Context.CollectorLives,
+			Context.PlayerForeheadRank,
+			Context.CollectorForeheadRank));
+	InputMessages.Add(MakeShared<FJsonValueObject>(UserMessage));
+	RootObject->SetArrayField(TEXT("input"), InputMessages);
+
+	TSharedRef<FJsonObject> SchemaObject = MakeShared<FJsonObject>();
+	SchemaObject->SetStringField(TEXT("type"), TEXT("object"));
+
+	TSharedRef<FJsonObject> PropertiesObject = MakeShared<FJsonObject>();
+	TSharedRef<FJsonObject> DialogueProperty = MakeShared<FJsonObject>();
+	DialogueProperty->SetStringField(TEXT("type"), TEXT("string"));
+	PropertiesObject->SetObjectField(TEXT("dialogue"), DialogueProperty);
+
+	TSharedRef<FJsonObject> IntentProperty = MakeShared<FJsonObject>();
+	IntentProperty->SetStringField(TEXT("type"), TEXT("string"));
+	TArray<TSharedPtr<FJsonValue>> IntentValues;
+	IntentValues.Add(MakeShared<FJsonValueString>(TEXT("cautious")));
+	IntentValues.Add(MakeShared<FJsonValueString>(TEXT("steady")));
+	IntentValues.Add(MakeShared<FJsonValueString>(TEXT("aggressive")));
+	IntentValues.Add(MakeShared<FJsonValueString>(TEXT("bluff")));
+	IntentProperty->SetArrayField(TEXT("enum"), IntentValues);
+	PropertiesObject->SetObjectField(TEXT("intent"), IntentProperty);
+
+	SchemaObject->SetObjectField(TEXT("properties"), PropertiesObject);
+	TArray<TSharedPtr<FJsonValue>> RequiredFields;
+	RequiredFields.Add(MakeShared<FJsonValueString>(TEXT("dialogue")));
+	RequiredFields.Add(MakeShared<FJsonValueString>(TEXT("intent")));
+	SchemaObject->SetArrayField(TEXT("required"), RequiredFields);
+	SchemaObject->SetBoolField(TEXT("additionalProperties"), false);
+
+	TSharedRef<FJsonObject> FormatObject = MakeShared<FJsonObject>();
+	FormatObject->SetStringField(TEXT("type"), TEXT("json_schema"));
+	FormatObject->SetStringField(TEXT("name"), TEXT("showdown_boss_result_reaction"));
 	FormatObject->SetBoolField(TEXT("strict"), true);
 	FormatObject->SetObjectField(TEXT("schema"), SchemaObject);
 
