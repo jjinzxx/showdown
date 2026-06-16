@@ -66,6 +66,10 @@ out/
 *.sqlite3
 .ouroboros/
 
+# LLM API 키 (로컬 전용, 절대 커밋 금지). 템플릿은 추적 유지
+Source/ShowDown/Private/SDLLMSecrets.h
+!Source/ShowDown/Private/SDLLMSecrets.h.template
+
 # ============================================================
 # 화이트리스트 (제외 대상 중 포함할 항목)
 # ============================================================

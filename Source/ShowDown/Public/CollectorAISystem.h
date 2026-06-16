@@ -61,6 +61,21 @@ struct FCollectorBetDecision
 	int32 TargetBet = 0;
 };
 
+USTRUCT(BlueprintType)
+struct FCollectorLLMInfluence
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "ShowDown|CollectorAI")
+	float AggressionDelta = 0.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "ShowDown|CollectorAI")
+	float BluffRateDelta = 0.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "ShowDown|CollectorAI")
+	float TimidityDelta = 0.0f;
+};
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 
 
@@ -102,4 +117,14 @@ public:
 		int32 MaxRaise,
 		int32 RaisesLeft,
 		bool bLastRaiserWasCollector) const;
+
+	FCollectorBetDecision ChooseBetDecisionByModelWithInfluence(
+		const TArray<ACard*>& OwnHandCards,
+		int32 OpponentForeheadCard,
+		int32 CurrentBet,
+		int32 OwnCommittedBet,
+		int32 MaxRaise,
+		int32 RaisesLeft,
+		bool bLastRaiserWasCollector,
+		const FCollectorLLMInfluence& LLMInfluence) const;
 };

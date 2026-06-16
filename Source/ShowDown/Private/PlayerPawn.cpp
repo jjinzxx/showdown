@@ -7,15 +7,19 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
 #include "InputActionValue.h"
 #include "Kismet/GameplayStatics.h"
 #include "ShowDownGameModeBase.h"
 #include "ShowDownGameStateBase.h"
+#include "ShowDownChatWidget.h"
+#include "SupabaseSubsystem.h"
 
 APlayerPawn::APlayerPawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	AutoPossessPlayer = EAutoReceiveInput::Player0;
+	bReplicates = true;
 
 	// 루트 메시 컴포넌트 생성
 	rootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -90,6 +94,23 @@ void APlayerPawn::Tick(float DeltaTime)
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (!PC)
 	{
+		bHasPreviousMousePosition = false;
+		return;
+	}
+
+	if (bChatOpen)
+	{
+		if (PC->WasInputKeyJustPressed(CloseChatKey))
+		{
+			CloseChat();
+		}
+		bHasPreviousMousePosition = false;
+		return;
+	}
+
+	if (PC->WasInputKeyJustPressed(ToggleChatKey))
+	{
+		OpenChat();
 		bHasPreviousMousePosition = false;
 		return;
 	}
@@ -237,6 +258,83 @@ void APlayerPawn::SubmitSelectedCard(ACard* SelectedCard)
 	}
 }
 
+void APlayerPawn::ToggleChat()
+{
+	if (bChatOpen)
+	{
+		CloseChat();
+	}
+	else
+	{
+		OpenChat();
+	}
+}
+
+void APlayerPawn::OpenChat()
+{
+	EnsureChatWidget();
+	if (!ChatWidget)
+	{
+		return;
+	}
+
+	bChatOpen = true;
+	ChatWidget->SetVisibility(ESlateVisibility::Visible);
+	ApplyChatInputMode(true);
+	ChatWidget->FocusChatInput();
+	GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		if (bChatOpen && ChatWidget)
+		{
+			ChatWidget->FocusChatInput();
+		}
+	}));
+}
+
+void APlayerPawn::CloseChat()
+{
+	bChatOpen = false;
+	if (ChatWidget)
+	{
+		ChatWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	ApplyChatInputMode(false);
+}
+
+void APlayerPawn::SubmitDialogueInput(const FString& Text)
+{
+	const FString TrimmedText = Text.TrimStartAndEnd();
+	if (TrimmedText.IsEmpty())
+	{
+		return;
+	}
+
+	if (HasAuthority())
+	{
+		if (ModeBase)
+		{
+			ModeBase->SubmitPlayerDialogueInputFromPlayer(TrimmedText, GetChatSenderName());
+		}
+		return;
+	}
+
+	ServerSubmitDialogueInput(TrimmedText, GetChatSenderName());
+}
+
+void APlayerPawn::ServerSubmitDialogueInput_Implementation(const FString& Text, const FString& SenderName)
+{
+	if (!ModeBase)
+	{
+		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+	}
+
+	const FString TrimmedText = Text.TrimStartAndEnd();
+	if (!TrimmedText.IsEmpty() && ModeBase)
+	{
+		ModeBase->SubmitPlayerDialogueInputFromPlayer(TrimmedText, SenderName);
+	}
+}
+
 // 상하 회전 입력에 따른 콜백 함수 구현
 void APlayerPawn::LookUp(const FInputActionValue& inputValue)
 {
@@ -316,4 +414,81 @@ void APlayerPawn::HandleBettingHotkeys()
 	{
 		ModeBase->PlayerRaiseTo(6);
 	}
+}
+
+void APlayerPawn::EnsureChatWidget()
+{
+	if (ChatWidget)
+	{
+		return;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC || !ChatWidgetClass)
+	{
+		if (!ChatWidgetClass)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ChatWidgetClass is not assigned on %s."), *GetName());
+		}
+		return;
+	}
+
+	ChatWidget = CreateWidget<UShowDownChatWidget>(PC, ChatWidgetClass);
+	if (!ChatWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to create chat widget on %s."), *GetName());
+		return;
+	}
+
+	ChatWidget->SetOwningShowDownPawn(this);
+	ChatWidget->AddToViewport();
+	ChatWidget->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void APlayerPawn::ApplyChatInputMode(bool bOpen)
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		return;
+	}
+
+	PC->bShowMouseCursor = true;
+	if (bOpen && ChatWidget)
+	{
+		FInputModeGameAndUI InputMode;
+		InputMode.SetWidgetToFocus(ChatWidget->TakeWidget());
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		PC->SetInputMode(InputMode);
+	}
+	else
+	{
+		FInputModeGameOnly InputMode;
+		PC->SetInputMode(InputMode);
+	}
+}
+
+FString APlayerPawn::GetChatSenderName() const
+{
+	if (const UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (const USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
+		{
+			const FString Nickname = SupabaseSubsystem->GetNickname().TrimStartAndEnd();
+			if (!Nickname.IsEmpty())
+			{
+				return Nickname.Left(32);
+			}
+		}
+	}
+
+	const APlayerState* CurrentPlayerState = GetPlayerState();
+	FString SenderName = CurrentPlayerState ? CurrentPlayerState->GetPlayerName() : TEXT("Player");
+	SenderName = SenderName.TrimStartAndEnd();
+	if (SenderName.IsEmpty() || SenderName.StartsWith(TEXT("DESKTOP-")))
+	{
+		return TEXT("Player");
+	}
+
+	return SenderName.Left(32);
 }
