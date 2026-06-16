@@ -87,11 +87,12 @@
 | 맵 | 액터 | 설정 | 값 | 의도 |
 | --- | --- | --- | --- | --- |
 | `ArtToneTest` | `PostProcessVolume` | `Infinite Extent (Unbound)` | On | 볼륨 위치와 상관없이 화면 전체에 적용 |
-| `ArtToneTest` | `PostProcessVolume` | `Exposure Compensation` | `0.5` | 전체 밝기 기준 조절 |
+| `ArtToneTest` | `PostProcessVolume` | `Exposure Compensation` | `1.0` | 전체 밝기 기준 조절 |
 | `ArtToneTest` | `PostProcessVolume` | `Saturation` | `0.7` | 채도를 낮춰 낡고 건조한 톤 형성 |
 | `ArtToneTest` | `PostProcessVolume` | `Contrast` | `0.8` | 대비를 낮춰 색이 더 눌린 느낌 형성 |
 | `ArtToneTest` | `PostProcessVolume` | `Temperature` | 기본값 | 색온도는 아직 적극적으로 조절하지 않음 |
 | `ArtToneTest` | `PostProcessVolume` | `Tint` | `0.2` | 화면 색조에 약한 편향 추가 |
+| `ArtToneTest` | `PostProcessVolume` | `Chromatic Aberration Intensity` | `0.2` | 색수차/RGB 번짐을 아주 약하게 추가 |
 | `ArtToneTest` | `PostProcessVolume` | `Vignette Intensity` | `0.55` | 화면 가장자리 어둡게 처리, 폐쇄감 강화 |
 | `ArtToneTest` | `PostProcessVolume` | `Film Grain Intensity` | `0.2` | 거친 화면 질감 추가 |
 | `ArtToneTest` | `PostProcessVolume` | `Film Grain Texel Size` | `1.0` | 그레인 입자 크기 기준 |
@@ -104,7 +105,7 @@
 
 | 머티리얼 | 파라미터 | 값 | 의도 |
 | --- | --- | --- | --- |
-| `M_PP_Pixelate` | `PixelCount` | `480` | 화면 전체를 약한 저해상도 느낌으로 처리 |
+| `M_PP_Pixelate` | `PixelCount` | `320` | 화면 전체를 저해상도/Lo-fi 느낌으로 처리 |
 | `M_PP_Pixelate` | `ScanlineCount` | `480` | CRT/VHS 가로줄 간격 기준 |
 | `M_PP_Pixelate` | `ScanlineStrength` | `0.02` | 가로줄 강도를 약하게 유지 |
 | `M_PP_Pixelate` | `ColorSteps` | `6` | 색 단계 수를 크게 줄여 강한 포스터라이즈/저비트 느낌 형성 |
@@ -154,7 +155,91 @@
 - 추가 설정:
   - `FreeViewBlendTime`: 자유시점으로 돌아갈 때의 전환 시간
   - `bRestoreGameInputOnFreeView`: 자유시점 복귀 시 이동/시야 입력을 다시 활성화할지 여부
+- `ASDCameraBlendTester`에 Default 카메라 자유 회전과 중앙 상호작용 테스트 기능을 추가했다.
+  - `1`번으로 `DefaultCamera`에 들어가면 마우스 이동으로 카메라 액터를 직접 회전한다.
+  - 좌클릭하면 `DefaultCamera` 정면으로 `Visibility` 라인트레이스를 쏜다.
+  - 맞은 액터가 `ASDPressableButtonActor`이면 `Press()`를 호출한다.
+  - `2`번 `CloseCamera`에서는 고정 카메라처럼 유지한다.
+  - `3`번은 플레이어 자유시점으로 돌아간다.
+  - 현재는 화면 중앙 기준 판정만 구현했고, 보이는 조준점 UI는 아직 별도 작업으로 남겨둔다.
+- Default 카메라 상호작용 주요 조절값:
+  - `bEnableDefaultCameraMouseLook`: Default 카메라 마우스 회전 사용 여부
+  - `MouseLookSensitivity`: 마우스 회전 감도
+  - `MinPitch`, `MaxPitch`: 위아래 회전 제한
+  - `InteractTraceDistance`: 중앙 클릭 판정 거리
+  - `bDrawDebugInteractTrace`: 클릭 판정 라인 디버그 표시 여부
+- Default 카메라 마우스 조작 기본값을 조정했다.
+  - `MouseLookSensitivity`: `0.08` -> `0.25`
+  - `bInvertMouseY`: `false` -> `true`
+  - 이유: 기존 감도가 너무 느리고, 위아래 조작이 기대 방향과 반대로 느껴졌기 때문.
+- `ASDCameraBlendTester`에 C++ Slate 기반 중앙 조준점을 추가했다.
+  - 블루프린트 위젯 없이 코드에서 화면 중앙 `+` 모양을 그린다.
+  - `DefaultCamera` 상태에서만 표시하고, `CloseCamera` / 자유시점에서는 숨긴다.
+  - 조준점은 `HitTestInvisible`이라 마우스 클릭 판정을 막지 않는다.
+  - 주요 조절값: `bShowCrosshair`, `CrosshairSize`, `CrosshairThickness`, `CrosshairColor`.
 - 빌드 메모:
   - UnrealHeaderTool 코드 생성은 통과했다.
   - 정식 빌드는 에디터 Live Coding 활성화 상태 때문에 중단되었다.
   - 에디터를 닫고 다시 빌드하거나, 에디터에서 `Ctrl + Alt + F11`로 Live Coding 컴파일을 사용해 확인한다.
+- 포스트 프로세스 현재값을 최신 기준으로 갱신했다.
+  - `Exposure Compensation`: `0.5` -> `1.0`
+  - `PixelCount`: `480` -> `320`
+  - 현재값 표에 `Chromatic Aberration Intensity = 0.2`를 추가했다.
+
+### 2026-06-16
+
+- BGM 방향을 공포 앰비언스보다 긴박하고 신나는 전자음악 계열로 잡는 방향을 검토했다.
+  - 레퍼런스 감각: `Buckshot Roulette`처럼 어둡지만 리듬이 살아 있는 도박판/클럽/지하실 느낌.
+  - 키워드: EDM, dark club, industrial beat, dirty synth, tense groove.
+  - 목표: 무섭게 가라앉히기보다 베팅과 룰렛의 속도를 밀어주는 음악.
+  - 주의: 레퍼런스 곡을 그대로 따라 하기보다, 리듬감과 에너지 구조만 참고한다.
+- 사물형 UI 테스트용 C++ 액터 `ASDPressableButtonActor`를 추가했다.
+  - Header: `Source/ShowDown/Public/Presentation/SDPressableButtonActor.h`
+  - Source: `Source/ShowDown/Private/Presentation/SDPressableButtonActor.cpp`
+- 목적:
+  - 블루프린트 그래프를 복잡하게 쓰지 않고, C++ 로직으로 버튼 눌림 연출을 테스트한다.
+  - 블루프린트는 메시, 위치, 눌림 거리, 속도 같은 값 조절용으로만 사용한다.
+- 위치/움직임 기준:
+  - 버튼의 월드 목표 위치를 직접 찍지 않는다.
+  - 레벨에서는 버튼 액터를 원하는 위치에 배치한다.
+  - 눌림 방향은 `LocalPressOffset`으로 지정한다.
+  - 기본값 `LocalPressOffset = (0, 0, -8)`은 버튼 메시가 자기 로컬 기준 아래로 8cm 눌리는 의미다.
+- 기본 사용:
+  - `ASDPressableButtonActor` 기반 블루프린트 생성
+  - `ButtonMesh`에 버튼용 Static Mesh 지정
+  - 테스트 레벨에 배치
+  - 클릭하거나 `E` / `Space`를 누르면 버튼이 눌렸다가 튕기며 돌아온다.
+- 주요 조절값:
+  - `LocalPressOffset`: 눌림 방향과 거리
+  - `PressDownTime`: 내려가는 시간
+  - `HoldTime`: 눌린 상태로 머무는 시간
+  - `ReturnTime`: 돌아오는 시간
+  - `ReturnBounceDistance`: 돌아올 때 살짝 튕기는 거리
+  - `bEnableKeyboardTestInput`: 테스트 키 입력 사용 여부
+- 공통 상호작용 인터페이스 `ISDInteractable`을 추가했다.
+  - Header: `Source/ShowDown/Public/Interaction/SDInteractable.h`
+  - 목적: 버튼, 담배, 맥주처럼 종류가 다른 사물도 중앙 조준점 클릭에서 같은 방식으로 `Interact()`를 호출하게 한다.
+- `ASDCameraBlendTester`의 중앙 클릭 판정을 버튼 전용에서 공통 인터페이스 방식으로 변경했다.
+  - 기존: `ASDPressableButtonActor`만 찾아서 `Press()` 호출
+  - 변경: `ISDInteractable` 구현 액터를 찾고 `CanInteract()` 확인 후 `Interact()` 호출
+- `ASDPressableButtonActor`가 `ISDInteractable`을 구현하도록 변경했다.
+- 담배 상호작용 테스트용 C++ 액터 `ASDSmokableCigaretteActor`를 추가했다.
+  - Header: `Source/ShowDown/Public/Presentation/SDSmokableCigaretteActor.h`
+  - Source: `Source/ShowDown/Private/Presentation/SDSmokableCigaretteActor.cpp`
+  - 클릭 또는 중앙 조준점 상호작용 시 `Smoke()` 실행
+  - 담배 메시가 로컬 오프셋/회전값만큼 들렸다가 돌아온다.
+  - `EmberLight`로 담배 끝 불빛을 켜고 흔들림을 준다.
+  - `SmokeParticle`에 연기 파티클을 지정하면 흡연 중 활성화된다.
+  - `SmokeSound`를 지정하면 상호작용 시 소리를 재생한다.
+- 담배 주요 조절값:
+  - `LocalSmokeOffset`: 담배가 들어올려지는 로컬 위치
+  - `LocalSmokeRotationOffset`: 담배가 들어올려질 때의 로컬 회전
+  - `LiftTime`, `SmokeHoldTime`, `ReturnTime`: 들어올림/유지/복귀 시간
+  - `EmberSmokeIntensity`, `EmberFlickerAmount`, `EmberFlickerSpeed`: 담배 끝 불빛 느낌
+- 담배 연출을 1인칭 카메라 앞 연출로 확장했다.
+  - `bUseFirstPersonSmokePose`가 켜져 있으면 담배가 클릭된 자리에서 현재 카메라 앞으로 이동한다.
+  - 피는 동안 `PlayerCameraManager`의 현재 카메라 위치/회전을 따라다닌다.
+  - 연출이 끝나면 원래 레벨 배치 위치로 돌아간다.
+  - `FirstPersonCameraOffset`: 카메라 기준 위치. X=앞, Y=오른쪽, Z=위/아래.
+  - `FirstPersonRotationOffset`: 카메라 기준 담배 회전 보정.
+  - `bDisableCollisionWhileSmoking`: 연출 중 담배 충돌을 잠시 꺼서 카메라 앞에서 방해되지 않게 한다.

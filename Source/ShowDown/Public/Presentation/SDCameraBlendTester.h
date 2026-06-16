@@ -9,6 +9,7 @@
 
 class ACameraActor;
 class APlayerController;
+class SSDCrosshairWidget;
 
 UCLASS(Blueprintable)
 class SHOWDOWN_API ASDCameraBlendTester : public AActor
@@ -17,6 +18,8 @@ class SHOWDOWN_API ASDCameraBlendTester : public AActor
 
 public:
 	ASDCameraBlendTester();
+
+	virtual void Tick(float DeltaSeconds) override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -45,12 +48,61 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera Blend Test")
 	bool bRestoreGameInputOnFreeView = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Default Camera Look")
+	bool bEnableDefaultCameraMouseLook = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Default Camera Look", meta = (ClampMin = "0.0"))
+	float MouseLookSensitivity = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Default Camera Look", meta = (ClampMin = "-89.0", ClampMax = "89.0"))
+	float MinPitch = -75.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Default Camera Look", meta = (ClampMin = "-89.0", ClampMax = "89.0"))
+	float MaxPitch = 75.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Default Camera Look")
+	bool bInvertMouseY = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Center Interaction", meta = (ClampMin = "0.0"))
+	float InteractTraceDistance = 1200.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Center Interaction")
+	bool bDrawDebugInteractTrace = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Center Interaction")
+	bool bShowCrosshair = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Center Interaction", meta = (ClampMin = "1.0"))
+	float CrosshairSize = 18.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Center Interaction", meta = (ClampMin = "1.0"))
+	float CrosshairThickness = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Center Interaction")
+	FLinearColor CrosshairColor = FLinearColor(1.0f, 1.0f, 1.0f, 0.85f);
+
 private:
+	enum class ECameraBlendTesterViewMode : uint8
+	{
+		DefaultCamera,
+		CloseCamera,
+		FreeView
+	};
+
 	void BindCameraInput();
 	void BlendToDefaultCamera();
 	void BlendToCloseCamera();
 	void BlendToFreeView();
+	void HandlePrimaryInteract();
 	void BlendToCamera(ACameraActor* CameraActor, const TCHAR* CameraLabel) const;
 	void BlendToViewTarget(AActor* ViewTarget, const TCHAR* ViewTargetLabel, float InBlendTime) const;
+	void UpdateDefaultCameraMouseLook();
+	void SetViewMode(ECameraBlendTesterViewMode NewViewMode);
+	void ApplyFixedCameraInputMode() const;
+	void CreateCrosshairWidget();
+	void UpdateCrosshairVisibility();
 	APlayerController* GetLocalPlayerController() const;
+
+	ECameraBlendTesterViewMode ActiveViewMode = ECameraBlendTesterViewMode::FreeView;
+	TSharedPtr<SSDCrosshairWidget> CrosshairWidget;
 };
