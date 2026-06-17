@@ -38,6 +38,9 @@ public:
 	// FlowManager가 연출 흐름을 맡을 때는 false로 꺼서 요청 이벤트만 보내게 합니다.
 	void SetUseLegacyNavigation(bool bInUseLegacyNavigation);
 
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|UI")
+	void ShowStatusMessage(const FString& Message, const FLinearColor& Color);
+
 protected:
 	// 위젯이 화면에 생성되면 SupabaseSubsystem에서 현재 유저 데이터를 읽어 UI에 표시합니다.
 	virtual void NativeConstruct() override;

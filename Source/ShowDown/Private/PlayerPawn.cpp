@@ -252,10 +252,16 @@ void APlayerPawn::SubmitSelectedCard(ACard* SelectedCard)
 
 	UE_LOG(LogTemp, Log, TEXT("Submit selected card: %s"), *SelectedCard->GetName());
 
-	if (ModeBase)
+	if (HasAuthority())
 	{
-		ModeBase->PlayerSelectedCard(SelectedCard);
+		if (ModeBase)
+		{
+			ModeBase->PlayerSelectedCard(SelectedCard);
+		}
+		return;
 	}
+
+	ServerSubmitSelectedCard(SelectedCard);
 }
 
 void APlayerPawn::ToggleChat()
@@ -335,6 +341,19 @@ void APlayerPawn::ServerSubmitDialogueInput_Implementation(const FString& Text, 
 	}
 }
 
+void APlayerPawn::ServerSubmitSelectedCard_Implementation(ACard* SelectedCard)
+{
+	if (!ModeBase)
+	{
+		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+	}
+
+	if (SelectedCard && ModeBase)
+	{
+		ModeBase->PlayerSelectedCard(SelectedCard);
+	}
+}
+
 // 상하 회전 입력에 따른 콜백 함수 구현
 void APlayerPawn::LookUp(const FInputActionValue& inputValue)
 {
@@ -370,49 +389,181 @@ void APlayerPawn::ApplyCameraInput(float YawInput, float PitchInput)
 void APlayerPawn::HandleBettingHotkeys()
 {
 	APlayerController* PC = Cast<APlayerController>(GetController());
-	if (!PC || !ModeBase)
+	if (!PC)
 	{
 		return;
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Q))
 	{
-		ModeBase->PlayerCheck();
+		if (HasAuthority())
+		{
+			if (ModeBase)
+			{
+				ModeBase->PlayerCheck();
+			}
+		}
+		else
+		{
+			ServerPlayerCheck();
+		}
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::R))
 	{
-		ModeBase->PlayerFold();
+		if (HasAuthority())
+		{
+			if (ModeBase)
+			{
+				ModeBase->PlayerFold();
+			}
+		}
+		else
+		{
+			ServerPlayerFold();
+		}
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::E))
 	{
-		ModeBase->PlayerRaise();
+		if (HasAuthority())
+		{
+			if (ModeBase)
+			{
+				ModeBase->PlayerRaise();
+			}
+		}
+		else
+		{
+			ServerPlayerRaise();
+		}
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::One))
 	{
-		ModeBase->PlayerRaiseTo(2);
+		if (HasAuthority())
+		{
+			if (ModeBase)
+			{
+				ModeBase->PlayerRaiseTo(2);
+			}
+		}
+		else
+		{
+			ServerPlayerRaiseTo(2);
+		}
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Two))
 	{
-		ModeBase->PlayerRaiseTo(3);
+		if (HasAuthority())
+		{
+			if (ModeBase)
+			{
+				ModeBase->PlayerRaiseTo(3);
+			}
+		}
+		else
+		{
+			ServerPlayerRaiseTo(3);
+		}
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Three))
 	{
-		ModeBase->PlayerRaiseTo(4);
+		if (HasAuthority())
+		{
+			if (ModeBase)
+			{
+				ModeBase->PlayerRaiseTo(4);
+			}
+		}
+		else
+		{
+			ServerPlayerRaiseTo(4);
+		}
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Four))
 	{
-		ModeBase->PlayerRaiseTo(5);
+		if (HasAuthority())
+		{
+			if (ModeBase)
+			{
+				ModeBase->PlayerRaiseTo(5);
+			}
+		}
+		else
+		{
+			ServerPlayerRaiseTo(5);
+		}
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Five))
 	{
-		ModeBase->PlayerRaiseTo(6);
+		if (HasAuthority())
+		{
+			if (ModeBase)
+			{
+				ModeBase->PlayerRaiseTo(6);
+			}
+		}
+		else
+		{
+			ServerPlayerRaiseTo(6);
+		}
+	}
+}
+
+void APlayerPawn::ServerPlayerCheck_Implementation()
+{
+	if (!ModeBase)
+	{
+		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+	}
+
+	if (ModeBase)
+	{
+		ModeBase->PlayerCheck();
+	}
+}
+
+void APlayerPawn::ServerPlayerRaise_Implementation()
+{
+	if (!ModeBase)
+	{
+		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+	}
+
+	if (ModeBase)
+	{
+		ModeBase->PlayerRaise();
+	}
+}
+
+void APlayerPawn::ServerPlayerRaiseTo_Implementation(int32 BulletCount)
+{
+	if (!ModeBase)
+	{
+		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+	}
+
+	if (ModeBase)
+	{
+		ModeBase->PlayerRaiseTo(BulletCount);
+	}
+}
+
+void APlayerPawn::ServerPlayerFold_Implementation()
+{
+	if (!ModeBase)
+	{
+		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+	}
+
+	if (ModeBase)
+	{
+		ModeBase->PlayerFold();
 	}
 }
 

@@ -5,6 +5,8 @@
 #include "ShowDownTypes.h"
 #include "ShowDownGameStateBase.generated.h"
 
+class FLifetimeProperty;
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FShowDownPhaseChangedSignature, EShowDownPhase, NewPhase);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownGameStateBetChangedSignature, EShowDownSide, Side, int32, BulletCount);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownCardsRevealedSignature, int32, PlayerCard, int32, CollectorCard);
@@ -83,28 +85,46 @@ public:
 	FShowDownChatMessageSignature OnChatMessageReceived;
 
 	//현재 게임 진행 단계
-	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentPhase, BlueprintReadOnly, Category = "ShowDown|State")
 	EShowDownPhase CurrentPhase = EShowDownPhase::None;
 
 	//현재 연출 중인 Phase
-	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "ShowDown|State")
 	EShowDownPhase CurrentPresentationPhase = EShowDownPhase::None;
 
 	//연출 진행 중인지 여부
-	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "ShowDown|State")
 	bool bPresentationPlaying = false;
 
 	//현재 스테이지 번호
-	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
+	UPROPERTY(ReplicatedUsing = OnRep_CurrentStage, BlueprintReadOnly, Category = "ShowDown|State")
 	int32 CurrentStage = 1;
 
 	//현재 라운드 번호
-	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|State")
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "ShowDown|State")
 	int32 CurrentRound = 1;
+
+	UPROPERTY(ReplicatedUsing = OnRep_MatchMode, BlueprintReadOnly, Category = "ShowDown|Multiplayer")
+	EShowDownMatchMode MatchMode = EShowDownMatchMode::SinglePlayer;
+
+	UPROPERTY(ReplicatedUsing = OnRep_PlayerSlots, BlueprintReadOnly, Category = "ShowDown|Multiplayer")
+	TArray<FShowDownNetworkPlayerSlot> PlayerSlots;
 
 	//현재 게임 진행 단계 변경
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|State")
 	void SetPhase(EShowDownPhase NewPhase);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Multiplayer")
+	void SetMatchMode(EShowDownMatchMode NewMatchMode);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Multiplayer")
+	void SetPlayerSlot(const FShowDownNetworkPlayerSlot& SlotState);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Multiplayer")
+	void ClearPlayerSlot(EShowDownPlayerSlot Slot);
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "ShowDown|Multiplayer")
+	bool IsMultiplayerMatch() const;
 
 	//연출 시작 알림
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Presentation", meta = (DisplayName = "eventStart"))
@@ -142,5 +162,21 @@ public:
 
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastChatMessage(const FString& SenderName, const FString& Message);
+
+protected:
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+private:
+	UFUNCTION()
+	void OnRep_CurrentPhase();
+
+	UFUNCTION()
+	void OnRep_CurrentStage();
+
+	UFUNCTION()
+	void OnRep_MatchMode();
+
+	UFUNCTION()
+	void OnRep_PlayerSlots();
 	
 };

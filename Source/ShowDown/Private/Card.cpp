@@ -5,11 +5,14 @@
 
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
+#include "Net/UnrealNetwork.h"
 
 // Sets default values
 ACard::ACard()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	bReplicates = true;
+	SetReplicateMovement(true);
 
 	//루트컴프
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -49,6 +52,11 @@ void ACard::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	const FVector CurrentLocation = GetActorLocation();
 	const FVector NewLocation = FMath::VInterpTo(CurrentLocation, TargetLocation, DeltaTime, MoveSpeed);
 	SetActorLocation(NewLocation);
@@ -63,6 +71,20 @@ void ACard::SetCard( int32 NewRank)
 void ACard::SetFaceUp(bool bNewFaceUp)
 {
 	bFaceUp = bNewFaceUp;
+	RefreshVisual();
+}
+
+void ACard::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ACard, Rank);
+	DOREPLIFETIME(ACard, bSelectable);
+	DOREPLIFETIME(ACard, bFaceUp);
+}
+
+void ACard::OnRep_CardVisual()
+{
 	RefreshVisual();
 }
 

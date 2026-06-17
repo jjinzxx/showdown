@@ -13,9 +13,11 @@
 #include "ShowDownTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
+#include "SDPlayerState.h"
 #include "ShowDownGameStateBase.h"
 #include "ShowDownHubFlowManager.h"
 #include "Engine/Engine.h"
+#include "GameFramework/PlayerState.h"
 
 AShowDownGameModeBase::AShowDownGameModeBase()
 {
@@ -23,6 +25,7 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 	// 이게 없으면 기본 AGameStateBase가 생성되어 GetGameState<AShowDownGameStateBase>()가
 	// 항상 null이 되고, OnGameOver를 포함한 모든 GameState 이벤트가 broadcast되지 않습니다.
 	GameStateClass = AShowDownGameStateBase::StaticClass();
+	PlayerStateClass = ASDPlayerState::StaticClass();
 
 	CardSystem = CreateDefaultSubobject<UCardSystem>(TEXT("CardSystem"));
 	CollectorAISystem = CreateDefaultSubobject<UCollectorAISystem>(TEXT("CollectorAISystem"));
@@ -63,6 +66,13 @@ void AShowDownGameModeBase::BeginPlay()
 	const bool bHubControlsStart =
 		UGameplayStatics::GetActorOfClass(GetWorld(), AShowDownHubFlowManager::StaticClass()) != nullptr;
 
+	const bool bNetworkedMatch = GetNetMode() != NM_Standalone;
+	if (bNetworkedMatch)
+	{
+		StartMultiplayerGame();
+		return;
+	}
+
 	if (bAutoStartOnBeginPlay && !bHubControlsStart)
 	{
 		StartSinglePlayer();
@@ -71,8 +81,66 @@ void AShowDownGameModeBase::BeginPlay()
 
 void AShowDownGameModeBase::StartSinglePlayer()
 {
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetMatchMode(EShowDownMatchMode::SinglePlayer);
+	}
+
 	FindCollector();
 	StartStage(0);
+}
+
+void AShowDownGameModeBase::StartMultiplayerGame()
+{
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetMatchMode(EShowDownMatchMode::Multiplayer);
+	}
+
+	FindCollector();
+	RefreshNetworkPlayerSlots();
+
+	// Gameplay rules for real PvP can be layered on this entry point.
+	// For now this keeps multiplayer from falling back into the single-player AI flow.
+	UE_LOG(LogTemp, Log, TEXT("Multiplayer game structure initialized."));
+}
+
+void AShowDownGameModeBase::PostLogin(APlayerController* NewPlayer)
+{
+	Super::PostLogin(NewPlayer);
+
+	if (GetNetMode() != NM_Standalone)
+	{
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->SetMatchMode(EShowDownMatchMode::Multiplayer);
+		}
+	}
+
+	if (ASDPlayerState* ShowDownPlayerState = NewPlayer ? NewPlayer->GetPlayerState<ASDPlayerState>() : nullptr)
+	{
+		if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
+		{
+			ShowDownPlayerState->SetShowDownSlot(FindNextOpenPlayerSlot());
+		}
+		ShowDownPlayerState->SetHostPlayer(GameState && GameState->PlayerArray.Num() <= 1);
+	}
+
+	RefreshNetworkPlayerSlots();
+}
+
+void AShowDownGameModeBase::Logout(AController* Exiting)
+{
+	if (ASDPlayerState* ShowDownPlayerState = Exiting ? Exiting->GetPlayerState<ASDPlayerState>() : nullptr)
+	{
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->ClearPlayerSlot(ShowDownPlayerState->ShowDownSlot);
+		}
+	}
+
+	Super::Logout(Exiting);
+	RefreshNetworkPlayerSlots();
 }
 
 void AShowDownGameModeBase::ResetForHubReturn()
@@ -1288,6 +1356,94 @@ void AShowDownGameModeBase::SetPlayerHandSelectable(bool bSelectable)
 			Card->SetSelectable(bSelectable);
 		}
 	}
+}
+
+void AShowDownGameModeBase::RefreshNetworkPlayerSlots()
+{
+	AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState();
+	if (!ShowDownGameState)
+	{
+		return;
+	}
+
+	ShowDownGameState->SetMatchMode(GetNetMode() == NM_Standalone
+		? EShowDownMatchMode::SinglePlayer
+		: EShowDownMatchMode::Multiplayer);
+
+	TSet<EShowDownPlayerSlot> SeenSlots;
+	if (GameState)
+	{
+		for (APlayerState* BasePlayerState : GameState->PlayerArray)
+		{
+			ASDPlayerState* ShowDownPlayerState = Cast<ASDPlayerState>(BasePlayerState);
+			if (!ShowDownPlayerState)
+			{
+				continue;
+			}
+
+			if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
+			{
+				ShowDownPlayerState->SetShowDownSlot(FindNextOpenPlayerSlot());
+			}
+
+			FShowDownNetworkPlayerSlot SlotState;
+			SlotState.Slot = ShowDownPlayerState->ShowDownSlot;
+			SlotState.PlayerId = FString::FromInt(ShowDownPlayerState->GetPlayerId());
+			SlotState.DisplayName = ShowDownPlayerState->GetPlayerName();
+			SlotState.bConnected = true;
+			SlotState.bReady = ShowDownPlayerState->bReady;
+
+			ShowDownGameState->SetPlayerSlot(SlotState);
+			SeenSlots.Add(SlotState.Slot);
+		}
+	}
+
+	const EShowDownPlayerSlot AllSlots[] = {
+		EShowDownPlayerSlot::Player1,
+		EShowDownPlayerSlot::Player2,
+		EShowDownPlayerSlot::Player3,
+		EShowDownPlayerSlot::Player4
+	};
+
+	for (EShowDownPlayerSlot Slot : AllSlots)
+	{
+		if (!SeenSlots.Contains(Slot))
+		{
+			ShowDownGameState->ClearPlayerSlot(Slot);
+		}
+	}
+}
+
+EShowDownPlayerSlot AShowDownGameModeBase::FindNextOpenPlayerSlot() const
+{
+	TSet<EShowDownPlayerSlot> UsedSlots;
+	if (GameState)
+	{
+		for (APlayerState* BasePlayerState : GameState->PlayerArray)
+		{
+			if (const ASDPlayerState* ShowDownPlayerState = Cast<ASDPlayerState>(BasePlayerState))
+			{
+				UsedSlots.Add(ShowDownPlayerState->ShowDownSlot);
+			}
+		}
+	}
+
+	const EShowDownPlayerSlot AllSlots[] = {
+		EShowDownPlayerSlot::Player1,
+		EShowDownPlayerSlot::Player2,
+		EShowDownPlayerSlot::Player3,
+		EShowDownPlayerSlot::Player4
+	};
+
+	for (EShowDownPlayerSlot Slot : AllSlots)
+	{
+		if (!UsedSlots.Contains(Slot))
+		{
+			return Slot;
+		}
+	}
+
+	return EShowDownPlayerSlot::None;
 }
 
 void AShowDownGameModeBase::StartStage(int32 StageIndex)
