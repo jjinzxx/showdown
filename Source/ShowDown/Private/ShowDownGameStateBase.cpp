@@ -1,6 +1,7 @@
 #include "ShowDownGameStateBase.h"
 
 #include "Engine/Engine.h"
+#include "Net/UnrealNetwork.h"
 
 namespace
 {
@@ -62,6 +63,57 @@ void AShowDownGameStateBase::SetPhase(EShowDownPhase NewPhase)
 	CurrentPhase = NewPhase;
 	OnPhaseChanged.Broadcast(CurrentPhase);
 	EventStart(CurrentPhase);
+}
+
+void AShowDownGameStateBase::SetMatchMode(EShowDownMatchMode NewMatchMode)
+{
+	if (!HasAuthority() || MatchMode == NewMatchMode)
+	{
+		return;
+	}
+
+	MatchMode = NewMatchMode;
+	OnRep_MatchMode();
+}
+
+void AShowDownGameStateBase::SetPlayerSlot(const FShowDownNetworkPlayerSlot& SlotState)
+{
+	if (!HasAuthority() || SlotState.Slot == EShowDownPlayerSlot::None)
+	{
+		return;
+	}
+
+	for (FShowDownNetworkPlayerSlot& ExistingSlot : PlayerSlots)
+	{
+		if (ExistingSlot.Slot == SlotState.Slot)
+		{
+			ExistingSlot = SlotState;
+			OnRep_PlayerSlots();
+			return;
+		}
+	}
+
+	PlayerSlots.Add(SlotState);
+	OnRep_PlayerSlots();
+}
+
+void AShowDownGameStateBase::ClearPlayerSlot(EShowDownPlayerSlot Slot)
+{
+	if (!HasAuthority() || Slot == EShowDownPlayerSlot::None)
+	{
+		return;
+	}
+
+	PlayerSlots.RemoveAll([Slot](const FShowDownNetworkPlayerSlot& ExistingSlot)
+	{
+		return ExistingSlot.Slot == Slot;
+	});
+	OnRep_PlayerSlots();
+}
+
+bool AShowDownGameStateBase::IsMultiplayerMatch() const
+{
+	return MatchMode == EShowDownMatchMode::Multiplayer;
 }
 
 void AShowDownGameStateBase::EventStart(EShowDownPhase Phase)
@@ -167,4 +219,35 @@ void AShowDownGameStateBase::MulticastCollectorLLMStatus_Implementation(bool bSu
 void AShowDownGameStateBase::MulticastChatMessage_Implementation(const FString& SenderName, const FString& Message)
 {
 	OnChatMessageReceived.Broadcast(SenderName, Message);
+}
+
+void AShowDownGameStateBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AShowDownGameStateBase, CurrentPhase);
+	DOREPLIFETIME(AShowDownGameStateBase, CurrentPresentationPhase);
+	DOREPLIFETIME(AShowDownGameStateBase, bPresentationPlaying);
+	DOREPLIFETIME(AShowDownGameStateBase, CurrentStage);
+	DOREPLIFETIME(AShowDownGameStateBase, CurrentRound);
+	DOREPLIFETIME(AShowDownGameStateBase, MatchMode);
+	DOREPLIFETIME(AShowDownGameStateBase, PlayerSlots);
+}
+
+void AShowDownGameStateBase::OnRep_CurrentPhase()
+{
+	OnPhaseChanged.Broadcast(CurrentPhase);
+}
+
+void AShowDownGameStateBase::OnRep_CurrentStage()
+{
+	OnStageChanged.Broadcast(CurrentStage);
+}
+
+void AShowDownGameStateBase::OnRep_MatchMode()
+{
+}
+
+void AShowDownGameStateBase::OnRep_PlayerSlots()
+{
 }

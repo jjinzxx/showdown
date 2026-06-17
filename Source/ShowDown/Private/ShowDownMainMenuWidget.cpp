@@ -14,6 +14,11 @@ void UShowDownMainMenuWidget::SetUseLegacyNavigation(bool bInUseLegacyNavigation
 	bUseLegacyNavigation = bInUseLegacyNavigation;
 }
 
+void UShowDownMainMenuWidget::ShowStatusMessage(const FString& Message, const FLinearColor& Color)
+{
+	SetStatusMessage(Message, Color);
+}
+
 void UShowDownMainMenuWidget::NativeConstruct()
 {
 	Super::NativeConstruct();

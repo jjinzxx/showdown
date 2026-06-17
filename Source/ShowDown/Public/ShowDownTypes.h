@@ -38,3 +38,41 @@ enum class EShowDownBetAction : uint8
 	Raise,
 	Fold
 };
+
+UENUM(BlueprintType)
+enum class EShowDownMatchMode : uint8
+{
+	SinglePlayer,
+	Multiplayer
+};
+
+UENUM(BlueprintType)
+enum class EShowDownPlayerSlot : uint8
+{
+	None,
+	Player1,
+	Player2,
+	Player3,
+	Player4
+};
+
+USTRUCT(BlueprintType)
+struct FShowDownNetworkPlayerSlot
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|Multiplayer")
+	EShowDownPlayerSlot Slot = EShowDownPlayerSlot::None;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|Multiplayer")
+	FString PlayerId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|Multiplayer")
+	FString DisplayName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|Multiplayer")
+	bool bConnected = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|Multiplayer")
+	bool bReady = false;
+};

@@ -10,7 +10,9 @@
 class ACameraActor;
 class APlayerController;
 class UShowDownLoginWidget;
+class UShowDownLobbyWidget;
 class UShowDownMainMenuWidget;
+class UShowDownMultiplayerWidget;
 class UShowDownShopWidget;
 class UShowDownRankWidget;
 class UUserWidget;
@@ -23,6 +25,8 @@ enum class EShowDownHubFlowScreen : uint8
 	MainMenu,
 	Shop,
 	Ranking,
+	Multiplayer,
+	Lobby,
 	SinglePlayPreview
 };
 
@@ -54,6 +58,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
 	void ShowRanking();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
+	void ShowMultiplayerMenu();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
+	void ShowLobby();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
 	void ShowSinglePlayPreview();
@@ -96,6 +106,12 @@ private:
 	UPROPERTY(EditAnywhere, Category = "ShowDown|UI")
 	TSubclassOf<UShowDownRankWidget> RankWidgetClass;
 
+	UPROPERTY(EditAnywhere, Category = "ShowDown|UI")
+	TSubclassOf<UShowDownMultiplayerWidget> MultiplayerWidgetClass;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|UI")
+	TSubclassOf<UShowDownLobbyWidget> LobbyWidgetClass;
+
 	// Optional cameras for each hub state. Empty values keep the current view.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera")
 	ACameraActor* LoginCamera;
@@ -126,6 +142,7 @@ private:
 
 	FTimerHandle ReturnToHubTimerHandle;
 	FString CurrentRewardMatchId;
+	bool bPendingMultiplayerOpenAfterEosLogin = false;
 
 	UPROPERTY()
 	UShowDownLoginWidget* LoginWidget;
@@ -138,6 +155,12 @@ private:
 
 	UPROPERTY()
 	UShowDownRankWidget* RankWidget;
+
+	UPROPERTY()
+	UShowDownMultiplayerWidget* MultiplayerWidget;
+
+	UPROPERTY()
+	UShowDownLobbyWidget* LobbyWidget;
 
 	UPROPERTY()
 	UUserWidget* ActiveWidget;
@@ -155,6 +178,27 @@ private:
 
 	UFUNCTION()
 	void HandleMultiplayerRequested();
+
+	UFUNCTION()
+	void HandleEosLoginForMultiplayer(bool bSuccess, const FString& Message);
+
+	UFUNCTION()
+	void HandleHostMultiplayerRequested();
+
+	UFUNCTION()
+	void HandleJoinMultiplayerRequested(const FString& RoomCode);
+
+	UFUNCTION()
+	void HandleMultiplayerBackRequested();
+
+	UFUNCTION()
+	void HandleEosSessionResult(bool bSuccess, const FString& Message);
+
+	UFUNCTION()
+	void HandleLobbyStartRequested();
+
+	UFUNCTION()
+	void HandleLobbyLeaveRequested();
 
 	UFUNCTION()
 	void HandleShopRequested();

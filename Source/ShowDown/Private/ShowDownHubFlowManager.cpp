@@ -9,8 +9,11 @@
 #include "Misc/Guid.h"
 #include "ShowDownGameModeBase.h"
 #include "ShowDownGameStateBase.h"
+#include "ShowDownEosSubsystem.h"
+#include "ShowDownLobbyWidget.h"
 #include "ShowDownLoginWidget.h"
 #include "ShowDownMainMenuWidget.h"
+#include "ShowDownMultiplayerWidget.h"
 #include "ShowDownRankWidget.h"
 #include "ShowDownShopWidget.h"
 #include "SupabaseSubsystem.h"
@@ -19,6 +22,8 @@ AShowDownHubFlowManager::AShowDownHubFlowManager()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	ShopWidgetClass = UShowDownShopWidget::StaticClass();
+	MultiplayerWidgetClass = UShowDownMultiplayerWidget::StaticClass();
+	LobbyWidgetClass = UShowDownLobbyWidget::StaticClass();
 }
 
 void AShowDownHubFlowManager::BeginPlay()
@@ -27,11 +32,17 @@ void AShowDownHubFlowManager::BeginPlay()
 
 	// GameInstanceSubsystem survives level travel, so returning players can skip login.
 	bool bHasSession = false;
+	bool bInMultiplayerLobby = false;
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (const USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
 		{
 			bHasSession = !SupabaseSubsystem->GetAccessToken().IsEmpty();
+		}
+
+		if (const UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			bInMultiplayerLobby = EosSubsystem->IsInMultiplayerLobby();
 		}
 	}
 
@@ -54,7 +65,11 @@ void AShowDownHubFlowManager::BeginPlay()
 		}
 	}
 
-	if (bHasSession)
+	if (bInMultiplayerLobby)
+	{
+		ShowLobby();
+	}
+	else if (bHasSession)
 	{
 		ShowMainMenu();
 	}
@@ -195,6 +210,86 @@ void AShowDownHubFlowManager::ShowRanking()
 	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::Ranking);
 }
 
+void AShowDownHubFlowManager::ShowMultiplayerMenu()
+{
+	UE_LOG(LogTemp, Log, TEXT("Showing multiplayer menu."));
+	BlendToCamera(MainMenuCamera);
+
+	TSubclassOf<UShowDownMultiplayerWidget> WidgetClass = MultiplayerWidgetClass;
+	if (!WidgetClass)
+	{
+		WidgetClass = UShowDownMultiplayerWidget::StaticClass();
+	}
+
+	MultiplayerWidget = CreateWidget<UShowDownMultiplayerWidget>(
+		GetPrimaryPlayerController(),
+		WidgetClass
+	);
+
+	if (!MultiplayerWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to create MultiplayerWidget."));
+		return;
+	}
+
+	MultiplayerWidget->OnHostRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleHostMultiplayerRequested);
+	MultiplayerWidget->OnJoinRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleJoinMultiplayerRequested);
+	MultiplayerWidget->OnBackRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleMultiplayerBackRequested);
+
+	SetActiveWidget(MultiplayerWidget);
+	SetUiOnlyInput(MultiplayerWidget);
+	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::Multiplayer);
+	UE_LOG(LogTemp, Log, TEXT("Multiplayer menu added to viewport."));
+}
+
+void AShowDownHubFlowManager::ShowLobby()
+{
+	UE_LOG(LogTemp, Log, TEXT("Showing multiplayer lobby."));
+	BlendToCamera(MainMenuCamera);
+
+	TSubclassOf<UShowDownLobbyWidget> WidgetClass = LobbyWidgetClass;
+	if (!WidgetClass)
+	{
+		WidgetClass = UShowDownLobbyWidget::StaticClass();
+	}
+
+	LobbyWidget = CreateWidget<UShowDownLobbyWidget>(
+		GetPrimaryPlayerController(),
+		WidgetClass
+	);
+
+	if (!LobbyWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Failed to create LobbyWidget."));
+		return;
+	}
+
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			LobbyWidget->SetLobbyInfo(EosSubsystem->GetLobbyCode(), EosSubsystem->IsLobbyHost());
+			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->OnSessionResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			if (EosSubsystem->IsLobbyHost())
+			{
+				EosSubsystem->StopLobbyStartPolling();
+			}
+			else
+			{
+				EosSubsystem->StartLobbyStartPolling();
+			}
+		}
+	}
+
+	LobbyWidget->OnStartRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleLobbyStartRequested);
+	LobbyWidget->OnLeaveRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleLobbyLeaveRequested);
+
+	SetActiveWidget(LobbyWidget);
+	SetUiOnlyInput(LobbyWidget);
+	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::Lobby);
+}
+
 void AShowDownHubFlowManager::ShowSinglePlayPreview()
 {
 	CurrentRewardMatchId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
@@ -328,7 +423,171 @@ void AShowDownHubFlowManager::HandleSinglePlayRequested()
 
 void AShowDownHubFlowManager::HandleMultiplayerRequested()
 {
-	OpenMultiplayerLevel();
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			if (EosSubsystem->IsEosLoggedIn())
+			{
+				if (MainMenuWidget)
+				{
+					MainMenuWidget->ShowStatusMessage(TEXT("EOS login ready."), FLinearColor::Green);
+				}
+				ShowMultiplayerMenu();
+				return;
+			}
+
+			bPendingMultiplayerOpenAfterEosLogin = true;
+			EosSubsystem->OnEosLoginResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosLoginForMultiplayer);
+			EosSubsystem->OnEosLoginResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosLoginForMultiplayer);
+			if (MainMenuWidget)
+			{
+				MainMenuWidget->ShowStatusMessage(TEXT("Logging in to EOS..."), FLinearColor::Yellow);
+			}
+			EosSubsystem->LoginWithSupabaseSession();
+			return;
+		}
+	}
+
+	if (MainMenuWidget)
+	{
+		MainMenuWidget->ShowStatusMessage(TEXT("EOS subsystem is unavailable."), FLinearColor::Red);
+	}
+	UE_LOG(LogTemp, Warning, TEXT("EOS subsystem is unavailable. Multiplayer level was not opened."));
+}
+
+void AShowDownHubFlowManager::HandleEosLoginForMultiplayer(bool bSuccess, const FString& Message)
+{
+	UE_LOG(LogTemp, Log, TEXT("EOS login for multiplayer: %s"), *Message);
+
+	if (Message == TEXT("Logging in to EOS..."))
+	{
+		if (MainMenuWidget)
+		{
+			MainMenuWidget->ShowStatusMessage(Message, FLinearColor::Yellow);
+		}
+		return;
+	}
+
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			EosSubsystem->OnEosLoginResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosLoginForMultiplayer);
+		}
+	}
+
+	if (!bPendingMultiplayerOpenAfterEosLogin)
+	{
+		return;
+	}
+
+	bPendingMultiplayerOpenAfterEosLogin = false;
+
+	if (bSuccess)
+	{
+		if (MainMenuWidget)
+		{
+			MainMenuWidget->ShowStatusMessage(TEXT("EOS login success."), FLinearColor::Green);
+		}
+		ShowMultiplayerMenu();
+		return;
+	}
+
+	if (MainMenuWidget)
+	{
+		MainMenuWidget->ShowStatusMessage(Message, FLinearColor::Red);
+	}
+}
+
+void AShowDownHubFlowManager::HandleHostMultiplayerRequested()
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->OnSessionResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->HostLobby(TEXT("L_Hub"), MultiplayerLevelName);
+			return;
+		}
+	}
+
+	if (MultiplayerWidget)
+	{
+		MultiplayerWidget->ShowStatusMessage(TEXT("EOS subsystem is unavailable."), FLinearColor::Red);
+	}
+}
+
+void AShowDownHubFlowManager::HandleJoinMultiplayerRequested(const FString& RoomCode)
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->OnSessionResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->JoinLobbyByCode(RoomCode);
+			return;
+		}
+	}
+
+	if (MultiplayerWidget)
+	{
+		MultiplayerWidget->ShowStatusMessage(TEXT("EOS subsystem is unavailable."), FLinearColor::Red);
+	}
+}
+
+void AShowDownHubFlowManager::HandleMultiplayerBackRequested()
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+		}
+	}
+
+	ShowMainMenu();
+}
+
+void AShowDownHubFlowManager::HandleEosSessionResult(bool bSuccess, const FString& Message)
+{
+	UE_LOG(LogTemp, Log, TEXT("EOS session result: %s"), *Message);
+
+	if (MultiplayerWidget)
+	{
+		MultiplayerWidget->ShowStatusMessage(Message, bSuccess ? FLinearColor::Green : FLinearColor::Yellow);
+	}
+
+	if (LobbyWidget)
+	{
+		LobbyWidget->ShowStatusMessage(Message, bSuccess ? FLinearColor::Green : FLinearColor::Yellow);
+	}
+}
+
+void AShowDownHubFlowManager::HandleLobbyStartRequested()
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			EosSubsystem->StartHostedGame();
+		}
+	}
+}
+
+void AShowDownHubFlowManager::HandleLobbyLeaveRequested()
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			EosSubsystem->StopLobbyStartPolling();
+		}
+	}
+
+	ShowMainMenu();
 }
 
 void AShowDownHubFlowManager::HandleShopRequested()

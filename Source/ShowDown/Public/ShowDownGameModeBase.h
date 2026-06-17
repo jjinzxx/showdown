@@ -19,6 +19,8 @@ class URouletteSystem;
 struct FCollectorBetDecision;
 struct FSDLLMBossContext;
 class AShowDownGameStateBase;
+class AController;
+class APlayerController;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
 USTRUCT(BlueprintType)
@@ -171,6 +173,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
 	void StartSinglePlayer();
 
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
+	void StartMultiplayerGame();
+
 	// 게임 종료 후 허브(메인메뉴)로 돌아갈 때 게임판을 정리합니다.
 	// 진행 중인 타이머/베팅 상태를 끄고 테이블의 카드를 모두 제거합니다.
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
@@ -184,6 +189,8 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void PostLogin(APlayerController* NewPlayer) override;
+	virtual void Logout(AController* Exiting) override;
 
 private:
 	//플레이어 스탯
@@ -247,6 +254,8 @@ private:
 	void ClearForeheadCards();
 	void ClearHandCards();
 	void SetPlayerHandSelectable(bool bSelectable);
+	void RefreshNetworkPlayerSlots();
+	EShowDownPlayerSlot FindNextOpenPlayerSlot() const;
 	void StartStage(int32 StageIndex);
 	void AdvanceStage();
 	const FShowDownStageRule* GetCurrentStageRule() const;

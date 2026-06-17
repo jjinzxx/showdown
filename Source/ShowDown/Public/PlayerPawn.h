@@ -10,6 +10,7 @@
 
 #include "PlayerPawn.generated.h"
 
+class ACard;
 
 
 UCLASS()
@@ -124,6 +125,21 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerSubmitDialogueInput(const FString& Text, const FString& SenderName);
+
+	UFUNCTION(Server, Reliable)
+	void ServerSubmitSelectedCard(ACard* SelectedCard);
+
+	UFUNCTION(Server, Reliable)
+	void ServerPlayerCheck();
+
+	UFUNCTION(Server, Reliable)
+	void ServerPlayerRaise();
+
+	UFUNCTION(Server, Reliable)
+	void ServerPlayerRaiseTo(int32 BulletCount);
+
+	UFUNCTION(Server, Reliable)
+	void ServerPlayerFold();
 
 protected:
 	// Called when the game starts or when spawned
