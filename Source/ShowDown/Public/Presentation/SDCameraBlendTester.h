@@ -21,6 +21,18 @@ public:
 
 	virtual void Tick(float DeltaSeconds) override;
 
+	UFUNCTION(BlueprintCallable, Category = "Camera Blend Test")
+	void BlendToDefaultCamera();
+
+	UFUNCTION(BlueprintCallable, Category = "Camera Blend Test")
+	void BlendToCloseCamera();
+
+	UFUNCTION(BlueprintCallable, Category = "Camera Blend Test")
+	void BlendToFreeView();
+
+	UFUNCTION(BlueprintCallable, Category = "Center Interaction")
+	void HandlePrimaryInteract();
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -89,11 +101,7 @@ private:
 		FreeView
 	};
 
-	void BindCameraInput();
-	void BlendToDefaultCamera();
-	void BlendToCloseCamera();
-	void BlendToFreeView();
-	void HandlePrimaryInteract();
+	void BindPrimaryInteractInput();
 	void BlendToCamera(ACameraActor* CameraActor, const TCHAR* CameraLabel) const;
 	void BlendToViewTarget(AActor* ViewTarget, const TCHAR* ViewTargetLabel, float InBlendTime) const;
 	void UpdateDefaultCameraMouseLook();

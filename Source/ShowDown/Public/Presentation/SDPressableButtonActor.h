@@ -66,9 +66,6 @@ protected:
 	bool bEnableMouseClick = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
-	bool bEnableKeyboardTestInput = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
 	bool bEnablePlayerClickEventsOnBeginPlay = true;
 
 private:
@@ -83,7 +80,6 @@ private:
 	UFUNCTION()
 	void HandleButtonClicked(UPrimitiveComponent* TouchedComponent, FKey ButtonPressed);
 
-	void BindKeyboardTestInput();
 	void FinishPressAnimation();
 
 	FVector RestRelativeLocation = FVector::ZeroVector;

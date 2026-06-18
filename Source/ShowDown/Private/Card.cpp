@@ -1,24 +1,23 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "Card.h"
 
+#include "Components/BoxComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
+#include "ShowDownPlayerController.h"
 
-// Sets default values
 ACard::ACard()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	bReplicates = true;
 	SetReplicateMovement(true);
 
-	//루트컴프
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(RootComp);
 
-	//메시 컴프
 	CardMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CardMesh"));
 	CardMesh->SetupAttachment(RootComp);
 	CardMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
@@ -26,7 +25,14 @@ ACard::ACard()
 	CardMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
 	CardMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 
-	//카드 숫자 텍스트
+	InteractionBounds = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBounds"));
+	InteractionBounds->SetupAttachment(RootComp);
+	InteractionBounds->SetBoxExtent(InteractionBoundsExtent);
+	InteractionBounds->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	InteractionBounds->SetCollisionObjectType(ECC_WorldDynamic);
+	InteractionBounds->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InteractionBounds->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
 	CardText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("CardText"));
 	CardText->SetupAttachment(RootComp);
 	CardText->SetHorizontalAlignment(EHTA_Center);
@@ -36,18 +42,27 @@ ACard::ACard()
 	CardText->SetRelativeLocation(FVector(0.0f, 0.0f, 3.0f));
 }
 
-// Called when the game starts or when spawned
+void ACard::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	if (InteractionBounds)
+	{
+		InteractionBounds->SetBoxExtent(InteractionBoundsExtent);
+	}
+}
+
 void ACard::BeginPlay()
 {
 	Super::BeginPlay();
 
 	DefaultLocation = GetActorLocation();
 	TargetLocation = DefaultLocation;
+	DefaultRotation = GetActorRotation();
+	TargetRotation = DefaultRotation;
 	RefreshVisual();
-
 }
 
-// Called every frame
 void ACard::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -57,12 +72,14 @@ void ACard::Tick(float DeltaTime)
 		return;
 	}
 
-	const FVector CurrentLocation = GetActorLocation();
-	const FVector NewLocation = FMath::VInterpTo(CurrentLocation, TargetLocation, DeltaTime, MoveSpeed);
-	SetActorLocation(NewLocation);
+	UpdateTargetTransform();
+
+	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaTime, MoveSpeed);
+	const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime, MoveSpeed);
+	SetActorLocationAndRotation(NewLocation, NewRotation);
 }
 
-void ACard::SetCard( int32 NewRank)
+void ACard::SetCard(int32 NewRank)
 {
 	Rank = FMath::Clamp(NewRank, 1, 7);
 	RefreshVisual();
@@ -102,7 +119,7 @@ void ACard::RefreshVisual()
 void ACard::SelectCard(bool bNewSelected)
 {
 	bSelected = bNewSelected;
-	TargetLocation = bSelected ? DefaultLocation + SelectedOffset : DefaultLocation;
+	UpdateTargetTransform();
 }
 
 bool ACard::IsSelected() const
@@ -110,12 +127,25 @@ bool ACard::IsSelected() const
 	return bSelected;
 }
 
+void ACard::SetHovered(bool bNewHovered)
+{
+	bHovered = bNewHovered && bSelectable;
+	UpdateTargetTransform();
+}
+
+bool ACard::IsHovered() const
+{
+	return bHovered;
+}
+
 void ACard::SetSelectable(bool bNewSelectable)
 {
 	bSelectable = bNewSelectable;
 	if (!bSelectable)
 	{
-		SelectCard(false);
+		bSelected = false;
+		bHovered = false;
+		UpdateTargetTransform();
 	}
 }
 
@@ -132,10 +162,94 @@ void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
 	}
 
 	bSelected = false;
+	bHovered = false;
 	SetSelectable(false);
+	bUseHandCameraResponse = false;
 	DefaultLocation = Slot->GetComponentLocation();
-	TargetLocation = DefaultLocation;
-
-	SetActorRotation(Slot->GetComponentRotation());
+	DefaultRotation = Slot->GetComponentRotation();
+	UpdateTargetTransform();
 	SetFaceUp(bNewFaceUp);
+}
+
+void ACard::MoveToHandTransform(
+	const FTransform& NewTransform,
+	float InCameraFacingStrength,
+	float InMaxCameraFacingAngle)
+{
+	DefaultLocation = NewTransform.GetLocation();
+	DefaultRotation = NewTransform.GetRotation().Rotator();
+	bUseHandCameraResponse = InCameraFacingStrength > 0.0f && InMaxCameraFacingAngle > 0.0f;
+	CameraFacingStrength = FMath::Clamp(InCameraFacingStrength, 0.0f, 1.0f);
+	MaxCameraFacingAngle = FMath::Max(0.0f, InMaxCameraFacingAngle);
+	UpdateTargetTransform();
+}
+
+void ACard::UpdateTargetTransform()
+{
+	TargetRotation = DefaultRotation;
+	if (bUseHandCameraResponse)
+	{
+		if (APlayerCameraManager* CameraManager = UGameplayStatics::GetPlayerCameraManager(this, 0))
+		{
+			const FVector ToCamera = (CameraManager->GetCameraLocation() - DefaultLocation).GetSafeNormal();
+			const FVector ViewFacing = -CameraManager->GetCameraRotation().Vector();
+			const FVector DesiredNormal = (ToCamera + ViewFacing * 0.5f).GetSafeNormal();
+			const FQuat BaseRotation = DefaultRotation.Quaternion();
+			const FVector CardNormal = BaseRotation.GetForwardVector();
+
+			if (!DesiredNormal.IsNearlyZero() && !CardNormal.IsNearlyZero())
+			{
+				FVector Axis = FVector::ZeroVector;
+				float AngleRadians = 0.0f;
+				FQuat::FindBetweenNormals(CardNormal, DesiredNormal).ToAxisAndAngle(Axis, AngleRadians);
+
+				if (!Axis.IsNearlyZero() && AngleRadians > KINDA_SMALL_NUMBER)
+				{
+					const float ResponseAngle = FMath::Min(
+						FMath::RadiansToDegrees(AngleRadians) * CameraFacingStrength,
+						MaxCameraFacingAngle);
+					const FQuat ResponseRotation(Axis.GetSafeNormal(), FMath::DegreesToRadians(ResponseAngle));
+					TargetRotation = (ResponseRotation * BaseRotation).Rotator();
+				}
+			}
+		}
+	}
+
+	if (bSelected)
+	{
+		TargetLocation = DefaultLocation + SelectedOffset;
+		return;
+	}
+
+	if (bHovered)
+	{
+		TargetLocation = DefaultLocation + HoverOffset;
+		return;
+	}
+
+	TargetLocation = DefaultLocation;
+}
+
+bool ACard::CanInteract_Implementation(AActor* Interactor) const
+{
+	return bSelectable;
+}
+
+void ACard::Interact_Implementation(AActor* Interactor)
+{
+	if (!bSelectable)
+	{
+		return;
+	}
+
+	AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(Interactor);
+	if (!ShowDownController)
+	{
+		ShowDownController = Cast<AShowDownPlayerController>(UGameplayStatics::GetPlayerController(this, 0));
+	}
+
+	if (ShowDownController)
+	{
+		ShowDownController->SubmitSelectedCard(this);
+	}
 }

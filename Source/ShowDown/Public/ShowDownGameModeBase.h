@@ -4,12 +4,15 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "SDCardLayoutTypes.h"
 #include "ShowDownTypes.h"
 #include "TimerManager.h"
 #include "ShowDownGameModeBase.generated.h"
 
 class ACard;
 class APlayerPawn;
+class ASDCardPlacementAnchor;
+class ASDPlayerSeat;
 class UCardSystem;
 class ACollector;
 class UCollectorAISystem;
@@ -21,6 +24,7 @@ struct FSDLLMBossContext;
 class AShowDownGameStateBase;
 class AController;
 class APlayerController;
+class USceneComponent;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
 USTRUCT(BlueprintType)
@@ -94,19 +98,40 @@ public:
 
 	// 카드 사이 간격
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float HandSpacing = 55.0f;
+	float FanWidth = 220.0f;
 
 	// 카드 위치
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float HandForwardOffset = 180.0f;
+	float FanDistance = 180.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
+	float GripToCenterDistance = 130.0f;
 
 	// 카드 각도
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float HandFanAngle = 40.0f;
+	float AnglePerGap = 10.0f;
 
 	// 카드가 양끝으로 빠지는 정도
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float HandFanDepth = 25.0f;
+	float MaxFanAngle = 85.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
+	float LayerStep = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "-85.0", ClampMax = "85.0"))
+	float FaceTiltAngle = -15.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "-45.0", ClampMax = "45.0"))
+	float EdgeCurlAngle = 7.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float CameraFacingStrength = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "0.0", ClampMax = "20.0"))
+	float MaxCameraFacingAngle = 5.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
+	ESDHandLayoutStyle HandLayoutStyle = ESDHandLayoutStyle::AutoFan;
 	
 	
 	
@@ -186,6 +211,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Flow")
 	bool bAutoStartOnBeginPlay = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Presentation")
+	bool bAutoAdvanceRevealWithoutPresentation = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Presentation", meta = (ClampMin = "0.0"))
+	float RevealAutoAdvanceSeconds = 5.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Debug")
+	bool bShowGameFlowDebugMessages = false;
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void RequestPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
+
 
 protected:
 	virtual void BeginPlay() override;
@@ -254,12 +291,27 @@ private:
 	void ClearForeheadCards();
 	void ClearHandCards();
 	void SetPlayerHandSelectable(bool bSelectable);
+	FSDCardHandLayoutSettings GetDefaultHandLayoutSettings() const;
+	FSDCardHandLayoutSettings ResolveHandLayoutSettings(EShowDownSide Side) const;
+	void ApplyCardMotionForSide(EShowDownSide Side, const TArray<ACard*>& Cards) const;
+	void ReflowHandCards(EShowDownSide Side);
 	void RefreshNetworkPlayerSlots();
 	EShowDownPlayerSlot FindNextOpenPlayerSlot() const;
 	void StartStage(int32 StageIndex);
 	void AdvanceStage();
 	const FShowDownStageRule* GetCurrentStageRule() const;
 	AShowDownGameStateBase* GetShowDownGameState() const;
+	APlayerPawn* GetPrimaryPlayerPawn() const;
+	ASDCardPlacementAnchor* GetCardPlacementAnchor(EShowDownSide Side, bool bForeheadSlot) const;
+	ASDCardPlacementAnchor* GetHandAnchorForSide(EShowDownSide Side) const;
+	ASDCardPlacementAnchor* GetForeheadAnchorForSide(EShowDownSide Side) const;
+	ASDPlayerSeat* GetSeatForSide(EShowDownSide Side) const;
+	ASDPlayerSeat* GetPrimaryPlayerSeat() const;
+	USceneComponent* GetHandSlotForSide(EShowDownSide Side) const;
+	USceneComponent* GetHeadSlotForSide(EShowDownSide Side) const;
+	USceneComponent* GetPlayerHandSlot() const;
+	USceneComponent* GetPlayerHeadSlot() const;
+	void ScheduleRevealAutoAdvanceIfNeeded();
 	void ShowEventDebugMessage(const FString& Message) const;
 	
 };

@@ -110,6 +110,9 @@ public:
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerSlots, BlueprintReadOnly, Category = "ShowDown|Multiplayer")
 	TArray<FShowDownNetworkPlayerSlot> PlayerSlots;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Debug")
+	bool bShowPresentationDebugMessages = false;
+
 	//현재 게임 진행 단계 변경
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|State")
 	void SetPhase(EShowDownPhase NewPhase);

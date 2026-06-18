@@ -68,10 +68,7 @@ bool UCardSystem::SpawnHandCards(
 	TSubclassOf<ACard> CardClass,
 	USceneComponent* HandRoot,
 	const TArray<int32>& Ranks,
-	float HandSpacing,
-	float HandForwardOffset,
-	float HandFanAngle,
-	float HandFanDepth,
+	const FSDCardHandLayoutSettings& HandLayoutSettings,
 	bool bFaceUp,
 	bool bSelectable,
 	TArray<ACard*>& OutCards)
@@ -90,30 +87,12 @@ bool UCardSystem::SpawnHandCards(
 	}
 
 	const int32 CardsToDeal = Ranks.Num();
-	const FVector HandCenter =
-		HandRoot->GetComponentLocation() +
-		HandRoot->GetForwardVector() * HandForwardOffset;
-	const FRotator HandRotation = HandRoot->GetComponentRotation();
-	const FVector RightVector = HandRoot->GetRightVector();
-	const FVector ForwardVector = HandRoot->GetForwardVector();
-	const float StartOffset = -HandSpacing * static_cast<float>(CardsToDeal - 1) * 0.5f;
-	const float AngleStep = CardsToDeal > 1 ? HandFanAngle / static_cast<float>(CardsToDeal - 1) : 0.0f;
-	const float StartAngle = -HandFanAngle * 0.5f;
-
 	for (int32 Index = 0; Index < CardsToDeal; ++Index)
 	{
 		const int32 Rank = Ranks[Index];
-		const float NormalizedFromCenter = CardsToDeal > 1
-			? (static_cast<float>(Index) / static_cast<float>(CardsToDeal - 1)) * 2.0f - 1.0f
-			: 0.0f;
-		const float FanDepthOffset = FMath::Abs(NormalizedFromCenter) * HandFanDepth;
-		const FVector SpawnLocation =
-			HandCenter +
-			RightVector * (StartOffset + HandSpacing * Index) -
-			ForwardVector * FanDepthOffset;
-		const FRotator SpawnRotation = HandRotation + FRotator(0.0f, StartAngle + AngleStep * Index, 0.0f);
+		const FTransform SpawnTransform = BuildHandCardTransform(HandRoot, HandLayoutSettings, Index, CardsToDeal);
 
-		ACard* NewCard = World->SpawnActor<ACard>(CardClass, SpawnLocation, SpawnRotation);
+		ACard* NewCard = World->SpawnActor<ACard>(CardClass, SpawnTransform);
 		if (!NewCard)
 		{
 			continue;
@@ -122,10 +101,44 @@ bool UCardSystem::SpawnHandCards(
 		NewCard->SetCard(Rank);
 		NewCard->SetFaceUp(bFaceUp);
 		NewCard->SetSelectable(bSelectable);
+		NewCard->MoveToHandTransform(
+			SpawnTransform,
+			HandLayoutSettings.CameraFacingStrength,
+			HandLayoutSettings.MaxCameraFacingAngle);
 		OutCards.Add(NewCard);
 	}
 
 	return OutCards.Num() == CardsToDeal;
+}
+
+bool UCardSystem::LayoutHandCards(
+	UObject* WorldContextObject,
+	USceneComponent* HandRoot,
+	const FSDCardHandLayoutSettings& HandLayoutSettings,
+	const TArray<ACard*>& Cards)
+{
+	if (!WorldContextObject || !HandRoot)
+	{
+		return false;
+	}
+
+	const int32 CardCount = Cards.Num();
+	for (int32 Index = 0; Index < CardCount; ++Index)
+	{
+		ACard* Card = Cards[Index];
+		if (!IsValid(Card))
+		{
+			continue;
+		}
+
+		const FTransform TargetTransform = BuildHandCardTransform(HandRoot, HandLayoutSettings, Index, CardCount);
+		Card->MoveToHandTransform(
+			TargetTransform,
+			HandLayoutSettings.CameraFacingStrength,
+			HandLayoutSettings.MaxCameraFacingAngle);
+	}
+
+	return true;
 }
 
 bool UCardSystem::RemoveCardFromHand(TArray<ACard*>& HandCards, ACard* Card)
@@ -156,5 +169,60 @@ void UCardSystem::BuildDeck()
 		Deck.Add(Rank);
 		Deck.Add(Rank);
 	}
+}
+
+FTransform UCardSystem::BuildHandCardTransform(
+	USceneComponent* HandRoot,
+	const FSDCardHandLayoutSettings& HandLayoutSettings,
+	int32 CardIndex,
+	int32 CardCount) const
+{
+	if (!HandRoot || CardCount <= 0)
+	{
+		return FTransform::Identity;
+	}
+
+	const FVector HandOrigin = HandRoot->GetComponentLocation();
+	const FVector FanGripLocation = HandOrigin + HandRoot->GetForwardVector() * HandLayoutSettings.FanDistance;
+	const FQuat HandRotation = HandRoot->GetComponentQuat();
+	const FVector CardNormal = HandRoot->GetForwardVector();
+	const FVector CardRight = HandRoot->GetRightVector();
+	const FVector CardUp = HandRoot->GetUpVector();
+
+	const float SafeFanWidth = FMath::Max(0.0f, HandLayoutSettings.FanWidth);
+	const float SafeGripToCenterDistance = FMath::Max(1.0f, HandLayoutSettings.GripToCenterDistance);
+	const float AutoFanAngle = FMath::Max(0.0f, HandLayoutSettings.AnglePerGap)
+		* static_cast<float>(FMath::Max(0, CardCount - 1));
+	float TotalFanAngle = HandLayoutSettings.HandLayoutStyle == ESDHandLayoutStyle::AutoFan
+		? FMath::Min(AutoFanAngle, FMath::Max(0.0f, HandLayoutSettings.MaxFanAngle))
+		: FMath::Max(0.0f, HandLayoutSettings.MaxFanAngle);
+
+	if (CardCount > 1 && SafeFanWidth > 0.0f)
+	{
+		const float WidthAngleLimit = FMath::RadiansToDegrees(
+			2.0f * FMath::Asin(FMath::Clamp(SafeFanWidth / (2.0f * SafeGripToCenterDistance), 0.0f, 1.0f)));
+		TotalFanAngle = FMath::Min(TotalFanAngle, WidthAngleLimit);
+	}
+
+	const float NormalizedFromCenter = CardCount > 1
+		? (static_cast<float>(CardIndex) / static_cast<float>(CardCount - 1)) * 2.0f - 1.0f
+		: 0.0f;
+	const float LayerFromCenter = static_cast<float>(CardIndex) - static_cast<float>(CardCount - 1) * 0.5f;
+	const float AngleStep = CardCount > 1 ? TotalFanAngle / static_cast<float>(CardCount - 1) : 0.0f;
+	const float FanAngle = -TotalFanAngle * 0.5f + AngleStep * CardIndex;
+
+	const FQuat FanRotation(CardNormal, FMath::DegreesToRadians(FanAngle));
+	const FVector FannedCardRight = FanRotation.RotateVector(CardRight);
+	const FVector FannedCardUp = FanRotation.RotateVector(CardUp);
+	const FQuat TiltRotation(FannedCardRight, FMath::DegreesToRadians(HandLayoutSettings.FaceTiltAngle));
+	const FQuat CurlRotation(FannedCardUp, FMath::DegreesToRadians(-NormalizedFromCenter * HandLayoutSettings.EdgeCurlAngle));
+
+	const FVector CardLocation =
+		FanGripLocation
+		+ FanRotation.RotateVector(CardUp * SafeGripToCenterDistance)
+		+ CardNormal * (LayerFromCenter * HandLayoutSettings.LayerStep);
+	const FQuat CardRotation = CurlRotation * TiltRotation * FanRotation * HandRotation;
+
+	return FTransform(CardRotation, CardLocation);
 }
 

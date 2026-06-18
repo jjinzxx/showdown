@@ -9,11 +9,21 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
 #include "InputActionValue.h"
-#include "Kismet/GameplayStatics.h"
 #include "ShowDownGameModeBase.h"
 #include "ShowDownGameStateBase.h"
 #include "ShowDownChatWidget.h"
+#include "ShowDownPlayerController.h"
 #include "SupabaseSubsystem.h"
+
+namespace
+{
+	bool IsShowDownControllerHandlingInput(const APawn* Pawn)
+	{
+		const AShowDownPlayerController* ShowDownController =
+			Pawn ? Cast<AShowDownPlayerController>(Pawn->GetController()) : nullptr;
+		return ShowDownController && ShowDownController->HandlesShowDownGameplayInput();
+	}
+}
 
 APlayerPawn::APlayerPawn()
 {
@@ -45,23 +55,34 @@ void APlayerPawn::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// GameModeBase 할당
-	ModeBase = Cast<AShowDownGameModeBase>(
-		UGameplayStatics::GetGameMode(GetWorld())
-	);
+	if (HasAuthority())
+	{
+		ModeBase = ResolveGameMode();
+	}
 
-	AddInputMappingContext();
+	if (!IsShowDownControllerHandlingInput(this))
+	{
+		AddInputMappingContext();
+	}
 }
 
 void APlayerPawn::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
-	AddInputMappingContext();
+	if (!IsShowDownControllerHandlingInput(this))
+	{
+		AddInputMappingContext();
+	}
 	bHasPreviousMousePosition = false;
 }
 
 void APlayerPawn::AddInputMappingContext()
 {
+	if (IsShowDownControllerHandlingInput(this))
+	{
+		return;
+	}
+
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (PC)
 	{
@@ -91,6 +112,12 @@ void APlayerPawn::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	if (IsShowDownControllerHandlingInput(this))
+	{
+		bHasPreviousMousePosition = false;
+		return;
+	}
+
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (!PC)
 	{
@@ -115,39 +142,56 @@ void APlayerPawn::Tick(float DeltaTime)
 		return;
 	}
 
-	float MouseX = 0.0f;
-	float MouseY = 0.0f;
-	if (!PC->GetMousePosition(MouseX, MouseY))
+	if (bUseMousePositionLookFallback)
+	{
+		float MouseX = 0.0f;
+		float MouseY = 0.0f;
+		if (PC->GetMousePosition(MouseX, MouseY))
+		{
+			if (!bHasPreviousMousePosition)
+			{
+				PreviousMouseX = MouseX;
+				PreviousMouseY = MouseY;
+				bHasPreviousMousePosition = true;
+			}
+			else
+			{
+				const float DeltaX = MouseX - PreviousMouseX;
+				const float DeltaY = MouseY - PreviousMouseY;
+
+				PreviousMouseX = MouseX;
+				PreviousMouseY = MouseY;
+
+				if (!FMath::IsNearlyZero(DeltaX) || !FMath::IsNearlyZero(DeltaY))
+				{
+					ApplyCameraInput(DeltaX, -DeltaY);
+				}
+			}
+		}
+		else
+		{
+			bHasPreviousMousePosition = false;
+		}
+	}
+	else
 	{
 		bHasPreviousMousePosition = false;
-		return;
-	}
-
-	if (!bHasPreviousMousePosition)
-	{
-		PreviousMouseX = MouseX;
-		PreviousMouseY = MouseY;
-		bHasPreviousMousePosition = true;
-		return;
-	}
-
-	const float DeltaX = MouseX - PreviousMouseX;
-	const float DeltaY = MouseY - PreviousMouseY;
-
-	PreviousMouseX = MouseX;
-	PreviousMouseY = MouseY;
-
-	if (!FMath::IsNearlyZero(DeltaX) || !FMath::IsNearlyZero(DeltaY))
-	{
-		ApplyCameraInput(DeltaX, -DeltaY);
 	}
 	
-	HandleBettingHotkeys();
+	if (bEnableLegacyKeyboardBetHotkeys)
+	{
+		HandleBettingHotkeys();
+	}
 }
 
 void APlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+	if (IsShowDownControllerHandlingInput(this))
+	{
+		return;
+	}
 
 	auto PlayerInput = Cast<UEnhancedInputComponent>(PlayerInputComponent);
 	if (!PlayerInput)
@@ -170,10 +214,56 @@ void APlayerPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	{
 		PlayerInput->BindAction(ia_Turn, ETriggerEvent::Triggered, this, &APlayerPawn::Turn);
 	}
+
+	if (ia_CheckOrCall)
+	{
+		PlayerInput->BindAction(ia_CheckOrCall, ETriggerEvent::Started, this, &APlayerPawn::InputCheckOrCall);
+	}
+
+	if (ia_Raise)
+	{
+		PlayerInput->BindAction(ia_Raise, ETriggerEvent::Started, this, &APlayerPawn::InputRaise);
+	}
+
+	if (ia_Fold)
+	{
+		PlayerInput->BindAction(ia_Fold, ETriggerEvent::Started, this, &APlayerPawn::InputFold);
+	}
+
+	if (ia_RaiseTo2)
+	{
+		PlayerInput->BindAction(ia_RaiseTo2, ETriggerEvent::Started, this, &APlayerPawn::InputRaiseTo2);
+	}
+
+	if (ia_RaiseTo3)
+	{
+		PlayerInput->BindAction(ia_RaiseTo3, ETriggerEvent::Started, this, &APlayerPawn::InputRaiseTo3);
+	}
+
+	if (ia_RaiseTo4)
+	{
+		PlayerInput->BindAction(ia_RaiseTo4, ETriggerEvent::Started, this, &APlayerPawn::InputRaiseTo4);
+	}
+
+	if (ia_RaiseTo5)
+	{
+		PlayerInput->BindAction(ia_RaiseTo5, ETriggerEvent::Started, this, &APlayerPawn::InputRaiseTo5);
+	}
+
+	if (ia_RaiseTo6)
+	{
+		PlayerInput->BindAction(ia_RaiseTo6, ETriggerEvent::Started, this, &APlayerPawn::InputRaiseTo6);
+	}
 }
 
 void APlayerPawn::SDWin()
 {
+	if (!bEnableDebugWinCommand)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Debug] SDWin ignored. Enable bEnableDebugWinCommand on the player pawn to use it."));
+		return;
+	}
+
 	AShowDownGameStateBase* ShowDownGameState =
 		GetWorld() ? GetWorld()->GetGameState<AShowDownGameStateBase>() : nullptr;
 
@@ -254,9 +344,9 @@ void APlayerPawn::SubmitSelectedCard(ACard* SelectedCard)
 
 	if (HasAuthority())
 	{
-		if (ModeBase)
+		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			ModeBase->PlayerSelectedCard(SelectedCard);
+			GameMode->PlayerSelectedCard(SelectedCard);
 		}
 		return;
 	}
@@ -317,9 +407,9 @@ void APlayerPawn::SubmitDialogueInput(const FString& Text)
 
 	if (HasAuthority())
 	{
-		if (ModeBase)
+		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			ModeBase->SubmitPlayerDialogueInputFromPlayer(TrimmedText, GetChatSenderName());
+			GameMode->SubmitPlayerDialogueInputFromPlayer(TrimmedText, GetChatSenderName());
 		}
 		return;
 	}
@@ -327,30 +417,97 @@ void APlayerPawn::SubmitDialogueInput(const FString& Text)
 	ServerSubmitDialogueInput(TrimmedText, GetChatSenderName());
 }
 
-void APlayerPawn::ServerSubmitDialogueInput_Implementation(const FString& Text, const FString& SenderName)
+void APlayerPawn::RequestPlayerCheck()
 {
-	if (!ModeBase)
+	SubmitPlayerBetAction(EShowDownBetAction::Check, 0);
+}
+
+void APlayerPawn::RequestPlayerRaise()
+{
+	SubmitPlayerBetAction(EShowDownBetAction::Raise, 0);
+}
+
+void APlayerPawn::RequestPlayerRaiseTo(int32 BulletCount)
+{
+	SubmitPlayerBetAction(EShowDownBetAction::Raise, BulletCount);
+}
+
+void APlayerPawn::RequestPlayerFold()
+{
+	SubmitPlayerBetAction(EShowDownBetAction::Fold, 0);
+}
+
+void APlayerPawn::SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetBet)
+{
+	if (HasAuthority())
 	{
-		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
+		AShowDownGameModeBase* GameMode = ResolveGameMode();
+		if (!GameMode)
+		{
+			return;
+		}
+
+		GameMode->RequestPlayerBetAction(Action, TargetBet);
+		return;
 	}
 
-	const FString TrimmedText = Text.TrimStartAndEnd();
-	if (!TrimmedText.IsEmpty() && ModeBase)
+	switch (Action)
 	{
-		ModeBase->SubmitPlayerDialogueInputFromPlayer(TrimmedText, SenderName);
+	case EShowDownBetAction::Check:
+	case EShowDownBetAction::Call:
+		ServerPlayerCheck();
+		break;
+
+	case EShowDownBetAction::Raise:
+		if (TargetBet > 0)
+		{
+			ServerPlayerRaiseTo(TargetBet);
+		}
+		else
+		{
+			ServerPlayerRaise();
+		}
+		break;
+
+	case EShowDownBetAction::Fold:
+		ServerPlayerFold();
+		break;
+
+	default:
+		break;
+	}
+}
+
+AShowDownGameModeBase* APlayerPawn::ResolveGameMode()
+{
+	if (!ModeBase && HasAuthority())
+	{
+		ModeBase = GetWorld() ? GetWorld()->GetAuthGameMode<AShowDownGameModeBase>() : nullptr;
+	}
+
+	return ModeBase;
+}
+
+void APlayerPawn::ServerSubmitDialogueInput_Implementation(const FString& Text, const FString& SenderName)
+{
+	const FString TrimmedText = Text.TrimStartAndEnd();
+	if (!TrimmedText.IsEmpty())
+	{
+		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
+		{
+			GameMode->SubmitPlayerDialogueInputFromPlayer(TrimmedText, SenderName);
+		}
 	}
 }
 
 void APlayerPawn::ServerSubmitSelectedCard_Implementation(ACard* SelectedCard)
 {
-	if (!ModeBase)
+	if (SelectedCard)
 	{
-		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
-	}
-
-	if (SelectedCard && ModeBase)
-	{
-		ModeBase->PlayerSelectedCard(SelectedCard);
+		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
+		{
+			GameMode->PlayerSelectedCard(SelectedCard);
+		}
 	}
 }
 
@@ -366,6 +523,54 @@ void APlayerPawn::Turn(const FInputActionValue& inputValue)
 {
 	float value = inputValue.Get<float>();
 	ApplyCameraInput(value, 0.0f);
+}
+
+void APlayerPawn::InputCheckOrCall(const FInputActionValue& InputValue)
+{
+	(void)InputValue;
+	RequestPlayerCheck();
+}
+
+void APlayerPawn::InputRaise(const FInputActionValue& InputValue)
+{
+	(void)InputValue;
+	RequestPlayerRaise();
+}
+
+void APlayerPawn::InputFold(const FInputActionValue& InputValue)
+{
+	(void)InputValue;
+	RequestPlayerFold();
+}
+
+void APlayerPawn::InputRaiseTo2(const FInputActionValue& InputValue)
+{
+	(void)InputValue;
+	RequestPlayerRaiseTo(2);
+}
+
+void APlayerPawn::InputRaiseTo3(const FInputActionValue& InputValue)
+{
+	(void)InputValue;
+	RequestPlayerRaiseTo(3);
+}
+
+void APlayerPawn::InputRaiseTo4(const FInputActionValue& InputValue)
+{
+	(void)InputValue;
+	RequestPlayerRaiseTo(4);
+}
+
+void APlayerPawn::InputRaiseTo5(const FInputActionValue& InputValue)
+{
+	(void)InputValue;
+	RequestPlayerRaiseTo(5);
+}
+
+void APlayerPawn::InputRaiseTo6(const FInputActionValue& InputValue)
+{
+	(void)InputValue;
+	RequestPlayerRaiseTo(6);
 }
 
 void APlayerPawn::ApplyCameraInput(float YawInput, float PitchInput)
@@ -396,175 +601,63 @@ void APlayerPawn::HandleBettingHotkeys()
 
 	if (PC->WasInputKeyJustPressed(EKeys::Q))
 	{
-		if (HasAuthority())
-		{
-			if (ModeBase)
-			{
-				ModeBase->PlayerCheck();
-			}
-		}
-		else
-		{
-			ServerPlayerCheck();
-		}
+		RequestPlayerCheck();
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::R))
 	{
-		if (HasAuthority())
-		{
-			if (ModeBase)
-			{
-				ModeBase->PlayerFold();
-			}
-		}
-		else
-		{
-			ServerPlayerFold();
-		}
+		RequestPlayerFold();
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::E))
 	{
-		if (HasAuthority())
-		{
-			if (ModeBase)
-			{
-				ModeBase->PlayerRaise();
-			}
-		}
-		else
-		{
-			ServerPlayerRaise();
-		}
+		RequestPlayerRaise();
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::One))
 	{
-		if (HasAuthority())
-		{
-			if (ModeBase)
-			{
-				ModeBase->PlayerRaiseTo(2);
-			}
-		}
-		else
-		{
-			ServerPlayerRaiseTo(2);
-		}
+		RequestPlayerRaiseTo(2);
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Two))
 	{
-		if (HasAuthority())
-		{
-			if (ModeBase)
-			{
-				ModeBase->PlayerRaiseTo(3);
-			}
-		}
-		else
-		{
-			ServerPlayerRaiseTo(3);
-		}
+		RequestPlayerRaiseTo(3);
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Three))
 	{
-		if (HasAuthority())
-		{
-			if (ModeBase)
-			{
-				ModeBase->PlayerRaiseTo(4);
-			}
-		}
-		else
-		{
-			ServerPlayerRaiseTo(4);
-		}
+		RequestPlayerRaiseTo(4);
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Four))
 	{
-		if (HasAuthority())
-		{
-			if (ModeBase)
-			{
-				ModeBase->PlayerRaiseTo(5);
-			}
-		}
-		else
-		{
-			ServerPlayerRaiseTo(5);
-		}
+		RequestPlayerRaiseTo(5);
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Five))
 	{
-		if (HasAuthority())
-		{
-			if (ModeBase)
-			{
-				ModeBase->PlayerRaiseTo(6);
-			}
-		}
-		else
-		{
-			ServerPlayerRaiseTo(6);
-		}
+		RequestPlayerRaiseTo(6);
 	}
 }
 
 void APlayerPawn::ServerPlayerCheck_Implementation()
 {
-	if (!ModeBase)
-	{
-		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
-	}
-
-	if (ModeBase)
-	{
-		ModeBase->PlayerCheck();
-	}
+	SubmitPlayerBetAction(EShowDownBetAction::Check, 0);
 }
 
 void APlayerPawn::ServerPlayerRaise_Implementation()
 {
-	if (!ModeBase)
-	{
-		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
-	}
-
-	if (ModeBase)
-	{
-		ModeBase->PlayerRaise();
-	}
+	SubmitPlayerBetAction(EShowDownBetAction::Raise, 0);
 }
 
 void APlayerPawn::ServerPlayerRaiseTo_Implementation(int32 BulletCount)
 {
-	if (!ModeBase)
-	{
-		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
-	}
-
-	if (ModeBase)
-	{
-		ModeBase->PlayerRaiseTo(BulletCount);
-	}
+	SubmitPlayerBetAction(EShowDownBetAction::Raise, BulletCount);
 }
 
 void APlayerPawn::ServerPlayerFold_Implementation()
 {
-	if (!ModeBase)
-	{
-		ModeBase = Cast<AShowDownGameModeBase>(UGameplayStatics::GetGameMode(GetWorld()));
-	}
-
-	if (ModeBase)
-	{
-		ModeBase->PlayerFold();
-	}
+	SubmitPlayerBetAction(EShowDownBetAction::Fold, 0);
 }
 
 void APlayerPawn::EnsureChatWidget()

@@ -6,6 +6,7 @@
 #include "GameFramework/Pawn.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
+#include "ShowDownTypes.h"
 
 
 #include "PlayerPawn.generated.h"
@@ -51,6 +52,36 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = Input)
 	class UInputAction* ia_Turn;//좌우
 
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Betting")
+	class UInputAction* ia_CheckOrCall;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Betting")
+	class UInputAction* ia_Raise;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Betting")
+	class UInputAction* ia_Fold;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Betting")
+	class UInputAction* ia_RaiseTo2;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Betting")
+	class UInputAction* ia_RaiseTo3;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Betting")
+	class UInputAction* ia_RaiseTo4;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Betting")
+	class UInputAction* ia_RaiseTo5;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Betting")
+	class UInputAction* ia_RaiseTo6;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input")
+	bool bEnableLegacyKeyboardBetHotkeys = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input")
+	bool bUseMousePositionLookFallback = false;
+
 	UPROPERTY(EditDefaultsOnly, Category = "ShowDown|Chat")
 	TSubclassOf<class UShowDownChatWidget> ChatWidgetClass;
 
@@ -75,6 +106,9 @@ public:
 	float MinYaw = -45.0f;
 	UPROPERTY(EditAnywhere, Category = Camera)
 	float MaxYaw = 45.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Debug")
+	bool bEnableDebugWinCommand = false;
 	
 	/*
 	//
@@ -123,6 +157,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
 	void SubmitDialogueInput(const FString& Text);
 
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void RequestPlayerCheck();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void RequestPlayerRaise();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void RequestPlayerRaiseTo(int32 BulletCount);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void RequestPlayerFold();
+
 	UFUNCTION(Server, Reliable)
 	void ServerSubmitDialogueInput(const FString& Text, const FString& SenderName);
 
@@ -157,6 +203,16 @@ private:
 	//IMC등록
 	void AddInputMappingContext();
 	void ApplyCameraInput(float YawInput, float PitchInput);
+	void SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
+	class AShowDownGameModeBase* ResolveGameMode();
+	void InputCheckOrCall(const FInputActionValue& InputValue);
+	void InputRaise(const FInputActionValue& InputValue);
+	void InputFold(const FInputActionValue& InputValue);
+	void InputRaiseTo2(const FInputActionValue& InputValue);
+	void InputRaiseTo3(const FInputActionValue& InputValue);
+	void InputRaiseTo4(const FInputActionValue& InputValue);
+	void InputRaiseTo5(const FInputActionValue& InputValue);
+	void InputRaiseTo6(const FInputActionValue& InputValue);
 
 	bool bHasPreviousMousePosition = false;
 	float PreviousMouseX = 0.0f;
