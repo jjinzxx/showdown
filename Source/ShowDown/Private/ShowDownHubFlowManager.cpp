@@ -346,6 +346,10 @@ void AShowDownHubFlowManager::ShowSinglePlayPreviewInternal(bool bAllowOnlineRew
 	if (PlayerController)
 	{
 		const bool bUseGameCameraLook = bEnableGameCameraMouseLook && bPlayedGameCamera && GameCamera;
+		if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+		{
+			ShowDownController->bHandleShowDownGameplayInput = true;
+		}
 
 		if (bUseGameCameraLook)
 		{
@@ -434,6 +438,11 @@ void AShowDownHubFlowManager::SetUiOnlyInput(UUserWidget* FocusWidget)
 
 	if (APlayerController* PlayerController = GetPrimaryPlayerController())
 	{
+		if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+		{
+			ShowDownController->bHandleShowDownGameplayInput = false;
+		}
+
 		PlayerController->bShowMouseCursor = true;
 
 		FInputModeUIOnly InputMode;

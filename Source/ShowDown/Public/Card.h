@@ -23,6 +23,9 @@ public:
 	USceneComponent* RootComp;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	USceneComponent* VisualRoot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	UStaticMeshComponent* CardMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -100,6 +103,7 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 private:
+	void ConfigureInteractionComponents();
 	void UpdateTargetTransform();
 
 	UPROPERTY(VisibleAnywhere, Category = "Card")
@@ -110,6 +114,8 @@ private:
 
 	FVector DefaultLocation = FVector::ZeroVector;
 	FVector TargetLocation = FVector::ZeroVector;
+	FVector CurrentVisualWorldOffset = FVector::ZeroVector;
+	FVector TargetVisualWorldOffset = FVector::ZeroVector;
 	FRotator DefaultRotation = FRotator::ZeroRotator;
 	FRotator TargetRotation = FRotator::ZeroRotator;
 };

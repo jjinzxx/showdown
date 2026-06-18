@@ -104,7 +104,7 @@ public:
 	float CenterScreenTraceDistance = 2500.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input")
-	bool bUseCenterAimCardFallback = true;
+	bool bUseCenterAimCardFallback = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input")
 	bool bEnableCardHoverPreview = true;

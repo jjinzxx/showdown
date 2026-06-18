@@ -96,18 +96,18 @@ private:
 
 AShowDownPlayerController::AShowDownPlayerController()
 {
-	bShowMouseCursor = true;
-	bEnableClickEvents = true;
-	bEnableMouseOverEvents = true;
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
 }
 
 void AShowDownPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
-	bShowMouseCursor = true;
-	bEnableClickEvents = true;
-	bEnableMouseOverEvents = true;
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
 	InitializeFromPossessedPawn();
 	CreateCenterCrosshairWidget();
 	UpdateCenterCrosshairVisibility();
@@ -185,9 +185,9 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 
 void AShowDownPlayerController::InitializeFromPossessedPawn()
 {
-	bShowMouseCursor = true;
-	bEnableClickEvents = true;
-	bEnableMouseOverEvents = true;
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
 
 	const APlayerPawn* ShowDownPawn = Cast<APlayerPawn>(GetPawn());
 	if (!ShowDownPawn)
@@ -272,9 +272,9 @@ void AShowDownPlayerController::TraceCardUnderCursor()
 
 bool AShowDownPlayerController::TracePrimaryInteraction(FHitResult& OutHit) const
 {
-	if (!bShowMouseCursor && bUseCenterScreenTraceWhenCursorHidden)
+	if (bHandleShowDownGameplayInput && !bChatOpen)
 	{
-		return TraceFromScreenCenter(OutHit);
+		return bUseCenterScreenTraceWhenCursorHidden && TraceFromScreenCenter(OutHit);
 	}
 
 	if (TraceUnderCursor(OutHit))

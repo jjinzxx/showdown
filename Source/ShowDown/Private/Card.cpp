@@ -17,12 +17,14 @@ ACard::ACard()
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(RootComp);
 
+	VisualRoot = CreateDefaultSubobject<USceneComponent>(TEXT("VisualRoot"));
+	VisualRoot->SetupAttachment(RootComp);
+
 	CardMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CardMesh"));
-	CardMesh->SetupAttachment(RootComp);
-	CardMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	CardMesh->SetupAttachment(VisualRoot);
+	CardMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	CardMesh->SetCollisionObjectType(ECC_WorldDynamic);
 	CardMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
-	CardMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 
 	InteractionBounds = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBounds"));
 	InteractionBounds->SetupAttachment(RootComp);
@@ -33,7 +35,7 @@ ACard::ACard()
 	InteractionBounds->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 
 	CardText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("CardText"));
-	CardText->SetupAttachment(RootComp);
+	CardText->SetupAttachment(VisualRoot);
 	CardText->SetHorizontalAlignment(EHTA_Center);
 	CardText->SetVerticalAlignment(EVRTA_TextCenter);
 	CardText->SetTextRenderColor(FColor::Black);
@@ -41,22 +43,51 @@ ACard::ACard()
 	CardText->SetRelativeLocation(FVector(0.0f, 0.0f, 3.0f));
 }
 
-void ACard::OnConstruction(const FTransform& Transform)
+void ACard::ConfigureInteractionComponents()
 {
-	Super::OnConstruction(Transform);
+	if (CardMesh)
+	{
+		CardMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		CardMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+		if (VisualRoot && CardMesh->GetAttachParent() != VisualRoot)
+		{
+			CardMesh->AttachToComponent(VisualRoot, FAttachmentTransformRules::KeepRelativeTransform);
+		}
+	}
+
+	if (CardText && VisualRoot && CardText->GetAttachParent() != VisualRoot)
+	{
+		CardText->AttachToComponent(VisualRoot, FAttachmentTransformRules::KeepRelativeTransform);
+	}
 
 	if (InteractionBounds)
 	{
 		InteractionBounds->SetBoxExtent(InteractionBoundsExtent);
+		InteractionBounds->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		InteractionBounds->SetCollisionResponseToAllChannels(ECR_Ignore);
+		InteractionBounds->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+		if (RootComp && InteractionBounds->GetAttachParent() != RootComp)
+		{
+			InteractionBounds->AttachToComponent(RootComp, FAttachmentTransformRules::KeepRelativeTransform);
+		}
 	}
+}
+
+void ACard::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	ConfigureInteractionComponents();
 }
 
 void ACard::BeginPlay()
 {
 	Super::BeginPlay();
 
+	ConfigureInteractionComponents();
 	DefaultLocation = GetActorLocation();
 	TargetLocation = DefaultLocation;
+	CurrentVisualWorldOffset = FVector::ZeroVector;
+	TargetVisualWorldOffset = FVector::ZeroVector;
 	DefaultRotation = GetActorRotation();
 	TargetRotation = DefaultRotation;
 	RefreshVisual();
@@ -66,12 +97,19 @@ void ACard::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	UpdateTargetTransform();
+
+	CurrentVisualWorldOffset = FMath::VInterpTo(CurrentVisualWorldOffset, TargetVisualWorldOffset, DeltaTime, MoveSpeed);
+	if (VisualRoot)
+	{
+		const FVector VisualRelativeOffset = GetActorTransform().InverseTransformVectorNoScale(CurrentVisualWorldOffset);
+		VisualRoot->SetRelativeLocation(VisualRelativeOffset);
+	}
+
 	if (!HasAuthority())
 	{
 		return;
 	}
-
-	UpdateTargetTransform();
 
 	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaTime, MoveSpeed);
 	const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime, MoveSpeed);
@@ -179,20 +217,21 @@ void ACard::MoveToHandTransform(const FTransform& NewTransform)
 void ACard::UpdateTargetTransform()
 {
 	TargetRotation = DefaultRotation;
+	TargetLocation = DefaultLocation;
 
 	if (bSelected)
 	{
-		TargetLocation = DefaultLocation + SelectedOffset;
+		TargetVisualWorldOffset = SelectedOffset;
 		return;
 	}
 
 	if (bHovered)
 	{
-		TargetLocation = DefaultLocation + HoverOffset;
+		TargetVisualWorldOffset = HoverOffset;
 		return;
 	}
 
-	TargetLocation = DefaultLocation;
+	TargetVisualWorldOffset = FVector::ZeroVector;
 }
 
 bool ACard::CanInteract_Implementation(AActor* Interactor) const
