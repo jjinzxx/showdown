@@ -98,40 +98,22 @@ public:
 
 	// 카드 사이 간격
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float FanWidth = 220.0f;
+	float CardSpacing = 70.0f;
 
 	// 카드 위치
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float FanDistance = 180.0f;
+	float ForwardOffset = 180.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float GripToCenterDistance = 130.0f;
+	float HeightOffset = 65.0f;
 
 	// 카드 각도
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float AnglePerGap = 10.0f;
-
-	// 카드가 양끝으로 빠지는 정도
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float MaxFanAngle = 85.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float LayerStep = 1.5f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "-85.0", ClampMax = "85.0"))
-	float FaceTiltAngle = -15.0f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "-45.0", ClampMax = "45.0"))
-	float EdgeCurlAngle = 7.0f;
+	float LeanAngle = 0.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float CameraFacingStrength = 0.08f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "0.0", ClampMax = "20.0"))
-	float MaxCameraFacingAngle = 5.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	ESDHandLayoutStyle HandLayoutStyle = ESDHandLayoutStyle::AutoFan;
+	// 같은 줄에서 살짝 앞뒤로 겹치는 정도
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "0.0"))
+	float LayerStep = 0.5f;
 	
 	
 	

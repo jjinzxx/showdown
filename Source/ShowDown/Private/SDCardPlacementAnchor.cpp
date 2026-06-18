@@ -39,17 +39,11 @@ bool ASDCardPlacementAnchor::CanEditChange(const FProperty* InProperty) const
 
 	const FName PropertyName = InProperty ? InProperty->GetFName() : NAME_None;
 	const bool bHandOnlyProperty =
-		PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, HandLayoutStyle)
-		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, FanWidth)
-		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, FanDistance)
-		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, GripToCenterDistance)
-		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, AnglePerGap)
-		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, MaxFanAngle)
+		PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, CardSpacing)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, ForwardOffset)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, HeightOffset)
+		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, LeanAngle)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, LayerStep)
-		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, FaceTiltAngle)
-		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, EdgeCurlAngle)
-		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, CameraFacingStrength)
-		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, MaxCameraFacingAngle)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, SelectedOffset)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, HoverOffset)
 		|| PropertyName == GET_MEMBER_NAME_CHECKED(ASDCardPlacementAnchor, MoveSpeed);

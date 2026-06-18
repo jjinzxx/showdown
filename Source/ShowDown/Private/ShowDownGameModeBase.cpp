@@ -1417,17 +1417,11 @@ void AShowDownGameModeBase::SetPlayerHandSelectable(bool bSelectable)
 FSDCardHandLayoutSettings AShowDownGameModeBase::GetDefaultHandLayoutSettings() const
 {
 	FSDCardHandLayoutSettings Settings;
-	Settings.HandLayoutStyle = HandLayoutStyle;
-	Settings.FanWidth = FanWidth;
-	Settings.FanDistance = FanDistance;
-	Settings.GripToCenterDistance = GripToCenterDistance;
-	Settings.AnglePerGap = AnglePerGap;
-	Settings.MaxFanAngle = MaxFanAngle;
+	Settings.CardSpacing = CardSpacing;
+	Settings.ForwardOffset = ForwardOffset;
+	Settings.HeightOffset = HeightOffset;
+	Settings.LeanAngle = LeanAngle;
 	Settings.LayerStep = LayerStep;
-	Settings.FaceTiltAngle = FaceTiltAngle;
-	Settings.EdgeCurlAngle = EdgeCurlAngle;
-	Settings.CameraFacingStrength = CameraFacingStrength;
-	Settings.MaxCameraFacingAngle = MaxCameraFacingAngle;
 	return Settings;
 }
 
@@ -1437,17 +1431,11 @@ FSDCardHandLayoutSettings AShowDownGameModeBase::ResolveHandLayoutSettings(EShow
 
 	if (const ASDCardPlacementAnchor* HandAnchor = GetHandAnchorForSide(Side))
 	{
-		Settings.HandLayoutStyle = HandAnchor->HandLayoutStyle;
-		Settings.FanWidth = HandAnchor->FanWidth;
-		Settings.FanDistance = HandAnchor->FanDistance;
-		Settings.GripToCenterDistance = HandAnchor->GripToCenterDistance;
-		Settings.AnglePerGap = HandAnchor->AnglePerGap;
-		Settings.MaxFanAngle = HandAnchor->MaxFanAngle;
+		Settings.CardSpacing = HandAnchor->CardSpacing;
+		Settings.ForwardOffset = HandAnchor->ForwardOffset;
+		Settings.HeightOffset = HandAnchor->HeightOffset;
+		Settings.LeanAngle = HandAnchor->LeanAngle;
 		Settings.LayerStep = HandAnchor->LayerStep;
-		Settings.FaceTiltAngle = HandAnchor->FaceTiltAngle;
-		Settings.EdgeCurlAngle = HandAnchor->EdgeCurlAngle;
-		Settings.CameraFacingStrength = HandAnchor->CameraFacingStrength;
-		Settings.MaxCameraFacingAngle = HandAnchor->MaxCameraFacingAngle;
 		return Settings;
 	}
 
@@ -1455,11 +1443,10 @@ FSDCardHandLayoutSettings AShowDownGameModeBase::ResolveHandLayoutSettings(EShow
 	{
 		if (Seat->bOverrideGameModeHandLayout)
 		{
-			Settings.HandLayoutStyle = ESDHandLayoutStyle::FixedFan;
-			Settings.FanWidth = Seat->HandSpacing;
-			Settings.FanDistance = Seat->HandForwardOffset;
-			Settings.AnglePerGap = Seat->HandFanAngle;
-			Settings.MaxFanAngle = Seat->HandFanDepth;
+			Settings.CardSpacing = Seat->HandSpacing;
+			Settings.ForwardOffset = Seat->HandForwardOffset;
+			Settings.HeightOffset = Seat->HandHeightOffset;
+			Settings.LeanAngle = Seat->HandLeanAngle;
 		}
 	}
 

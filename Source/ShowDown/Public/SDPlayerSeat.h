@@ -43,16 +43,16 @@ public:
 	bool bOverrideGameModeHandLayout = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card Layout", meta = (EditCondition = "bOverrideGameModeHandLayout", ClampMin = "0.0"))
-	float HandSpacing = 55.0f;
+	float HandSpacing = 70.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card Layout", meta = (EditCondition = "bOverrideGameModeHandLayout"))
 	float HandForwardOffset = 180.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card Layout", meta = (EditCondition = "bOverrideGameModeHandLayout"))
-	float HandFanAngle = 40.0f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card Layout", meta = (EditCondition = "bOverrideGameModeHandLayout", ClampMin = "0.0"))
-	float HandFanDepth = 25.0f;
+	float HandHeightOffset = 65.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card Layout", meta = (EditCondition = "bOverrideGameModeHandLayout", ClampMin = "-45.0", ClampMax = "45.0"))
+	float HandLeanAngle = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card Motion")
 	bool bOverrideCardMotion = true;

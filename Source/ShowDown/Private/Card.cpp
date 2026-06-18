@@ -4,7 +4,6 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
-#include "Camera/PlayerCameraManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
 #include "ShowDownPlayerController.h"
@@ -164,56 +163,22 @@ void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
 	bSelected = false;
 	bHovered = false;
 	SetSelectable(false);
-	bUseHandCameraResponse = false;
 	DefaultLocation = Slot->GetComponentLocation();
 	DefaultRotation = Slot->GetComponentRotation();
 	UpdateTargetTransform();
 	SetFaceUp(bNewFaceUp);
 }
 
-void ACard::MoveToHandTransform(
-	const FTransform& NewTransform,
-	float InCameraFacingStrength,
-	float InMaxCameraFacingAngle)
+void ACard::MoveToHandTransform(const FTransform& NewTransform)
 {
 	DefaultLocation = NewTransform.GetLocation();
 	DefaultRotation = NewTransform.GetRotation().Rotator();
-	bUseHandCameraResponse = InCameraFacingStrength > 0.0f && InMaxCameraFacingAngle > 0.0f;
-	CameraFacingStrength = FMath::Clamp(InCameraFacingStrength, 0.0f, 1.0f);
-	MaxCameraFacingAngle = FMath::Max(0.0f, InMaxCameraFacingAngle);
 	UpdateTargetTransform();
 }
 
 void ACard::UpdateTargetTransform()
 {
 	TargetRotation = DefaultRotation;
-	if (bUseHandCameraResponse)
-	{
-		if (APlayerCameraManager* CameraManager = UGameplayStatics::GetPlayerCameraManager(this, 0))
-		{
-			const FVector ToCamera = (CameraManager->GetCameraLocation() - DefaultLocation).GetSafeNormal();
-			const FVector ViewFacing = -CameraManager->GetCameraRotation().Vector();
-			const FVector DesiredNormal = (ToCamera + ViewFacing * 0.5f).GetSafeNormal();
-			const FQuat BaseRotation = DefaultRotation.Quaternion();
-			const FVector CardNormal = BaseRotation.GetForwardVector();
-
-			if (!DesiredNormal.IsNearlyZero() && !CardNormal.IsNearlyZero())
-			{
-				FVector Axis = FVector::ZeroVector;
-				float AngleRadians = 0.0f;
-				FQuat::FindBetweenNormals(CardNormal, DesiredNormal).ToAxisAndAngle(Axis, AngleRadians);
-
-				if (!Axis.IsNearlyZero() && AngleRadians > KINDA_SMALL_NUMBER)
-				{
-					const float ResponseAngle = FMath::Min(
-						FMath::RadiansToDegrees(AngleRadians) * CameraFacingStrength,
-						MaxCameraFacingAngle);
-					const FQuat ResponseRotation(Axis.GetSafeNormal(), FMath::DegreesToRadians(ResponseAngle));
-					TargetRotation = (ResponseRotation * BaseRotation).Rotator();
-				}
-			}
-		}
-	}
 
 	if (bSelected)
 	{

@@ -83,10 +83,7 @@ public:
 	void MoveToSlot(USceneComponent* Slot, bool bNewFaceUp);
 
 	UFUNCTION(BlueprintCallable, Category = "Card")
-	void MoveToHandTransform(
-		const FTransform& NewTransform,
-		float InCameraFacingStrength,
-		float InMaxCameraFacingAngle);
+	void MoveToHandTransform(const FTransform& NewTransform);
 
 	virtual bool CanInteract_Implementation(AActor* Interactor) const override;
 	virtual void Interact_Implementation(AActor* Interactor) override;
@@ -115,7 +112,4 @@ private:
 	FVector TargetLocation = FVector::ZeroVector;
 	FRotator DefaultRotation = FRotator::ZeroRotator;
 	FRotator TargetRotation = FRotator::ZeroRotator;
-	bool bUseHandCameraResponse = false;
-	float CameraFacingStrength = 0.0f;
-	float MaxCameraFacingAngle = 0.0f;
 };
