@@ -35,13 +35,13 @@ public:
 	void LoginWithSupabaseSession();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void HostSession(FName MapName = TEXT("ShowDownRoom"));
+	void HostSession(FName MapName = TEXT("L_MultiplayerGame"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void FindAndJoinFirstSession();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void HostLobby(FName LobbyMapName = TEXT("L_MultiplayerLobby"), FName GameMapName = TEXT("ShowDownRoom"));
+	void HostLobby(FName LobbyMapName = TEXT("L_MultiplayerLobby"), FName GameMapName = TEXT("L_MultiplayerGame"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void JoinLobbyByCode(const FString& RoomCode);
@@ -85,8 +85,8 @@ private:
 	TSharedPtr<FOnlineSessionSearch> SessionSearch;
 	FOnlineSessionSearchResult PendingStartedGameSearchResult;
 	FTimerHandle LobbyStartPollTimerHandle;
-	FName PendingHostMapName = TEXT("ShowDownRoom");
-	FName PendingGameMapName = TEXT("ShowDownRoom");
+	FName PendingHostMapName = TEXT("L_MultiplayerGame");
+	FName PendingGameMapName = TEXT("L_MultiplayerGame");
 	FString PendingJoinCode;
 	FString LobbyCode;
 	ESessionFlow PendingSessionFlow = ESessionFlow::None;

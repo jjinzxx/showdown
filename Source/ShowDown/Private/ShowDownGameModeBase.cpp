@@ -17,10 +17,12 @@
 #include "PlayerPawn.h"
 #include "SDPlayerSeat.h"
 #include "SDPlayerState.h"
+#include "ShowDownEosSubsystem.h"
 #include "ShowDownGameStateBase.h"
 #include "ShowDownHubFlowManager.h"
 #include "ShowDownPlayerController.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "GameFramework/PlayerState.h"
 
 AShowDownGameModeBase::AShowDownGameModeBase()
@@ -70,13 +72,24 @@ void AShowDownGameModeBase::BeginPlay()
 {
 	Super::BeginPlay();
 
+	bool bInMultiplayerLobby = false;
+	if (const UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (const UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			bInMultiplayerLobby = EosSubsystem->IsInMultiplayerLobby();
+		}
+	}
+
+	const bool bNetworkedMatch = GetNetMode() != NM_Standalone;
+
 	// 레벨에 HubFlowManager가 있으면 싱글플레이 버튼을 누를 때까지 시작을 미룹니다.
 	// 허브가 없는 테스트 레벨(ShowDown_Test 등)에서는 기존처럼 곧장 시작합니다.
 	const bool bHubControlsStart =
-		UGameplayStatics::GetActorOfClass(GetWorld(), AShowDownHubFlowManager::StaticClass()) != nullptr;
+		UGameplayStatics::GetActorOfClass(GetWorld(), AShowDownHubFlowManager::StaticClass()) != nullptr
+		&& (!bNetworkedMatch || bInMultiplayerLobby);
 
-	const bool bNetworkedMatch = GetNetMode() != NM_Standalone;
-	if (bNetworkedMatch && !bHubControlsStart)
+	if (bNetworkedMatch && !bInMultiplayerLobby)
 	{
 		StartMultiplayerGame();
 		return;

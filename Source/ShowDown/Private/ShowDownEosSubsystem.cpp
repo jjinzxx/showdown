@@ -139,7 +139,7 @@ void UShowDownEosSubsystem::HostSession(FName MapName)
 		return;
 	}
 
-	PendingHostMapName = MapName.IsNone() ? FName(TEXT("ShowDownRoom")) : MapName;
+	PendingHostMapName = MapName.IsNone() ? FName(TEXT("L_MultiplayerGame")) : MapName;
 	PendingSessionFlow = ESessionFlow::HostImmediateGame;
 
 	if (CreateSessionCompleteDelegateHandle.IsValid())
@@ -201,7 +201,7 @@ void UShowDownEosSubsystem::HostLobby(FName LobbyMapName, FName GameMapName)
 	}
 
 	PendingHostMapName = LobbyMapName.IsNone() ? FName(TEXT("L_MultiplayerLobby")) : LobbyMapName;
-	PendingGameMapName = GameMapName.IsNone() ? FName(TEXT("ShowDownRoom")) : GameMapName;
+	PendingGameMapName = GameMapName.IsNone() ? FName(TEXT("L_MultiplayerGame")) : GameMapName;
 	LobbyCode = MakeRoomCode();
 	PendingJoinCode.Empty();
 	bLobbyHost = true;
