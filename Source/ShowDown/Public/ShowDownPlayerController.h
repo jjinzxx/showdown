@@ -172,6 +172,9 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerPlayerFold();
 
+	UFUNCTION(Client, Reliable)
+	void ClientShowStatusMessage(const FString& Message);
+
 private:
 	void InitializeFromPossessedPawn();
 	void TraceCardUnderCursor();

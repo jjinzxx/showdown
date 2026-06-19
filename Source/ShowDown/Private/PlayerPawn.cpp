@@ -346,7 +346,7 @@ void APlayerPawn::SubmitSelectedCard(ACard* SelectedCard)
 	{
 		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			GameMode->PlayerSelectedCard(SelectedCard);
+			GameMode->PlayerSelectedCardFromController(GetController(), SelectedCard);
 		}
 		return;
 	}
@@ -447,7 +447,7 @@ void APlayerPawn::SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetB
 			return;
 		}
 
-		GameMode->RequestPlayerBetAction(Action, TargetBet);
+		GameMode->RequestPlayerBetActionFromController(GetController(), Action, TargetBet);
 		return;
 	}
 
@@ -506,7 +506,7 @@ void APlayerPawn::ServerSubmitSelectedCard_Implementation(ACard* SelectedCard)
 	{
 		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			GameMode->PlayerSelectedCard(SelectedCard);
+			GameMode->PlayerSelectedCardFromController(GetController(), SelectedCard);
 		}
 	}
 }

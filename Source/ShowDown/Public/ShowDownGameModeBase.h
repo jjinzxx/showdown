@@ -25,6 +25,7 @@ struct FSDLLMBossContext;
 class AShowDownGameStateBase;
 class AController;
 class APlayerController;
+class ASDPlayerState;
 class USceneComponent;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
@@ -142,6 +143,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Card")
 	void PlayerSelectedCard(ACard* SelectedCard);
 
+	void PlayerSelectedCardFromController(AController* SubmittingController, ACard* SelectedCard);
+
 	// 베팅 단계 시작
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void StartBettingPhase();
@@ -206,6 +209,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void RequestPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
 
+	void RequestPlayerBetActionFromController(AController* SubmittingController, EShowDownBetAction Action, int32 TargetBet);
+
 
 protected:
 	virtual void BeginPlay() override;
@@ -249,6 +254,31 @@ private:
 	bool bCurrentRoundSummaryRecorded = false;
 	bool bBossChatReplyInFlight = false;
 	float LastBossChatReplyRequestTime = -1000.0f;
+
+	UPROPERTY()
+	TArray<TObjectPtr<ASDPlayerState>> MultiplayerPlayers;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerDuelA = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerDuelB = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerCardGiver = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerCardReceiver = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerCurrentBetter = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerLastCheckedPlayer = nullptr;
+
+	FTimerHandle MultiplayerStartTimerHandle;
+	bool bMultiplayerMatchStarted = false;
+	bool bMultiplayerRoundResolving = false;
 	
 	//콜렉터 추적
 	UPROPERTY()
@@ -292,6 +322,31 @@ private:
 	void ReflowHandCards(EShowDownSide Side);
 	void RefreshNetworkPlayerSlots();
 	EShowDownPlayerSlot FindNextOpenPlayerSlot() const;
+	void TryStartMultiplayerMatch();
+	void StartMultiplayerMatch(const TArray<ASDPlayerState*>& Players);
+	TArray<ASDPlayerState*> GetConnectedShowDownPlayers() const;
+	ASDPlayerState* GetPlayerStateForController(AController* Controller) const;
+	void EnsureMultiplayerPawns();
+	FTransform GetMultiplayerPawnSpawnTransform(AController* Controller, int32 PlayerIndex);
+	ASDPlayerState* FindNextAliveMultiplayerPlayer(ASDPlayerState* AfterPlayer) const;
+	ASDPlayerState* GetMultiplayerOpponent(ASDPlayerState* Player) const;
+	void DealMultiplayerHands();
+	void ClearMultiplayerHands();
+	void ClearMultiplayerForeheadCards();
+	void StartMultiplayerDuel(ASDPlayerState* FirstPlayer, ASDPlayerState* SecondPlayer);
+	void StartMultiplayerCardSelection(ASDPlayerState* Giver, ASDPlayerState* Receiver);
+	void HandleMultiplayerSelectedCard(ASDPlayerState* SubmittingPlayer, ACard* SelectedCard);
+	void StartMultiplayerBetting();
+	void HandleMultiplayerBetAction(ASDPlayerState* SubmittingPlayer, EShowDownBetAction Action, int32 TargetBet);
+	void FinishMultiplayerRoundByReveal();
+	void FinishMultiplayerRoundByFold(ASDPlayerState* FoldedPlayer);
+	void ApplyMultiplayerRoulette(ASDPlayerState* TargetPlayer, int32 BulletCount);
+	void EndMultiplayerRound();
+	void SetMultiplayerSelectableHand(ASDPlayerState* Player);
+	void ReflowMultiplayerHand(ASDPlayerState* Player);
+	USceneComponent* GetHandSlotForPlayerState(ASDPlayerState* Player) const;
+	USceneComponent* GetHeadSlotForPlayerState(ASDPlayerState* Player) const;
+	void NotifyMultiplayerStatus(const FString& Message) const;
 	void StartStage(int32 StageIndex);
 	void AdvanceStage();
 	const FShowDownStageRule* GetCurrentStageRule() const;

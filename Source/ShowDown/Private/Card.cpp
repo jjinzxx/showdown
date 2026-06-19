@@ -6,6 +6,7 @@
 #include "Components/TextRenderComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
+#include "SDPlayerState.h"
 #include "ShowDownPlayerController.h"
 
 ACard::ACard()
@@ -106,6 +107,8 @@ void ACard::Tick(float DeltaTime)
 		VisualRoot->SetRelativeLocation(VisualRelativeOffset);
 	}
 
+	RefreshVisual();
+
 	if (!HasAuthority())
 	{
 		return;
@@ -128,6 +131,18 @@ void ACard::SetFaceUp(bool bNewFaceUp)
 	RefreshVisual();
 }
 
+void ACard::SetHiddenFromSlot(EShowDownPlayerSlot NewHiddenFromSlot)
+{
+	HiddenFromSlot = NewHiddenFromSlot;
+	RefreshVisual();
+}
+
+void ACard::SetHandOwnerSlot(EShowDownPlayerSlot NewHandOwnerSlot)
+{
+	HandOwnerSlot = NewHandOwnerSlot;
+	RefreshVisual();
+}
+
 void ACard::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -135,6 +150,8 @@ void ACard::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimePro
 	DOREPLIFETIME(ACard, Rank);
 	DOREPLIFETIME(ACard, bSelectable);
 	DOREPLIFETIME(ACard, bFaceUp);
+	DOREPLIFETIME(ACard, HiddenFromSlot);
+	DOREPLIFETIME(ACard, HandOwnerSlot);
 }
 
 void ACard::OnRep_CardVisual()
@@ -149,7 +166,24 @@ void ACard::RefreshVisual()
 		return;
 	}
 
-	CardText->SetVisibility(bFaceUp);
+	bool bVisibleToLocalPlayer = true;
+	const ASDPlayerState* LocalPlayerState = nullptr;
+	if (const APlayerController* LocalPlayerController = UGameplayStatics::GetPlayerController(this, 0))
+	{
+		LocalPlayerState = LocalPlayerController->GetPlayerState<ASDPlayerState>();
+	}
+
+	if (HandOwnerSlot != EShowDownPlayerSlot::None && LocalPlayerState)
+	{
+		bVisibleToLocalPlayer = LocalPlayerState->ShowDownSlot == HandOwnerSlot;
+	}
+
+	if (HiddenFromSlot != EShowDownPlayerSlot::None && LocalPlayerState)
+	{
+		bVisibleToLocalPlayer = bVisibleToLocalPlayer && LocalPlayerState->ShowDownSlot != HiddenFromSlot;
+	}
+
+	CardText->SetVisibility(bFaceUp && bVisibleToLocalPlayer);
 	CardText->SetText(FText::AsNumber(Rank));
 }
 

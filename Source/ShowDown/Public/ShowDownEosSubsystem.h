@@ -41,7 +41,7 @@ public:
 	void FindAndJoinFirstSession();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void HostLobby(FName LobbyMapName = TEXT("L_Hub"), FName GameMapName = TEXT("ShowDownRoom"));
+	void HostLobby(FName LobbyMapName = TEXT("L_MultiplayerLobby"), FName GameMapName = TEXT("ShowDownRoom"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void JoinLobbyByCode(const FString& RoomCode);

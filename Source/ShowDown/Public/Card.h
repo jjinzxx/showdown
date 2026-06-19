@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Interaction/SDInteractable.h"
+#include "ShowDownTypes.h"
 #include "Card.generated.h"
 
 class UBoxComponent;
@@ -43,6 +44,12 @@ public:
 	UPROPERTY(ReplicatedUsing = OnRep_CardVisual, EditAnywhere, BlueprintReadWrite, Category = "Card")
 	bool bFaceUp = false;
 
+	UPROPERTY(ReplicatedUsing = OnRep_CardVisual, BlueprintReadOnly, Category = "Card")
+	EShowDownPlayerSlot HiddenFromSlot = EShowDownPlayerSlot::None;
+
+	UPROPERTY(ReplicatedUsing = OnRep_CardVisual, BlueprintReadOnly, Category = "Card")
+	EShowDownPlayerSlot HandOwnerSlot = EShowDownPlayerSlot::None;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Select")
 	FVector SelectedOffset = FVector(0.0f, 0.0f, 12.0f);
 
@@ -60,6 +67,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Card")
 	void SetFaceUp(bool bNewFaceUp);
+
+	UFUNCTION(BlueprintCallable, Category = "Card")
+	void SetHiddenFromSlot(EShowDownPlayerSlot NewHiddenFromSlot);
+
+	UFUNCTION(BlueprintCallable, Category = "Card")
+	void SetHandOwnerSlot(EShowDownPlayerSlot NewHandOwnerSlot);
 
 	UFUNCTION(BlueprintCallable, Category = "Card")
 	void RefreshVisual();

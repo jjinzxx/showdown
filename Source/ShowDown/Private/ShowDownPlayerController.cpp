@@ -502,7 +502,7 @@ void AShowDownPlayerController::SubmitSelectedCard(ACard* SelectedCard)
 	{
 		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			GameMode->PlayerSelectedCard(SelectedCard);
+			GameMode->PlayerSelectedCardFromController(this, SelectedCard);
 		}
 		return;
 	}
@@ -651,7 +651,7 @@ void AShowDownPlayerController::SubmitPlayerBetAction(EShowDownBetAction Action,
 	{
 		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			GameMode->RequestPlayerBetAction(Action, TargetBet);
+			GameMode->RequestPlayerBetActionFromController(this, Action, TargetBet);
 		}
 		return;
 	}
@@ -905,7 +905,7 @@ void AShowDownPlayerController::ServerSubmitSelectedCard_Implementation(ACard* S
 	{
 		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			GameMode->PlayerSelectedCard(SelectedCard);
+			GameMode->PlayerSelectedCardFromController(this, SelectedCard);
 		}
 	}
 }
@@ -940,4 +940,13 @@ void AShowDownPlayerController::ServerPlayerRaiseTo_Implementation(int32 BulletC
 void AShowDownPlayerController::ServerPlayerFold_Implementation()
 {
 	SubmitPlayerBetAction(EShowDownBetAction::Fold, 0);
+}
+
+void AShowDownPlayerController::ClientShowStatusMessage_Implementation(const FString& Message)
+{
+	UE_LOG(LogTemp, Log, TEXT("ShowDown status: %s"), *Message);
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Green, Message);
+	}
 }

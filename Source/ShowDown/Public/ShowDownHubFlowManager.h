@@ -158,7 +158,11 @@ private:
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Developer")
 	bool bDeveloperSkipOnlineReward = true;
 
-	// Multiplayer stays in a separate level while the rest of the hub stays together.
+	// Multiplayer lobby stays in a separate level so L_Hub can evolve independently.
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Level")
+	FName MultiplayerLobbyLevelName = TEXT("L_MultiplayerLobby");
+
+	// Actual gameplay map reached after the lobby host starts the match.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Level")
 	FName MultiplayerLevelName = TEXT("ShowDownRoom");
 

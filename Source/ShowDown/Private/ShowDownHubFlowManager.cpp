@@ -594,7 +594,7 @@ void AShowDownHubFlowManager::HandleHostMultiplayerRequested()
 		{
 			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
 			EosSubsystem->OnSessionResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
-			EosSubsystem->HostLobby(TEXT("L_Hub"), MultiplayerLevelName);
+			EosSubsystem->HostLobby(MultiplayerLobbyLevelName, MultiplayerLevelName);
 			return;
 		}
 	}

@@ -160,8 +160,10 @@ void UCardSystem::BuildDeck()
 {
 	for (int32 Rank = 1; Rank <= 7; ++Rank)
 	{
-		Deck.Add(Rank);
-		Deck.Add(Rank);
+		for (int32 CopyIndex = 0; CopyIndex < 4; ++CopyIndex)
+		{
+			Deck.Add(Rank);
+		}
 	}
 }
 

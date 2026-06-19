@@ -200,7 +200,7 @@ void UShowDownEosSubsystem::HostLobby(FName LobbyMapName, FName GameMapName)
 		return;
 	}
 
-	PendingHostMapName = LobbyMapName.IsNone() ? FName(TEXT("L_Hub")) : LobbyMapName;
+	PendingHostMapName = LobbyMapName.IsNone() ? FName(TEXT("L_MultiplayerLobby")) : LobbyMapName;
 	PendingGameMapName = GameMapName.IsNone() ? FName(TEXT("ShowDownRoom")) : GameMapName;
 	LobbyCode = MakeRoomCode();
 	PendingJoinCode.Empty();
@@ -595,7 +595,8 @@ void UShowDownEosSubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 				StopLobbyStartPolling();
 				bInMultiplayerLobby = false;
 				PendingStartedGameSearchResult = SessionSearch->SearchResults[MatchIndex];
-				JoinStartedGameSession();
+				PendingSessionFlow = ESessionFlow::JoinStartedGame;
+				OnSessionResult.Broadcast(true, TEXT("Host started. Waiting for server travel..."));
 			}
 			return;
 		}
