@@ -4,6 +4,29 @@
 
 #include "Components/PostProcessComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/ConstructorHelpers.h"
+
+namespace
+{
+	const TCHAR* DefaultPixelateMaterialPath = TEXT("/Game/ArtTone/M_PP_Pixelate.M_PP_Pixelate");
+
+	bool IsPixelateBlendable(const UObject* BlendableObject, const UMaterialInterface* PixelateMaterial, const UMaterialInstanceDynamic* PixelateMID)
+	{
+		if (!BlendableObject)
+		{
+			return true;
+		}
+
+		if (BlendableObject == PixelateMID || BlendableObject == PixelateMaterial)
+		{
+			return true;
+		}
+
+		const UMaterialInterface* BlendableMaterial = Cast<UMaterialInterface>(BlendableObject);
+		return BlendableMaterial && PixelateMaterial && BlendableMaterial->GetMaterial() == PixelateMaterial->GetMaterial();
+	}
+}
 
 ASDArtToneController::ASDArtToneController()
 {
@@ -14,6 +37,12 @@ ASDArtToneController::ASDArtToneController()
 	PostProcessComponent->bUnbound = bUnbound;
 	PostProcessComponent->Priority = 50.0f;
 	PostProcessComponent->BlendWeight = 1.0f;
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> PixelateMaterialFinder(DefaultPixelateMaterialPath);
+	if (PixelateMaterialFinder.Succeeded())
+	{
+		PixelatePostProcessMaterial = PixelateMaterialFinder.Object;
+	}
 
 	CurrentSettings = InitialSettings;
 	BlendStartSettings = InitialSettings;
@@ -56,6 +85,22 @@ void ASDArtToneController::Tick(float DeltaSeconds)
 	}
 }
 
+#if WITH_EDITOR
+void ASDArtToneController::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	PostProcessComponent->bUnbound = bUnbound;
+
+	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(ASDArtToneController, PixelatePostProcessMaterial))
+	{
+		PixelateMID = nullptr;
+	}
+
+	ApplyArtTone(InitialSettings);
+}
+#endif
+
 void ASDArtToneController::ApplyArtTone(const FSDArtToneSettings& NewSettings)
 {
 	CurrentSettings = NewSettings;
@@ -84,6 +129,12 @@ void ASDArtToneController::SetPixelCount(float NewPixelCount)
 	ApplyPixelateParameters(CurrentSettings);
 }
 
+void ASDArtToneController::SetScanlineCount(float NewScanlineCount)
+{
+	CurrentSettings.ScanlineCount = FMath::Max(1.0f, NewScanlineCount);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
 void ASDArtToneController::SetScanlineStrength(float NewScanlineStrength)
 {
 	CurrentSettings.ScanlineStrength = FMath::Max(0.0f, NewScanlineStrength);
@@ -98,16 +149,37 @@ void ASDArtToneController::SetColorSteps(float NewColorSteps)
 
 void ASDArtToneController::EnsurePixelateMaterialInstance()
 {
-	if (PixelateMID || !PixelatePostProcessMaterial)
+	if (!PixelatePostProcessMaterial)
+	{
+		PixelatePostProcessMaterial = LoadObject<UMaterialInterface>(nullptr, DefaultPixelateMaterialPath);
+	}
+
+	if (!PixelatePostProcessMaterial)
 	{
 		return;
 	}
 
-	PixelateMID = UMaterialInstanceDynamic::Create(PixelatePostProcessMaterial, this);
-	if (PixelateMID)
+	if (!PixelateMID)
 	{
-		PostProcessComponent->Settings.WeightedBlendables.Array.Add(FWeightedBlendable(1.0f, PixelateMID));
+		PixelateMID = UMaterialInstanceDynamic::Create(PixelatePostProcessMaterial, this);
 	}
+
+	if (!PixelateMID)
+	{
+		return;
+	}
+
+	FWeightedBlendables& WeightedBlendables = PostProcessComponent->Settings.WeightedBlendables;
+	for (int32 BlendableIndex = WeightedBlendables.Array.Num() - 1; BlendableIndex >= 0; --BlendableIndex)
+	{
+		const UObject* BlendableObject = WeightedBlendables.Array[BlendableIndex].Object.Get();
+		if (IsPixelateBlendable(BlendableObject, PixelatePostProcessMaterial, PixelateMID))
+		{
+			WeightedBlendables.Array.RemoveAt(BlendableIndex);
+		}
+	}
+
+	WeightedBlendables.Array.Add(FWeightedBlendable(1.0f, PixelateMID));
 }
 
 void ASDArtToneController::ApplyPostProcessSettings(const FSDArtToneSettings& Settings)
@@ -149,6 +221,7 @@ void ASDArtToneController::ApplyPixelateParameters(const FSDArtToneSettings& Set
 	}
 
 	PixelateMID->SetScalarParameterValue(TEXT("PixelCount"), Settings.PixelCount);
+	PixelateMID->SetScalarParameterValue(TEXT("ScanlineCount"), Settings.ScanlineCount);
 	PixelateMID->SetScalarParameterValue(TEXT("ScanlineStrength"), Settings.ScanlineStrength);
 	PixelateMID->SetScalarParameterValue(TEXT("ColorSteps"), Settings.ColorSteps);
 }
@@ -157,6 +230,7 @@ FSDArtToneSettings ASDArtToneController::LerpSettings(const FSDArtToneSettings& 
 {
 	FSDArtToneSettings Result;
 	Result.PixelCount = FMath::Lerp(From.PixelCount, To.PixelCount, Alpha);
+	Result.ScanlineCount = FMath::Lerp(From.ScanlineCount, To.ScanlineCount, Alpha);
 	Result.ScanlineStrength = FMath::Lerp(From.ScanlineStrength, To.ScanlineStrength, Alpha);
 	Result.ColorSteps = FMath::Lerp(From.ColorSteps, To.ColorSteps, Alpha);
 	Result.ExposureCompensation = FMath::Lerp(From.ExposureCompensation, To.ExposureCompensation, Alpha);

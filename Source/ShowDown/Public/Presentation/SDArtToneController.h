@@ -18,6 +18,9 @@ struct FSDArtToneSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pixelate", meta = (ClampMin = "1.0"))
 	float PixelCount = 320.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pixelate", meta = (ClampMin = "1.0"))
+	float ScanlineCount = 180.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pixelate", meta = (ClampMin = "0.0"))
 	float ScanlineStrength = 0.02f;
 
@@ -69,6 +72,9 @@ public:
 	void SetPixelCount(float NewPixelCount);
 
 	UFUNCTION(BlueprintCallable, Category = "Art Tone")
+	void SetScanlineCount(float NewScanlineCount);
+
+	UFUNCTION(BlueprintCallable, Category = "Art Tone")
 	void SetScanlineStrength(float NewScanlineStrength);
 
 	UFUNCTION(BlueprintCallable, Category = "Art Tone")
@@ -79,6 +85,10 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UPostProcessComponent> PostProcessComponent;
