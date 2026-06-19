@@ -1,34 +1,41 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "Card.h"
 
+#include "Components/BoxComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
+#include "ShowDownPlayerController.h"
 
-// Sets default values
 ACard::ACard()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	bReplicates = true;
 	SetReplicateMovement(true);
 
-	//루트컴프
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(RootComp);
 
-	//메시 컴프
+	VisualRoot = CreateDefaultSubobject<USceneComponent>(TEXT("VisualRoot"));
+	VisualRoot->SetupAttachment(RootComp);
+
 	CardMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CardMesh"));
-	CardMesh->SetupAttachment(RootComp);
-	CardMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	CardMesh->SetupAttachment(VisualRoot);
+	CardMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	CardMesh->SetCollisionObjectType(ECC_WorldDynamic);
 	CardMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
-	CardMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 
-	//카드 숫자 텍스트
+	InteractionBounds = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBounds"));
+	InteractionBounds->SetupAttachment(RootComp);
+	InteractionBounds->SetBoxExtent(InteractionBoundsExtent);
+	InteractionBounds->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	InteractionBounds->SetCollisionObjectType(ECC_WorldDynamic);
+	InteractionBounds->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InteractionBounds->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
 	CardText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("CardText"));
-	CardText->SetupAttachment(RootComp);
+	CardText->SetupAttachment(VisualRoot);
 	CardText->SetHorizontalAlignment(EHTA_Center);
 	CardText->SetVerticalAlignment(EVRTA_TextCenter);
 	CardText->SetTextRenderColor(FColor::Black);
@@ -36,33 +43,80 @@ ACard::ACard()
 	CardText->SetRelativeLocation(FVector(0.0f, 0.0f, 3.0f));
 }
 
-// Called when the game starts or when spawned
+void ACard::ConfigureInteractionComponents()
+{
+	if (CardMesh)
+	{
+		CardMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		CardMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+		if (VisualRoot && CardMesh->GetAttachParent() != VisualRoot)
+		{
+			CardMesh->AttachToComponent(VisualRoot, FAttachmentTransformRules::KeepRelativeTransform);
+		}
+	}
+
+	if (CardText && VisualRoot && CardText->GetAttachParent() != VisualRoot)
+	{
+		CardText->AttachToComponent(VisualRoot, FAttachmentTransformRules::KeepRelativeTransform);
+	}
+
+	if (InteractionBounds)
+	{
+		InteractionBounds->SetBoxExtent(InteractionBoundsExtent);
+		InteractionBounds->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		InteractionBounds->SetCollisionResponseToAllChannels(ECR_Ignore);
+		InteractionBounds->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+		if (RootComp && InteractionBounds->GetAttachParent() != RootComp)
+		{
+			InteractionBounds->AttachToComponent(RootComp, FAttachmentTransformRules::KeepRelativeTransform);
+		}
+	}
+}
+
+void ACard::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	ConfigureInteractionComponents();
+}
+
 void ACard::BeginPlay()
 {
 	Super::BeginPlay();
 
+	ConfigureInteractionComponents();
 	DefaultLocation = GetActorLocation();
 	TargetLocation = DefaultLocation;
+	CurrentVisualWorldOffset = FVector::ZeroVector;
+	TargetVisualWorldOffset = FVector::ZeroVector;
+	DefaultRotation = GetActorRotation();
+	TargetRotation = DefaultRotation;
 	RefreshVisual();
-
 }
 
-// Called every frame
 void ACard::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	UpdateTargetTransform();
+
+	CurrentVisualWorldOffset = FMath::VInterpTo(CurrentVisualWorldOffset, TargetVisualWorldOffset, DeltaTime, MoveSpeed);
+	if (VisualRoot)
+	{
+		const FVector VisualRelativeOffset = GetActorTransform().InverseTransformVectorNoScale(CurrentVisualWorldOffset);
+		VisualRoot->SetRelativeLocation(VisualRelativeOffset);
+	}
 
 	if (!HasAuthority())
 	{
 		return;
 	}
 
-	const FVector CurrentLocation = GetActorLocation();
-	const FVector NewLocation = FMath::VInterpTo(CurrentLocation, TargetLocation, DeltaTime, MoveSpeed);
-	SetActorLocation(NewLocation);
+	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaTime, MoveSpeed);
+	const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime, MoveSpeed);
+	SetActorLocationAndRotation(NewLocation, NewRotation);
 }
 
-void ACard::SetCard( int32 NewRank)
+void ACard::SetCard(int32 NewRank)
 {
 	Rank = FMath::Clamp(NewRank, 1, 7);
 	RefreshVisual();
@@ -102,7 +156,7 @@ void ACard::RefreshVisual()
 void ACard::SelectCard(bool bNewSelected)
 {
 	bSelected = bNewSelected;
-	TargetLocation = bSelected ? DefaultLocation + SelectedOffset : DefaultLocation;
+	UpdateTargetTransform();
 }
 
 bool ACard::IsSelected() const
@@ -110,12 +164,25 @@ bool ACard::IsSelected() const
 	return bSelected;
 }
 
+void ACard::SetHovered(bool bNewHovered)
+{
+	bHovered = bNewHovered && bSelectable;
+	UpdateTargetTransform();
+}
+
+bool ACard::IsHovered() const
+{
+	return bHovered;
+}
+
 void ACard::SetSelectable(bool bNewSelectable)
 {
 	bSelectable = bNewSelectable;
 	if (!bSelectable)
 	{
-		SelectCard(false);
+		bSelected = false;
+		bHovered = false;
+		UpdateTargetTransform();
 	}
 }
 
@@ -132,10 +199,61 @@ void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
 	}
 
 	bSelected = false;
+	bHovered = false;
 	SetSelectable(false);
 	DefaultLocation = Slot->GetComponentLocation();
+	DefaultRotation = Slot->GetComponentRotation();
+	UpdateTargetTransform();
+	SetFaceUp(bNewFaceUp);
+}
+
+void ACard::MoveToHandTransform(const FTransform& NewTransform)
+{
+	DefaultLocation = NewTransform.GetLocation();
+	DefaultRotation = NewTransform.GetRotation().Rotator();
+	UpdateTargetTransform();
+}
+
+void ACard::UpdateTargetTransform()
+{
+	TargetRotation = DefaultRotation;
 	TargetLocation = DefaultLocation;
 
-	SetActorRotation(Slot->GetComponentRotation());
-	SetFaceUp(bNewFaceUp);
+	if (bSelected)
+	{
+		TargetVisualWorldOffset = SelectedOffset;
+		return;
+	}
+
+	if (bHovered)
+	{
+		TargetVisualWorldOffset = HoverOffset;
+		return;
+	}
+
+	TargetVisualWorldOffset = FVector::ZeroVector;
+}
+
+bool ACard::CanInteract_Implementation(AActor* Interactor) const
+{
+	return bSelectable;
+}
+
+void ACard::Interact_Implementation(AActor* Interactor)
+{
+	if (!bSelectable)
+	{
+		return;
+	}
+
+	AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(Interactor);
+	if (!ShowDownController)
+	{
+		ShowDownController = Cast<AShowDownPlayerController>(UGameplayStatics::GetPlayerController(this, 0));
+	}
+
+	if (ShowDownController)
+	{
+		ShowDownController->SubmitSelectedCard(this);
+	}
 }

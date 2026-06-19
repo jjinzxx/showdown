@@ -9,13 +9,17 @@
 #include "BettingSystem.h"
 #include "RoundResolver.h"
 #include "RouletteSystem.h"
+#include "SDCardPlacementAnchor.h"
 #include "SDLLMSubsystem.h"
 #include "ShowDownTypes.h"
+#include "Components/SceneComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
+#include "SDPlayerSeat.h"
 #include "SDPlayerState.h"
 #include "ShowDownGameStateBase.h"
 #include "ShowDownHubFlowManager.h"
+#include "ShowDownPlayerController.h"
 #include "Engine/Engine.h"
 #include "GameFramework/PlayerState.h"
 
@@ -26,6 +30,9 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 	// 항상 null이 되고, OnGameOver를 포함한 모든 GameState 이벤트가 broadcast되지 않습니다.
 	GameStateClass = AShowDownGameStateBase::StaticClass();
 	PlayerStateClass = ASDPlayerState::StaticClass();
+	PlayerControllerClass = AShowDownPlayerController::StaticClass();
+	DefaultPawnClass = nullptr;
+	CardClass = ACard::StaticClass();
 
 	CardSystem = CreateDefaultSubobject<UCardSystem>(TEXT("CardSystem"));
 	CollectorAISystem = CreateDefaultSubobject<UCollectorAISystem>(TEXT("CollectorAISystem"));
@@ -146,10 +153,14 @@ void AShowDownGameModeBase::Logout(AController* Exiting)
 void AShowDownGameModeBase::ResetForHubReturn()
 {
 	GetWorldTimerManager().ClearTimer(RevealDelayHandle);
+	GetWorldTimerManager().ClearTimer(CollectorActionPresentationTimerHandle);
 
 	bBettingPhase = false;
 	bHasPendingRoundReveal = false;
 	bHasPendingFoldReveal = false;
+	bCollectorActionPresentationInProgress = false;
+	CollectorActionPresentationContinuation = TFunction<void()>();
+	QueuedCollectorActionPresentationContinuations.Reset();
 
 	ClearForeheadCards();
 	ClearHandCards();
@@ -159,39 +170,73 @@ void AShowDownGameModeBase::ResetForHubReturn()
 
 void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 {
-	if (!SelectedCard){	return;}
+	if (bCollectorActionPresentationInProgress)
+	{
+		return;
+	}
 
-	if (!CardSystem){
+	if (!IsValid(SelectedCard))
+	{
+		return;
+	}
+
+	if (!CardSystem)
+	{
 		UE_LOG(LogTemp, Warning, TEXT("CardSystem is missing on %s."), *GetName());
 		return;
 	}
 
-	if (CollectorState.ForeheadCard){
+	if (!SelectedCard->IsCardSelectable() || !PlayerState.HandCards.Contains(SelectedCard))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Rejected selected card %s because it is not in the player's selectable hand."),
+			*SelectedCard->GetName());
+		return;
+	}
+
+	if (CollectorState.ForeheadCard)
+	{
 		UE_LOG(LogTemp, Warning, TEXT("Collector already has a forehead card."));
 		return;
 	}
 
-	ResetCurrentRoundMemory();
+	USceneComponent* CollectorHeadSlot = GetHeadSlotForSide(EShowDownSide::Collector);
+	if (!CollectorHeadSlot)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Opponent forehead slot is missing. Add an SDCardPlacementAnchor with PlacementRole=OpponentForehead, or keep an old fallback slot."));
+		return;
+	}
+
 	CurrentRoundPlayerGaveRank = SelectedCard->Rank;
 	RecordCurrentRoundAction(FString::Printf(TEXT("Player gave Collector forehead card rank %d."), CurrentRoundPlayerGaveRank));
 	UE_LOG(LogTemp, Log, TEXT("GameMode received selected card: %s"), *SelectedCard->GetName());
 
 	CardSystem->RemoveCardFromHand(PlayerState.HandCards, SelectedCard);
+	ReflowHandCards(EShowDownSide::Player);
 	//콜렉터의 이마로 카드 이동
 	CollectorState.ForeheadCard = SelectedCard;
 
-	if (!Collector || !Collector->c_HeadCard){
-		UE_LOG(LogTemp, Warning, TEXT("Collector or Collector head card slot is missing."));
-		return;
-	}
-
-	CardSystem->MoveCardToSlot(SelectedCard, Collector->c_HeadCard, true);
+	CardSystem->MoveCardToSlot(SelectedCard, CollectorHeadSlot, true);
 	
-	CollectorGiveCardToPlayer();
+	PlayCollectorActionPresentationThen([this]()
+	{
+		if (PlayerState.ForeheadCard)
+		{
+			StartBettingPhase();
+		}
+		else
+		{
+			CollectorGiveCardToPlayer();
+		}
+	});
 }
 
 void AShowDownGameModeBase::DealInitialHand()
 {
+	if (!CardClass)
+	{
+		CardClass = ACard::StaticClass();
+	}
+
 	if (!CardClass)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("CardClass is not assigned on %s."), *GetName());
@@ -204,19 +249,24 @@ void AShowDownGameModeBase::DealInitialHand()
 		return;
 	}
 
-	APlayerPawn* PlayerPawn = Cast<APlayerPawn>(UGameplayStatics::GetPlayerPawn(GetWorld(), 0));
-	if (!PlayerPawn || !PlayerPawn->PlayerHandCard)
+	USceneComponent* PlayerHandSlot = GetHandSlotForSide(EShowDownSide::Player);
+	if (!PlayerHandSlot)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("PlayerPawn or PlayerHandCard is missing."));
+		UE_LOG(LogTemp, Warning, TEXT("Player hand slot is missing. Add an SDCardPlacementAnchor with PlacementRole=PlayerHand, or keep an old fallback slot."));
 		return;
 	}
 
-	if (!Collector || !Collector->c_HandCard)
+	USceneComponent* CollectorHandSlot = GetHandSlotForSide(EShowDownSide::Collector);
+	if (!CollectorHandSlot)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Collector or Collector hand card slot is missing."));
+		UE_LOG(LogTemp, Warning, TEXT("Opponent hand slot is missing. Add an SDCardPlacementAnchor with PlacementRole=OpponentHand, or keep an old fallback slot."));
 		return;
 	}
 
+	const FSDCardHandLayoutSettings PlayerHandLayout = ResolveHandLayoutSettings(EShowDownSide::Player);
+	const FSDCardHandLayoutSettings CollectorHandLayout = ResolveHandLayoutSettings(EShowDownSide::Collector);
+
+	ClearHandCards();
 	CardSystem->ResetDeck();
 	CardSystem->ShuffleDeck();
 
@@ -237,29 +287,26 @@ void AShowDownGameModeBase::DealInitialHand()
 	CardSystem->SpawnHandCards(
 		this,
 		CardClass,
-		PlayerPawn->PlayerHandCard,
+		PlayerHandSlot,
 		PlayerRanks,
-		HandSpacing,
-		HandForwardOffset,
-		HandFanAngle,
-		HandFanDepth,
+		PlayerHandLayout,
 		true,
 		true,
 		PlayerState.HandCards);
+
+	ApplyCardMotionForSide(EShowDownSide::Player, PlayerState.HandCards);
 
 	// 확인용으로 true. 나중에는 false로 바꾸면 콜렉터 손패가 뒷면이 됩니다.
 	CardSystem->SpawnHandCards(
 		this,
 		CardClass,
-		Collector->c_HandCard,
+		CollectorHandSlot,
 		CollectorRanks,
-		HandSpacing,
-		HandForwardOffset,
-		HandFanAngle,
-		HandFanDepth,
+		CollectorHandLayout,
 		true,
 		false,
 		CollectorState.HandCards);
+	ApplyCardMotionForSide(EShowDownSide::Collector, CollectorState.HandCards);
 
 	UE_LOG(LogTemp, Log, TEXT("Player hand count: %d"), PlayerState.HandCards.Num());
 	UE_LOG(LogTemp, Log, TEXT("Collector hand count: %d"), CollectorState.HandCards.Num());
@@ -273,7 +320,80 @@ void AShowDownGameModeBase::FindCollector()
 
 	if (!Collector)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Collector is missing in the level."));
+		if (!GetHandAnchorForSide(EShowDownSide::Collector)
+			&& !GetForeheadAnchorForSide(EShowDownSide::Collector)
+			&& !GetSeatForSide(EShowDownSide::Collector))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("No opponent placement found. Add OpponentHand/OpponentForehead SDCardPlacementAnchor actors, or keep an old fallback slot."));
+		}
+	}
+}
+
+void AShowDownGameModeBase::PlayCollectorActionPresentation()
+{
+	PlayCollectorActionPresentationThen(TFunction<void()>());
+}
+
+void AShowDownGameModeBase::PlayCollectorActionPresentationThen(TFunction<void()>&& Continuation)
+{
+	if (bCollectorActionPresentationInProgress)
+	{
+		QueuedCollectorActionPresentationContinuations.Add(MoveTemp(Continuation));
+		return;
+	}
+
+	if (!Collector)
+	{
+		FindCollector();
+	}
+
+	if (!Collector || !Collector->bEnableActionSpin)
+	{
+		if (Continuation)
+		{
+			Continuation();
+		}
+		return;
+	}
+
+	bCollectorActionPresentationInProgress = true;
+	CollectorActionPresentationContinuation = MoveTemp(Continuation);
+
+	Collector->PlayActionSpin();
+
+	const float PresentationSeconds = Collector->GetActionSpinTotalSeconds();
+	if (PresentationSeconds <= KINDA_SMALL_NUMBER)
+	{
+		FinishCollectorActionPresentation();
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(
+		CollectorActionPresentationTimerHandle,
+		this,
+		&AShowDownGameModeBase::FinishCollectorActionPresentation,
+		PresentationSeconds,
+		false);
+}
+
+void AShowDownGameModeBase::FinishCollectorActionPresentation()
+{
+	GetWorldTimerManager().ClearTimer(CollectorActionPresentationTimerHandle);
+
+	bCollectorActionPresentationInProgress = false;
+
+	TFunction<void()> Continuation = MoveTemp(CollectorActionPresentationContinuation);
+	CollectorActionPresentationContinuation = TFunction<void()>();
+	if (Continuation)
+	{
+		Continuation();
+	}
+
+	if (!bCollectorActionPresentationInProgress && QueuedCollectorActionPresentationContinuations.Num() > 0)
+	{
+		TFunction<void()> NextContinuation = MoveTemp(QueuedCollectorActionPresentationContinuations[0]);
+		QueuedCollectorActionPresentationContinuations.RemoveAt(0);
+		PlayCollectorActionPresentationThen(MoveTemp(NextContinuation));
 	}
 }
 
@@ -294,9 +414,9 @@ void AShowDownGameModeBase::CollectorGiveCardToPlayer()
 		return;
 	}
 
-	APlayerPawn* PlayerPawn = Cast<APlayerPawn>(UGameplayStatics::GetPlayerPawn(GetWorld(), 0));
-	if (!PlayerPawn || !PlayerPawn->PlayerHeadCard){
-		UE_LOG(LogTemp, Warning, TEXT("PlayerPawn or PlayerHeadCard is missing."));
+	USceneComponent* PlayerHeadSlot = GetPlayerHeadSlot();
+	if (!PlayerHeadSlot){
+		UE_LOG(LogTemp, Warning, TEXT("Player forehead slot is missing. Add an SDCardPlacementAnchor with PlacementRole=PlayerForehead, or keep an old fallback slot."));
 		return;
 	}
 
@@ -313,17 +433,32 @@ void AShowDownGameModeBase::CollectorGiveCardToPlayer()
 	}
 
 	CardSystem->RemoveCardFromHand(CollectorState.HandCards, ChosenCard);
+	ReflowHandCards(EShowDownSide::Collector);
 
 	PlayerState.ForeheadCard = ChosenCard;
 	CurrentRoundCollectorGaveRank = ChosenCard->Rank;
 	RecordCurrentRoundAction(FString::Printf(TEXT("Collector gave Player forehead card rank %d."), CurrentRoundCollectorGaveRank));
 
 	// 플레이어는 자기 이마 카드를 보면 안 되므로 false
-	CardSystem->MoveCardToSlot(ChosenCard, PlayerPawn->PlayerHeadCard, false);
+	CardSystem->MoveCardToSlot(ChosenCard, PlayerHeadSlot, false);
 
 	UE_LOG(LogTemp, Log, TEXT("Collector gave card to player: %s, Rank: %d"), *ChosenCard->GetName(), ChosenCard->Rank);
 
-	StartBettingPhase();
+	PlayCollectorActionPresentationThen([this]()
+	{
+		if (CollectorState.ForeheadCard)
+		{
+			StartBettingPhase();
+		}
+		else
+		{
+			SetPlayerHandSelectable(true);
+			if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+			{
+				ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
+			}
+		}
+	});
 }
 
 void AShowDownGameModeBase::StartBettingPhase()
@@ -349,9 +484,7 @@ void AShowDownGameModeBase::StartBettingPhase()
 		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
 		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
 	}
-	ShowEventDebugMessage(FString::Printf(TEXT("베팅 시작 - 플레이어 %d발 / 콜렉터 %d발"),
-		PlayerState.CurrentBet,
-		CollectorState.CurrentBet));
+	ShowEventDebugMessage(FString::Printf(TEXT("베팅 시작: 기본 %d발"), StageRule->MinimumBet));
 
 	UE_LOG(LogTemp, Log, TEXT("Betting phase started. Stage %d, MinimumBet %d. Q=Check/Call, 1~5=Raise extra bullets, R=Fold"),
 		CurrentStageIndex + 1,
@@ -360,6 +493,11 @@ void AShowDownGameModeBase::StartBettingPhase()
 
 void AShowDownGameModeBase::PlayerCheck()
 {
+	if (bCollectorActionPresentationInProgress)
+	{
+		return;
+	}
+
 	if (!bBettingPhase || !BettingSystem || !CollectorAISystem)
 	{
 		return;
@@ -376,10 +514,12 @@ void AShowDownGameModeBase::PlayerCheck()
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
 		}
 		RecordCurrentRoundAction(FString::Printf(TEXT("Player called to %d."), PlayerState.CurrentBet));
-		ShowEventDebugMessage(FString::Printf(TEXT("플레이어 콜 - %d발"), PlayerState.CurrentBet));
-
+		ShowEventDebugMessage(FString::Printf(TEXT("플레이어 콜: %d발"), PlayerState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Player Call %d"), CurrentBet);
-		FinishBettingAndResolveRound();
+		PlayCollectorActionPresentationThen([this]()
+		{
+			FinishBettingAndResolveRound();
+		});
 		return;
 	}
 
@@ -390,11 +530,13 @@ void AShowDownGameModeBase::PlayerCheck()
 		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
 	}
 	RecordCurrentRoundAction(FString::Printf(TEXT("Player checked at %d."), PlayerState.CurrentBet));
-	ShowEventDebugMessage(FString::Printf(TEXT("플레이어 체크 - %d발"), PlayerState.CurrentBet));
-
+	ShowEventDebugMessage(FString::Printf(TEXT("플레이어 체크: %d발"), PlayerState.CurrentBet));
 	UE_LOG(LogTemp, Log, TEXT("Player Check"));
 
-	ResolveCollectorBetResponse();
+	PlayCollectorActionPresentationThen([this]()
+	{
+		ResolveCollectorBetResponse();
+	});
 }
 
 void AShowDownGameModeBase::PlayerRaise()
@@ -410,6 +552,11 @@ void AShowDownGameModeBase::PlayerRaise()
 
 void AShowDownGameModeBase::PlayerRaiseTo(int32 BulletCount)
 {
+	if (bCollectorActionPresentationInProgress)
+	{
+		return;
+	}
+
 	if (!bBettingPhase || !BettingSystem || !CollectorAISystem)
 	{
 		return;
@@ -428,9 +575,12 @@ void AShowDownGameModeBase::PlayerRaiseTo(int32 BulletCount)
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
 		}
 		RecordCurrentRoundAction(FString::Printf(TEXT("Player raised to %d."), PlayerState.CurrentBet));
-		ShowEventDebugMessage(FString::Printf(TEXT("플레이어 레이즈 - %d발"), PlayerState.CurrentBet));
+		ShowEventDebugMessage(FString::Printf(TEXT("플레이어 레이즈: %d발"), PlayerState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Player Raise to %d"), NewBet);
-		ResolveCollectorBetResponse();
+		PlayCollectorActionPresentationThen([this]()
+		{
+			ResolveCollectorBetResponse();
+		});
 	}
 	else
 	{
@@ -442,6 +592,11 @@ void AShowDownGameModeBase::PlayerRaiseTo(int32 BulletCount)
 
 void AShowDownGameModeBase::PlayerFold()
 {
+	if (bCollectorActionPresentationInProgress)
+	{
+		return;
+	}
+
 	if (!bBettingPhase || !BettingSystem)
 	{
 		return;
@@ -455,10 +610,41 @@ void AShowDownGameModeBase::PlayerFold()
 		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
 	}
 	RecordCurrentRoundAction(FString::Printf(TEXT("Player folded at %d."), PlayerState.CurrentBet));
-	ShowEventDebugMessage(FString::Printf(TEXT("플레이어 폴드 - %d발"), PlayerState.CurrentBet));
-
+	ShowEventDebugMessage(FString::Printf(TEXT("플레이어 폴드: %d발"), PlayerState.CurrentBet));
 	UE_LOG(LogTemp, Log, TEXT("Player Fold"));
-	ResolveFold(EShowDownSide::Player);
+	PlayCollectorActionPresentationThen([this]()
+	{
+		ResolveFold(EShowDownSide::Player);
+	});
+}
+
+void AShowDownGameModeBase::RequestPlayerBetAction(EShowDownBetAction Action, int32 TargetBet)
+{
+	switch (Action)
+	{
+	case EShowDownBetAction::Check:
+	case EShowDownBetAction::Call:
+		PlayerCheck();
+		break;
+
+	case EShowDownBetAction::Raise:
+		if (TargetBet > 0)
+		{
+			PlayerRaiseTo(TargetBet);
+		}
+		else
+		{
+			PlayerRaise();
+		}
+		break;
+
+	case EShowDownBetAction::Fold:
+		PlayerFold();
+		break;
+
+	default:
+		break;
+	}
 }
 
 void AShowDownGameModeBase::SubmitPlayerDialogueInput(const FString& PlayerDialogue)
@@ -548,8 +734,6 @@ void AShowDownGameModeBase::EventEnd(EShowDownPhase FinishedPhase)
 	{
 		ShowDownGameState->EventEnd(FinishedPhase);
 	}
-
-	ShowEventDebugMessage(FString::Printf(TEXT("연출 종료 알림 - Phase %d"), static_cast<int32>(FinishedPhase)));
 
 	if (FinishedPhase != EShowDownPhase::Reveal)
 	{
@@ -649,7 +833,6 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 										CollectorDecision.TargetBet);
 								}
 								AppendRecentDialogueLine(TEXT("Collector"), LLMResponse.Dialogue);
-								ShowEventDebugMessage(FString::Printf(TEXT("Collector: %s"), *LLMResponse.Dialogue));
 							}
 							else
 							{
@@ -748,9 +931,12 @@ void AShowDownGameModeBase::ExecuteCollectorBetDecision(const FCollectorBetDecis
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
 		}
 		RecordCurrentRoundAction(FString::Printf(TEXT("Collector checked at %d."), CollectorState.CurrentBet));
-		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 체크 - %d발"), CollectorState.CurrentBet));
+		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 체크: %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Check"));
-		FinishBettingAndResolveRound();
+		PlayCollectorActionPresentationThen([this]()
+		{
+			FinishBettingAndResolveRound();
+		});
 		break;
 
 	case EShowDownBetAction::Call:
@@ -762,9 +948,12 @@ void AShowDownGameModeBase::ExecuteCollectorBetDecision(const FCollectorBetDecis
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
 		}
 		RecordCurrentRoundAction(FString::Printf(TEXT("Collector called to %d."), CollectorState.CurrentBet));
-		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 콜 - %d발"), CollectorState.CurrentBet));
+		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 콜: %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Call %d"), CurrentBet);
-		FinishBettingAndResolveRound();
+		PlayCollectorActionPresentationThen([this]()
+		{
+			FinishBettingAndResolveRound();
+		});
 		break;
 
 	case EShowDownBetAction::Raise:
@@ -781,9 +970,10 @@ void AShowDownGameModeBase::ExecuteCollectorBetDecision(const FCollectorBetDecis
 					ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
 				}
 				RecordCurrentRoundAction(FString::Printf(TEXT("Collector raised to %d."), CollectorState.CurrentBet));
-				ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 레이즈 - %d발"), CollectorState.CurrentBet));
+				ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 레이즈: %d발"), CollectorState.CurrentBet));
 				UE_LOG(LogTemp, Log, TEXT("Collector Raise to %d"), NewBet);
 				UE_LOG(LogTemp, Log, TEXT("Player needs to respond."));
+				PlayCollectorActionPresentation();
 			}
 			break;
 		}
@@ -796,9 +986,12 @@ void AShowDownGameModeBase::ExecuteCollectorBetDecision(const FCollectorBetDecis
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
 		}
 		RecordCurrentRoundAction(FString::Printf(TEXT("Collector folded at %d."), CollectorState.CurrentBet));
-		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 폴드 - %d발"), CollectorState.CurrentBet));
+		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 폴드: %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Fold"));
-		ResolveFold(EShowDownSide::Collector);
+		PlayCollectorActionPresentationThen([this]()
+		{
+			ResolveFold(EShowDownSide::Collector);
+		});
 		break;
 
 	default:
@@ -940,6 +1133,11 @@ FString AShowDownGameModeBase::GetSideText(EShowDownSide Side) const
 	return Side == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector");
 }
 
+FString AShowDownGameModeBase::GetSideDisplayText(EShowDownSide Side) const
+{
+	return Side == EShowDownSide::Player ? TEXT("플레이어") : TEXT("콜렉터");
+}
+
 FString AShowDownGameModeBase::GetRoundResultText(EShowDownRoundResult Result) const
 {
 	switch (Result)
@@ -955,6 +1153,45 @@ FString AShowDownGameModeBase::GetRoundResultText(EShowDownRoundResult Result) c
 
 	default:
 		return TEXT("Unknown");
+	}
+}
+
+void AShowDownGameModeBase::BeginCardSelectionRound()
+{
+	ResetCurrentRoundMemory();
+	CurrentRoundFirstSide = NextRoundFirstSide;
+
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
+	}
+
+	if (CurrentRoundFirstSide == EShowDownSide::Collector)
+	{
+		SetPlayerHandSelectable(false);
+		CollectorGiveCardToPlayer();
+		return;
+	}
+
+	SetPlayerHandSelectable(true);
+}
+
+void AShowDownGameModeBase::SetNextRoundFirstSideFromResult(EShowDownRoundResult Result)
+{
+	switch (Result)
+	{
+	case EShowDownRoundResult::PlayerWin:
+		NextRoundFirstSide = EShowDownSide::Collector;
+		break;
+
+	case EShowDownRoundResult::CollectorWin:
+		NextRoundFirstSide = EShowDownSide::Player;
+		break;
+
+	case EShowDownRoundResult::Draw:
+	default:
+		NextRoundFirstSide = CurrentRoundFirstSide;
+		break;
 	}
 }
 
@@ -980,23 +1217,20 @@ void AShowDownGameModeBase::FinishBettingAndResolveRound()
 		ShowDownGameState->OnCardsRevealed.Broadcast(PlayerCardRank, CollectorCardRank);
 		ShowDownGameState->OnRoundResolved.Broadcast(Result);
 	}
-	ShowEventDebugMessage(FString::Printf(TEXT("카드 공개 - 플레이어 %d / 콜렉터 %d / 결과 %d"),
+	ShowEventDebugMessage(FString::Printf(TEXT("승부 공개: 플레이어 %d / 콜렉터 %d"),
 		PlayerCardRank,
-		CollectorCardRank,
-		static_cast<int32>(Result)));
-
+		CollectorCardRank));
 	UE_LOG(LogTemp, Log, TEXT("Reveal cards. Player: %d, Collector: %d"), PlayerCardRank, CollectorCardRank);
-	UE_LOG(LogTemp, Log, TEXT("Roulette will start in 5 seconds."));
+	UE_LOG(LogTemp, Log, TEXT("Reveal resolved. Waiting for presentation or auto-advance fallback."));
 
 	bHasPendingRoundReveal = true;
 	bHasPendingFoldReveal = false;
 	PendingRoundResult = Result;
 
-	GetWorldTimerManager().SetTimer(
-		RevealDelayHandle,
-		FTimerDelegate::CreateUObject(this, &AShowDownGameModeBase::ContinueRoundAfterReveal, Result),
-		5.0f,
-		false);
+	PlayCollectorActionPresentationThen([this]()
+	{
+		ScheduleRevealAutoAdvanceIfNeeded();
+	});
 }
 
 void AShowDownGameModeBase::ContinueRoundAfterReveal(EShowDownRoundResult Result)
@@ -1010,28 +1244,47 @@ void AShowDownGameModeBase::ContinueRoundAfterReveal(EShowDownRoundResult Result
 	// 결과 공개 직후 보스가 승/패/무에 대한 반응 채팅을 남긴다.
 	BroadcastBossResultReaction(Result);
 
+	SetNextRoundFirstSideFromResult(Result);
+
+	const FString ResultDisplayText = Result == EShowDownRoundResult::PlayerWin
+		? TEXT("플레이어 승리")
+		: Result == EShowDownRoundResult::CollectorWin
+			? TEXT("콜렉터 승리")
+			: TEXT("무승부");
+	ShowEventDebugMessage(FString::Printf(TEXT("결과: %s / 다음 선공: %s"),
+		*ResultDisplayText,
+		*GetSideDisplayText(NextRoundFirstSide)));
+
 	switch (Result)
 	{
 	case EShowDownRoundResult::PlayerWin:
 		UE_LOG(LogTemp, Log, TEXT("Round result: Player wins. Collector roulette with %d bullet(s)."), CollectorState.CurrentBet);
-		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet);
-		AppendRecentRoundSummary(Result, TEXT("card reveal"));
-		EndRound();
+		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet, [this, Result]()
+		{
+			AppendRecentRoundSummary(Result, TEXT("card reveal"));
+			EndRound();
+		});
 		break;
 
 	case EShowDownRoundResult::CollectorWin:
 		UE_LOG(LogTemp, Log, TEXT("Round result: Collector wins. Player roulette with %d bullet(s)."), PlayerState.CurrentBet);
-		ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet);
-		AppendRecentRoundSummary(Result, TEXT("card reveal"));
-		EndRound();
+		ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet, [this, Result]()
+		{
+			AppendRecentRoundSummary(Result, TEXT("card reveal"));
+			EndRound();
+		});
 		break;
 
 	case EShowDownRoundResult::Draw:
 		UE_LOG(LogTemp, Log, TEXT("Round result: Draw. Both sides roulette."));
-		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet);
-		ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet);
-		AppendRecentRoundSummary(Result, TEXT("card reveal"));
-		EndRound();
+		ApplyRouletteResult(EShowDownSide::Collector, CollectorState.CurrentBet, [this, Result]()
+		{
+			ApplyRouletteResult(EShowDownSide::Player, PlayerState.CurrentBet, [this, Result]()
+			{
+				AppendRecentRoundSummary(Result, TEXT("card reveal"));
+				EndRound();
+			});
+		});
 		break;
 
 	default:
@@ -1131,36 +1384,37 @@ void AShowDownGameModeBase::ResolveFold(EShowDownSide FoldedSide)
 	LastRoundPlayerCardRank = PlayerCardRank;
 	LastRoundCollectorCardRank = CollectorCardRank;
 
+	const EShowDownRoundResult FoldResult = FoldedSide == EShowDownSide::Player
+		? EShowDownRoundResult::CollectorWin
+		: EShowDownRoundResult::PlayerWin;
+	SetNextRoundFirstSideFromResult(FoldResult);
+
 	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 	{
-		const EShowDownRoundResult FoldResult = FoldedSide == EShowDownSide::Player
-			? EShowDownRoundResult::CollectorWin
-			: EShowDownRoundResult::PlayerWin;
 		ShowDownGameState->SetPhase(EShowDownPhase::Reveal);
 		ShowDownGameState->OnCardsRevealed.Broadcast(PlayerCardRank, CollectorCardRank);
 		ShowDownGameState->OnRoundResolved.Broadcast(FoldResult);
 	}
-	ShowEventDebugMessage(FString::Printf(TEXT("폴드 후 카드 공개 - 결과 %d"),
-		static_cast<int32>(FoldedSide == EShowDownSide::Player
-			? EShowDownRoundResult::CollectorWin
-			: EShowDownRoundResult::PlayerWin)));
-
+	ShowEventDebugMessage(FString::Printf(TEXT("%s 폴드: 플레이어 %d / 콜렉터 %d / 다음 선공: %s"),
+		*GetSideDisplayText(FoldedSide),
+		PlayerCardRank,
+		CollectorCardRank,
+		*GetSideDisplayText(NextRoundFirstSide)));
 	UE_LOG(LogTemp, Log, TEXT("%s folded. Forehead card: %d, roulette load: %d"),
 		FoldedSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
 		FoldedCardRank,
 		LoadCount);
-	UE_LOG(LogTemp, Log, TEXT("Roulette will start in 5 seconds."));
+	UE_LOG(LogTemp, Log, TEXT("Fold reveal resolved. Waiting for presentation or auto-advance fallback."));
 
 	bHasPendingRoundReveal = false;
 	bHasPendingFoldReveal = true;
 	PendingFoldedSide = FoldedSide;
 	PendingFoldLoadCount = LoadCount;
 
-	GetWorldTimerManager().SetTimer(
-		RevealDelayHandle,
-		FTimerDelegate::CreateUObject(this, &AShowDownGameModeBase::ContinueFoldAfterReveal, FoldedSide, LoadCount),
-		5.0f,
-		false);
+	PlayCollectorActionPresentationThen([this]()
+	{
+		ScheduleRevealAutoAdvanceIfNeeded();
+	});
 }
 
 void AShowDownGameModeBase::ContinueFoldAfterReveal(EShowDownSide FoldedSide, int32 LoadCount)
@@ -1175,18 +1429,24 @@ void AShowDownGameModeBase::ContinueFoldAfterReveal(EShowDownSide FoldedSide, in
 	BroadcastBossResultReaction(
 		FoldedSide == EShowDownSide::Player ? EShowDownRoundResult::CollectorWin : EShowDownRoundResult::PlayerWin);
 
-	ApplyRouletteResult(FoldedSide, LoadCount);
-	AppendRecentRoundSummary(
-		FoldedSide == EShowDownSide::Player ? EShowDownRoundResult::CollectorWin : EShowDownRoundResult::PlayerWin,
-		FString::Printf(TEXT("%s folded"), *GetSideText(FoldedSide)));
-	EndRound();
+	ApplyRouletteResult(FoldedSide, LoadCount, [this, FoldedSide]()
+	{
+		AppendRecentRoundSummary(
+			FoldedSide == EShowDownSide::Player ? EShowDownRoundResult::CollectorWin : EShowDownRoundResult::PlayerWin,
+			FString::Printf(TEXT("%s folded"), *GetSideText(FoldedSide)));
+		EndRound();
+	});
 }
 
-void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount)
+void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount, TFunction<void()>&& Continuation)
 {
 	if (!RouletteSystem)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Cannot roll roulette. RouletteSystem is missing."));
+		if (Continuation)
+		{
+			Continuation();
+		}
 		return;
 	}
 
@@ -1197,17 +1457,11 @@ void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 
 		ShowDownGameState->SetPhase(EShowDownPhase::Roulette);
 		ShowDownGameState->OnRouletteStarted.Broadcast(TargetSide, ClampedBulletCount);
 	}
-	ShowEventDebugMessage(FString::Printf(TEXT("룰렛 시작 - 대상 %s / %d발"),
-		TargetSide == EShowDownSide::Player ? TEXT("플레이어") : TEXT("콜렉터"),
-		ClampedBulletCount));
 	const bool bHit = RouletteSystem->RollRoulette(ClampedBulletCount);
 	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 	{
 		ShowDownGameState->OnRouletteResult.Broadcast(TargetSide, bHit);
 	}
-	ShowEventDebugMessage(FString::Printf(TEXT("룰렛 결과 - %s %s"),
-		TargetSide == EShowDownSide::Player ? TEXT("플레이어") : TEXT("콜렉터"),
-		bHit ? TEXT("명중") : TEXT("불발")));
 
 	UE_LOG(LogTemp, Log, TEXT("%s roulette: %d/6, %.0f%% chance, result: %s"),
 		TargetSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
@@ -1217,6 +1471,10 @@ void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 
 
 	if (!bHit)
 	{
+		ShowEventDebugMessage(FString::Printf(TEXT("룰렛: %s %d발 / 안 맞음"),
+			*GetSideDisplayText(TargetSide),
+			ClampedBulletCount));
+		PlayCollectorActionPresentationThen(MoveTemp(Continuation));
 		return;
 	}
 
@@ -1226,9 +1484,11 @@ void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 
 	{
 		ShowDownGameState->OnLifeChanged.Broadcast(TargetSide, TargetState.Lives);
 	}
-	ShowEventDebugMessage(FString::Printf(TEXT("목숨 변경 - %s 남은 목숨 %d"),
-		TargetSide == EShowDownSide::Player ? TEXT("플레이어") : TEXT("콜렉터"),
+	ShowEventDebugMessage(FString::Printf(TEXT("룰렛: %s %d발 / 총 맞음 / 목숨 %d"),
+		*GetSideDisplayText(TargetSide),
+		ClampedBulletCount,
 		TargetState.Lives));
+	PlayCollectorActionPresentationThen(MoveTemp(Continuation));
 
 	UE_LOG(LogTemp, Log, TEXT("%s lives: %d"),
 		TargetSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
@@ -1242,7 +1502,6 @@ void AShowDownGameModeBase::EndRound()
 	{
 		ShowDownGameState->SetPhase(EShowDownPhase::RoundEnd);
 	}
-	ShowEventDebugMessage(TEXT("라운드 종료"));
 
 	ClearForeheadCards();
 
@@ -1275,19 +1534,11 @@ void AShowDownGameModeBase::EndRound()
 	{
 		UE_LOG(LogTemp, Log, TEXT("Hands are empty. Shuffling and dealing new 5-card hands."));
 		DealInitialHand();
-		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
-		{
-			ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
-		}
+		BeginCardSelectionRound();
 		return;
 	}
 
-	SetPlayerHandSelectable(true);
-	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
-	{
-		ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
-	}
-	ShowEventDebugMessage(TEXT("다음 라운드 준비 - 카드 선택"));
+	BeginCardSelectionRound();
 	UE_LOG(LogTemp, Log, TEXT("Next round ready. Player hand: %d, Collector hand: %d"),
 		PlayerState.HandCards.Num(),
 		CollectorState.HandCards.Num());
@@ -1356,6 +1607,88 @@ void AShowDownGameModeBase::SetPlayerHandSelectable(bool bSelectable)
 			Card->SetSelectable(bSelectable);
 		}
 	}
+}
+
+FSDCardHandLayoutSettings AShowDownGameModeBase::GetDefaultHandLayoutSettings() const
+{
+	FSDCardHandLayoutSettings Settings;
+	Settings.CardSpacing = CardSpacing;
+	Settings.ForwardOffset = ForwardOffset;
+	Settings.HeightOffset = HeightOffset;
+	Settings.LeanAngle = LeanAngle;
+	Settings.LayerStep = LayerStep;
+	return Settings;
+}
+
+FSDCardHandLayoutSettings AShowDownGameModeBase::ResolveHandLayoutSettings(EShowDownSide Side) const
+{
+	FSDCardHandLayoutSettings Settings = GetDefaultHandLayoutSettings();
+
+	if (const ASDCardPlacementAnchor* HandAnchor = GetHandAnchorForSide(Side))
+	{
+		Settings.CardSpacing = HandAnchor->CardSpacing;
+		Settings.ForwardOffset = HandAnchor->ForwardOffset;
+		Settings.HeightOffset = HandAnchor->HeightOffset;
+		Settings.LeanAngle = HandAnchor->LeanAngle;
+		Settings.LayerStep = HandAnchor->LayerStep;
+		return Settings;
+	}
+
+	if (const ASDPlayerSeat* Seat = GetSeatForSide(Side))
+	{
+		if (Seat->bOverrideGameModeHandLayout)
+		{
+			Settings.CardSpacing = Seat->HandSpacing;
+			Settings.ForwardOffset = Seat->HandForwardOffset;
+			Settings.HeightOffset = Seat->HandHeightOffset;
+			Settings.LeanAngle = Seat->HandLeanAngle;
+		}
+	}
+
+	return Settings;
+}
+
+void AShowDownGameModeBase::ApplyCardMotionForSide(EShowDownSide Side, const TArray<ACard*>& Cards) const
+{
+	const ASDCardPlacementAnchor* HandAnchor = GetHandAnchorForSide(Side);
+	const ASDPlayerSeat* Seat = GetSeatForSide(Side);
+	if (!HandAnchor && (!Seat || !Seat->bOverrideCardMotion))
+	{
+		return;
+	}
+
+	for (ACard* Card : Cards)
+	{
+		if (!Card)
+		{
+			continue;
+		}
+
+		Card->SelectedOffset = HandAnchor ? HandAnchor->SelectedOffset : Seat->SelectedOffset;
+		Card->HoverOffset = HandAnchor ? HandAnchor->HoverOffset : Seat->HoverOffset;
+		Card->MoveSpeed = HandAnchor ? HandAnchor->MoveSpeed : Seat->MoveSpeed;
+	}
+}
+
+void AShowDownGameModeBase::ReflowHandCards(EShowDownSide Side)
+{
+	if (!CardSystem)
+	{
+		return;
+	}
+
+	USceneComponent* HandSlot = GetHandSlotForSide(Side);
+	if (!HandSlot)
+	{
+		return;
+	}
+
+	const TArray<ACard*>& Cards = Side == EShowDownSide::Collector
+		? CollectorState.HandCards
+		: PlayerState.HandCards;
+
+	CardSystem->LayoutHandCards(this, HandSlot, ResolveHandLayoutSettings(Side), Cards);
+	ApplyCardMotionForSide(Side, Cards);
 }
 
 void AShowDownGameModeBase::RefreshNetworkPlayerSlots()
@@ -1475,6 +1808,8 @@ void AShowDownGameModeBase::StartStage(int32 StageIndex)
 	CollectorState.CurrentBet = StageRule.MinimumBet;
 	BettingRaisesLeft = 6;
 	bHasLastRaiser = false;
+	CurrentRoundFirstSide = EShowDownSide::Player;
+	NextRoundFirstSide = EShowDownSide::Player;
 	RecentRoundHistory.Reset();
 	CurrentRoundActionHistory.Reset();
 	DiscardedCardsSummary.Reset();
@@ -1491,9 +1826,11 @@ void AShowDownGameModeBase::StartStage(int32 StageIndex)
 		ShowDownGameState->CurrentStage = CurrentStageIndex + 1;
 		ShowDownGameState->CurrentRound = 1;
 		ShowDownGameState->OnStageChanged.Broadcast(CurrentStageIndex + 1);
-		ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
 	}
-	ShowEventDebugMessage(FString::Printf(TEXT("스테이지 %d 시작 - 카드 선택"), CurrentStageIndex + 1));
+
+	DealInitialHand();
+	ShowEventDebugMessage(FString::Printf(TEXT("스테이지 %d 시작"), CurrentStageIndex + 1));
+	BeginCardSelectionRound();
 
 	UE_LOG(LogTemp, Log, TEXT("Stage %d started. Lives: %d, MinBet: %d, Collector Bluff: %.2f, Aggression: %.2f"),
 		CurrentStageIndex + 1,
@@ -1501,8 +1838,6 @@ void AShowDownGameModeBase::StartStage(int32 StageIndex)
 		StageRule.MinimumBet,
 		StageRule.CollectorBluffRate,
 		StageRule.CollectorAggression);
-
-	DealInitialHand();
 }
 
 void AShowDownGameModeBase::AdvanceStage()
@@ -1520,20 +1855,188 @@ AShowDownGameStateBase* AShowDownGameModeBase::GetShowDownGameState() const
 	return GetGameState<AShowDownGameStateBase>();
 }
 
-void AShowDownGameModeBase::ShowEventDebugMessage(const FString& Message) const
+APlayerPawn* AShowDownGameModeBase::GetPrimaryPlayerPawn() const
 {
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Cyan, FString::Printf(TEXT("[상황] %s"), *Message));
-		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Orange, FString::Printf(TEXT("[호출] %s"), *Message));
+	return Cast<APlayerPawn>(UGameplayStatics::GetPlayerPawn(GetWorld(), 0));
+}
 
-		const AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState();
-		const bool bHasPresentationEvent = ShowDownGameState && ShowDownGameState->OnPresentationStarted.IsBound();
-		if (!bHasPresentationEvent)
+ASDCardPlacementAnchor* AShowDownGameModeBase::GetCardPlacementAnchor(EShowDownSide Side, bool bForeheadSlot) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	const ESDCardPlacementRole TargetRole = Side == EShowDownSide::Collector
+		? (bForeheadSlot ? ESDCardPlacementRole::OpponentForehead : ESDCardPlacementRole::OpponentHand)
+		: (bForeheadSlot ? ESDCardPlacementRole::PlayerForehead : ESDCardPlacementRole::PlayerHand);
+
+	TArray<AActor*> AnchorActors;
+	UGameplayStatics::GetAllActorsOfClass(World, ASDCardPlacementAnchor::StaticClass(), AnchorActors);
+
+	for (AActor* AnchorActor : AnchorActors)
+	{
+		ASDCardPlacementAnchor* Anchor = Cast<ASDCardPlacementAnchor>(AnchorActor);
+		if (Anchor && Anchor->PlacementRole == TargetRole)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::White, TEXT("*"));
+			return Anchor;
+		}
+	}
+
+	return nullptr;
+}
+
+ASDCardPlacementAnchor* AShowDownGameModeBase::GetHandAnchorForSide(EShowDownSide Side) const
+{
+	return GetCardPlacementAnchor(Side, false);
+}
+
+ASDCardPlacementAnchor* AShowDownGameModeBase::GetForeheadAnchorForSide(EShowDownSide Side) const
+{
+	return GetCardPlacementAnchor(Side, true);
+}
+
+ASDPlayerSeat* AShowDownGameModeBase::GetSeatForSide(EShowDownSide Side) const
+{
+	TArray<AActor*> SeatActors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASDPlayerSeat::StaticClass(), SeatActors);
+
+	ASDPlayerSeat* FirstSeat = nullptr;
+	for (AActor* SeatActor : SeatActors)
+	{
+		ASDPlayerSeat* Seat = Cast<ASDPlayerSeat>(SeatActor);
+		if (!Seat)
+		{
+			continue;
 		}
 
-		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Green, FString::Printf(TEXT("[호출종료] %s"), *Message));
+		if (!FirstSeat)
+		{
+			FirstSeat = Seat;
+		}
+
+		if (Seat->SeatSide == Side)
+		{
+			return Seat;
+		}
+	}
+
+	// Old maps may have a single SDPlayerSeat without an explicit side set yet.
+	return Side == EShowDownSide::Player ? FirstSeat : nullptr;
+}
+
+ASDPlayerSeat* AShowDownGameModeBase::GetPrimaryPlayerSeat() const
+{
+	return GetSeatForSide(EShowDownSide::Player);
+}
+
+USceneComponent* AShowDownGameModeBase::GetHandSlotForSide(EShowDownSide Side) const
+{
+	if (const ASDCardPlacementAnchor* Anchor = GetHandAnchorForSide(Side))
+	{
+		if (USceneComponent* HandSlot = Anchor->GetSlotComponent())
+		{
+			return HandSlot;
+		}
+	}
+
+	if (const ASDPlayerSeat* Seat = GetSeatForSide(Side))
+	{
+		if (USceneComponent* HandSlot = Seat->GetHandSlot())
+		{
+			return HandSlot;
+		}
+	}
+
+	if (Side == EShowDownSide::Player)
+	{
+		if (const APlayerPawn* PlayerPawn = GetPrimaryPlayerPawn())
+		{
+			return PlayerPawn->PlayerHandCard;
+		}
+	}
+
+	if (Side == EShowDownSide::Collector && Collector)
+	{
+		return Collector->c_HandCard;
+	}
+
+	return nullptr;
+}
+
+USceneComponent* AShowDownGameModeBase::GetHeadSlotForSide(EShowDownSide Side) const
+{
+	if (const ASDCardPlacementAnchor* Anchor = GetForeheadAnchorForSide(Side))
+	{
+		if (USceneComponent* HeadSlot = Anchor->GetSlotComponent())
+		{
+			return HeadSlot;
+		}
+	}
+
+	if (const ASDPlayerSeat* Seat = GetSeatForSide(Side))
+	{
+		if (USceneComponent* HeadSlot = Seat->GetHeadSlot())
+		{
+			return HeadSlot;
+		}
+	}
+
+	if (Side == EShowDownSide::Player)
+	{
+		if (const APlayerPawn* PlayerPawn = GetPrimaryPlayerPawn())
+		{
+			return PlayerPawn->PlayerHeadCard;
+		}
+	}
+
+	if (Side == EShowDownSide::Collector && Collector)
+	{
+		return Collector->c_HeadCard;
+	}
+
+	return nullptr;
+}
+
+USceneComponent* AShowDownGameModeBase::GetPlayerHandSlot() const
+{
+	return GetHandSlotForSide(EShowDownSide::Player);
+}
+
+USceneComponent* AShowDownGameModeBase::GetPlayerHeadSlot() const
+{
+	return GetHeadSlotForSide(EShowDownSide::Player);
+}
+
+void AShowDownGameModeBase::ScheduleRevealAutoAdvanceIfNeeded()
+{
+	GetWorldTimerManager().ClearTimer(RevealDelayHandle);
+
+	const AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState();
+	const bool bPresentationIsHandled = ShowDownGameState && ShowDownGameState->OnPresentationStarted.IsBound();
+	if (bPresentationIsHandled || !bAutoAdvanceRevealWithoutPresentation)
+	{
+		return;
+	}
+
+	if (RevealAutoAdvanceSeconds <= 0.0f)
+	{
+		EventEnd(EShowDownPhase::Reveal);
+		return;
+	}
+
+	GetWorldTimerManager().SetTimer(
+		RevealDelayHandle,
+		FTimerDelegate::CreateUObject(this, &AShowDownGameModeBase::EventEnd, EShowDownPhase::Reveal),
+		RevealAutoAdvanceSeconds,
+		false);
+}
+
+void AShowDownGameModeBase::ShowEventDebugMessage(const FString& Message) const
+{
+	if (bShowGameFlowDebugMessages && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.8f, FColor::Cyan, FString::Printf(TEXT("[게임] %s"), *Message));
 	}
 }

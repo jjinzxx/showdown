@@ -6,6 +6,7 @@
 #include "ShowDownChatWidget.generated.h"
 
 class APlayerPawn;
+class AShowDownPlayerController;
 class UBorder;
 class UButton;
 class UEditableTextBox;
@@ -19,6 +20,7 @@ class SHOWDOWN_API UShowDownChatWidget : public UUserWidget
 
 public:
 	void SetOwningShowDownPawn(APlayerPawn* InOwningPawn);
+	void SetOwningShowDownController(AShowDownPlayerController* InOwningController);
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
 	void FocusChatInput();
@@ -33,6 +35,9 @@ protected:
 private:
 	UPROPERTY()
 	APlayerPawn* OwningShowDownPawn = nullptr;
+
+	UPROPERTY()
+	AShowDownPlayerController* OwningShowDownController = nullptr;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	UEditableTextBox* EditableTextBox_ChatInput = nullptr;

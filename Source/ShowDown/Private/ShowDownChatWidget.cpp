@@ -7,11 +7,17 @@
 #include "Components/TextBlock.h"
 #include "GameFramework/PlayerController.h"
 #include "PlayerPawn.h"
+#include "ShowDownPlayerController.h"
 #include "ShowDownGameStateBase.h"
 
 void UShowDownChatWidget::SetOwningShowDownPawn(APlayerPawn* InOwningPawn)
 {
 	OwningShowDownPawn = InOwningPawn;
+}
+
+void UShowDownChatWidget::SetOwningShowDownController(AShowDownPlayerController* InOwningController)
+{
+	OwningShowDownController = InOwningController;
 }
 
 void UShowDownChatWidget::FocusChatInput()
@@ -140,7 +146,7 @@ void UShowDownChatWidget::SetStatusMessage(const FString& Message, const FLinear
 
 void UShowDownChatWidget::SubmitCurrentText()
 {
-	if (!EditableTextBox_ChatInput || !OwningShowDownPawn)
+	if (!EditableTextBox_ChatInput || (!OwningShowDownController && !OwningShowDownPawn))
 	{
 		return;
 	}
@@ -152,7 +158,14 @@ void UShowDownChatWidget::SubmitCurrentText()
 		return;
 	}
 
-	OwningShowDownPawn->SubmitDialogueInput(Message);
+	if (OwningShowDownController)
+	{
+		OwningShowDownController->SubmitDialogueInput(Message);
+	}
+	else if (OwningShowDownPawn)
+	{
+		OwningShowDownPawn->SubmitDialogueInput(Message);
+	}
 	SetStatusMessage(TEXT("Sent. Check/Raise to make the boss decide."), FLinearColor::Yellow);
 	EditableTextBox_ChatInput->SetText(FText::GetEmpty());
 	FocusChatInput();

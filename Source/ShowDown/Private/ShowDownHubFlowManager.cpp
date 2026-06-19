@@ -7,6 +7,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Misc/Guid.h"
+#include "TimerManager.h"
 #include "ShowDownGameModeBase.h"
 #include "ShowDownGameStateBase.h"
 #include "ShowDownEosSubsystem.h"
@@ -14,6 +15,7 @@
 #include "ShowDownLoginWidget.h"
 #include "ShowDownMainMenuWidget.h"
 #include "ShowDownMultiplayerWidget.h"
+#include "ShowDownPlayerController.h"
 #include "ShowDownRankWidget.h"
 #include "ShowDownShopWidget.h"
 #include "SupabaseSubsystem.h"
@@ -48,13 +50,16 @@ void AShowDownHubFlowManager::BeginPlay()
 
 	// 시작 순간엔 폰 스폰 카메라에서 패닝되지 않도록 시작 화면 카메라로 즉시 컷합니다.
 	// 이후 ShowLogin/ShowMainMenu의 블렌드는 같은 카메라로의 블렌드라 화면 이동이 보이지 않습니다.
-	if (APlayerController* PlayerController = GetPrimaryPlayerController())
-	{
-		if (ACameraActor* StartCamera = bHasSession ? MainMenuCamera : LoginCamera)
-		{
-			PlayerController->SetViewTarget(StartCamera);
-		}
-	}
+#if UE_BUILD_SHIPPING
+	const bool bShouldDeveloperAutoStart = false;
+#else
+	const bool bShouldDeveloperAutoStart =
+		bDeveloperAutoStartSinglePlayer
+		&& !bInMultiplayerLobby
+		&& GetNetMode() == NM_Standalone;
+#endif
+
+	PlayCamera(bShouldDeveloperAutoStart ? GameCamera : (bHasSession ? MainMenuCamera : LoginCamera), true);
 
 	// 게임 종료(승/패)를 받아 허브로 복귀하기 위해 GameState 이벤트를 구독합니다.
 	if (UWorld* World = GetWorld())
@@ -63,6 +68,13 @@ void AShowDownHubFlowManager::BeginPlay()
 		{
 			ShowDownGameState->OnGameOver.AddDynamic(this, &AShowDownHubFlowManager::HandleGameOver);
 		}
+	}
+
+	if (bShouldDeveloperAutoStart)
+	{
+		GetWorldTimerManager().SetTimerForNextTick(
+			FTimerDelegate::CreateUObject(this, &AShowDownHubFlowManager::StartDeveloperSinglePlayPreview));
+		return;
 	}
 
 	if (bInMultiplayerLobby)
@@ -81,7 +93,7 @@ void AShowDownHubFlowManager::BeginPlay()
 
 void AShowDownHubFlowManager::ShowLogin()
 {
-	BlendToCamera(LoginCamera);
+	PlayCamera(LoginCamera);
 
 	if (!LoginWidgetClass)
 	{
@@ -110,7 +122,7 @@ void AShowDownHubFlowManager::ShowLogin()
 
 void AShowDownHubFlowManager::ShowMainMenu()
 {
-	BlendToCamera(MainMenuCamera);
+	PlayCamera(MainMenuCamera);
 
 	if (!MainMenuWidgetClass)
 	{
@@ -143,7 +155,7 @@ void AShowDownHubFlowManager::ShowMainMenu()
 
 void AShowDownHubFlowManager::ShowShop()
 {
-	BlendToCamera(ShopCamera);
+	PlayCamera(ShopCamera);
 
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
@@ -189,7 +201,10 @@ void AShowDownHubFlowManager::ShowRanking()
 	}
 
 	// 랭킹 전용 카메라가 지정돼 있으면 그쪽으로, 없으면 메뉴 카메라 시점으로 블렌드합니다.
-	BlendToCamera(RankingCamera ? RankingCamera : MainMenuCamera);
+	if (!PlayCamera(RankingCamera))
+	{
+		PlayCamera(MainMenuCamera);
+	}
 
 	RankWidget = CreateWidget<UShowDownRankWidget>(
 		GetPrimaryPlayerController(),
@@ -213,7 +228,7 @@ void AShowDownHubFlowManager::ShowRanking()
 void AShowDownHubFlowManager::ShowMultiplayerMenu()
 {
 	UE_LOG(LogTemp, Log, TEXT("Showing multiplayer menu."));
-	BlendToCamera(MainMenuCamera);
+	PlayCamera(MainMenuCamera);
 
 	TSubclassOf<UShowDownMultiplayerWidget> WidgetClass = MultiplayerWidgetClass;
 	if (!WidgetClass)
@@ -245,7 +260,7 @@ void AShowDownHubFlowManager::ShowMultiplayerMenu()
 void AShowDownHubFlowManager::ShowLobby()
 {
 	UE_LOG(LogTemp, Log, TEXT("Showing multiplayer lobby."));
-	BlendToCamera(MainMenuCamera);
+	PlayCamera(MainMenuCamera);
 
 	TSubclassOf<UShowDownLobbyWidget> WidgetClass = LobbyWidgetClass;
 	if (!WidgetClass)
@@ -292,21 +307,37 @@ void AShowDownHubFlowManager::ShowLobby()
 
 void AShowDownHubFlowManager::ShowSinglePlayPreview()
 {
+	ShowSinglePlayPreviewInternal(true);
+}
+
+void AShowDownHubFlowManager::StartDeveloperSinglePlayPreview()
+{
+	ShowSinglePlayPreviewInternal(!bDeveloperSkipOnlineReward);
+}
+
+void AShowDownHubFlowManager::ShowSinglePlayPreviewInternal(bool bAllowOnlineReward)
+{
 	CurrentRewardMatchId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
 	UE_LOG(LogTemp, Log, TEXT("Single play reward match id: %s"), *CurrentRewardMatchId);
+	bCurrentMatchAllowsOnlineReward = false;
+	if (bAllowOnlineReward)
+	{
+		if (UGameInstance* GameInstance = GetGameInstance())
+		{
+			if (const USupabaseSubsystem* SupabaseSubsystem = GameInstance->GetSubsystem<USupabaseSubsystem>())
+			{
+				bCurrentMatchAllowsOnlineReward = !SupabaseSubsystem->GetAccessToken().IsEmpty();
+			}
+		}
+	}
 
 	// 메뉴 UI를 걷어내 카드 클릭/베팅 입력이 폰으로 가도록 합니다.
 	SetActiveWidget(nullptr);
 
 	APlayerController* PlayerController = GetPrimaryPlayerController();
 
-	// GameCamera가 지정돼 있으면 고정 시네마틱 프레이밍으로 블렌드하고,
-	// 비어 있으면 플레이어 폰 카메라로 돌아가 폰의 시점 조작(Turn/LookUp)이 살아납니다.
-	if (GameCamera)
-	{
-		BlendToCamera(GameCamera);
-	}
-	else if (PlayerController && PlayerController->GetPawn())
+	const bool bPlayedGameCamera = PlayCamera(GameCamera);
+	if (!bPlayedGameCamera && PlayerController && PlayerController->GetPawn())
 	{
 		PlayerController->SetViewTargetWithBlend(PlayerController->GetPawn(), CameraBlendTime);
 	}
@@ -314,10 +345,35 @@ void AShowDownHubFlowManager::ShowSinglePlayPreview()
 	// 카드 커서 트레이스·카메라 조작·베팅 핫키가 모두 폰에 전달되도록 게임 입력 모드로 전환합니다.
 	if (PlayerController)
 	{
-		FInputModeGameAndUI InputMode;
-		InputMode.SetHideCursorDuringCapture(false);
+		const bool bUseGameCameraLook = bEnableGameCameraMouseLook && bPlayedGameCamera && GameCamera;
+		if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+		{
+			ShowDownController->bHandleShowDownGameplayInput = true;
+		}
+
+		if (bUseGameCameraLook)
+		{
+			if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+			{
+				ShowDownController->SetFixedCameraMouseLook(
+					GameCamera,
+					GameCameraLookSensitivity,
+					GameCameraMinPitch,
+					GameCameraMaxPitch,
+					GameCameraMinYawOffset,
+					GameCameraMaxYawOffset,
+					bInvertGameCameraMouseY);
+			}
+
+		}
+		else
+		{
+			ClearGameplayCameraLook();
+		}
+
+		FInputModeGameOnly InputMode;
 		PlayerController->SetInputMode(InputMode);
-		PlayerController->bShowMouseCursor = true;
+		PlayerController->bShowMouseCursor = false;
 	}
 
 	// 실제 게임 한 판을 시작합니다.
@@ -378,8 +434,15 @@ void AShowDownHubFlowManager::SetActiveWidget(UUserWidget* NextWidget)
 
 void AShowDownHubFlowManager::SetUiOnlyInput(UUserWidget* FocusWidget)
 {
+	ClearGameplayCameraLook();
+
 	if (APlayerController* PlayerController = GetPrimaryPlayerController())
 	{
+		if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+		{
+			ShowDownController->bHandleShowDownGameplayInput = false;
+		}
+
 		PlayerController->bShowMouseCursor = true;
 
 		FInputModeUIOnly InputMode;
@@ -393,16 +456,39 @@ void AShowDownHubFlowManager::SetUiOnlyInput(UUserWidget* FocusWidget)
 	}
 }
 
-void AShowDownHubFlowManager::BlendToCamera(ACameraActor* Camera)
+bool AShowDownHubFlowManager::PlayCamera(ACameraActor* Camera, bool bCut)
 {
-	if (!Camera)
+	return PlayViewTarget(Camera, bCut);
+}
+
+bool AShowDownHubFlowManager::PlayViewTarget(AActor* ViewTarget, bool bCut)
+{
+	if (!ViewTarget)
 	{
-		return;
+		return false;
 	}
 
 	if (APlayerController* PlayerController = GetPrimaryPlayerController())
 	{
-		PlayerController->SetViewTargetWithBlend(Camera, CameraBlendTime);
+		if (bCut || CameraBlendTime <= 0.0f)
+		{
+			PlayerController->SetViewTarget(ViewTarget);
+		}
+		else
+		{
+			PlayerController->SetViewTargetWithBlend(ViewTarget, CameraBlendTime);
+		}
+		return true;
+	}
+
+	return false;
+}
+
+void AShowDownHubFlowManager::ClearGameplayCameraLook()
+{
+	if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(GetPrimaryPlayerController()))
+	{
+		ShowDownController->ClearFixedCameraMouseLook();
 	}
 }
 
@@ -623,7 +709,7 @@ void AShowDownHubFlowManager::HandleGameOver(EShowDownSide Winner)
 
 	// 플레이어가 모든 스테이지를 클리어해 승리하면 랭크 점수 보상을 지급합니다.
 	// 보상 금액(10~50)은 서버의 award_win_reward RPC가 결정하므로 여기서는 호출만 합니다.
-	if (Winner == EShowDownSide::Player)
+	if (Winner == EShowDownSide::Player && bCurrentMatchAllowsOnlineReward)
 	{
 		if (UGameInstance* GameInstance = GetGameInstance())
 		{
@@ -694,5 +780,6 @@ void AShowDownHubFlowManager::ReturnToHub()
 
 	// 카메라/입력/위젯을 메인메뉴 상태로 되돌립니다.
 	CurrentRewardMatchId.Empty();
+	bCurrentMatchAllowsOnlineReward = false;
 	ShowMainMenu();
 }

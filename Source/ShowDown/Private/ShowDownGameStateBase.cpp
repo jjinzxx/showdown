@@ -125,14 +125,20 @@ void AShowDownGameStateBase::EventStart(EShowDownPhase Phase)
 
 	CurrentPresentationPhase = Phase;
 	bPresentationPlaying = true;
-	ShowPresentationDebugMessage(TEXT("호출"), Phase, FColor::Orange);
+	if (bShowPresentationDebugMessages)
+	{
+		ShowPresentationDebugMessage(TEXT("호출"), Phase, FColor::Orange);
+	}
 
 	const bool bHasPresentationEvent = OnPresentationStarted.IsBound();
 	OnPresentationStarted.Broadcast(Phase);
 
 	if (!bHasPresentationEvent)
 	{
-		ShowRawDebugMessage(TEXT("*"), FColor::White);
+		if (bShowPresentationDebugMessages)
+		{
+			ShowRawDebugMessage(TEXT("*"), FColor::White);
+		}
 		EventEnd(Phase);
 	}
 }
@@ -150,7 +156,10 @@ void AShowDownGameStateBase::EventEnd(EShowDownPhase Phase)
 
 	bPresentationPlaying = false;
 	OnPresentationFinished.Broadcast(FinishedPhase);
-	ShowPresentationDebugMessage(TEXT("호출종료"), FinishedPhase, FColor::Green);
+	if (bShowPresentationDebugMessages)
+	{
+		ShowPresentationDebugMessage(TEXT("호출종료"), FinishedPhase, FColor::Green);
+	}
 	CurrentPresentationPhase = EShowDownPhase::None;
 }
 

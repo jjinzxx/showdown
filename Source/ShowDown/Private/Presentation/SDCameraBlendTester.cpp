@@ -93,7 +93,6 @@ private:
 ASDCameraBlendTester::ASDCameraBlendTester()
 {
 	PrimaryActorTick.bCanEverTick = true;
-	AutoReceiveInput = EAutoReceiveInput::Player0;
 }
 
 void ASDCameraBlendTester::BeginPlay()
@@ -103,7 +102,7 @@ void ASDCameraBlendTester::BeginPlay()
 	if (APlayerController* PlayerController = GetLocalPlayerController())
 	{
 		EnableInput(PlayerController);
-		BindCameraInput();
+		BindPrimaryInteractInput();
 		CreateCrosshairWidget();
 
 		if (bSetDefaultCameraOnBeginPlay && DefaultCamera)
@@ -119,7 +118,7 @@ void ASDCameraBlendTester::BeginPlay()
 	}
 }
 
-void ASDCameraBlendTester::BindCameraInput()
+void ASDCameraBlendTester::BindPrimaryInteractInput()
 {
 	if (!InputComponent)
 	{
@@ -127,12 +126,6 @@ void ASDCameraBlendTester::BindCameraInput()
 		return;
 	}
 
-	InputComponent->BindKey(EKeys::One, IE_Pressed, this, &ASDCameraBlendTester::BlendToDefaultCamera);
-	InputComponent->BindKey(EKeys::NumPadOne, IE_Pressed, this, &ASDCameraBlendTester::BlendToDefaultCamera);
-	InputComponent->BindKey(EKeys::Two, IE_Pressed, this, &ASDCameraBlendTester::BlendToCloseCamera);
-	InputComponent->BindKey(EKeys::NumPadTwo, IE_Pressed, this, &ASDCameraBlendTester::BlendToCloseCamera);
-	InputComponent->BindKey(EKeys::Three, IE_Pressed, this, &ASDCameraBlendTester::BlendToFreeView);
-	InputComponent->BindKey(EKeys::NumPadThree, IE_Pressed, this, &ASDCameraBlendTester::BlendToFreeView);
 	InputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &ASDCameraBlendTester::HandlePrimaryInteract);
 }
 

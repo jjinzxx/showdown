@@ -4,9 +4,11 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "SDCardLayoutTypes.h"
 #include "CardSystem.generated.h"
 
 class ACard;
+class USceneComponent;
 
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
@@ -52,13 +54,17 @@ public:
 		TSubclassOf<ACard> CardClass,
 		USceneComponent* HandRoot,
 		const TArray<int32>& Ranks,
-		float HandSpacing,
-		float HandForwardOffset,
-		float HandFanAngle,
-		float HandFanDepth,
+		const FSDCardHandLayoutSettings& HandLayoutSettings,
 		bool bFaceUp,
 		bool bSelectable,
 		TArray<ACard*>& OutCards);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Card")
+	bool LayoutHandCards(
+		UObject* WorldContextObject,
+		USceneComponent* HandRoot,
+		const FSDCardHandLayoutSettings& HandLayoutSettings,
+		const TArray<ACard*>& Cards);
 
 	//손패 배열에서 특정 카드 액터 제거
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Card")
@@ -69,4 +75,9 @@ public:
 
 private:
 	void BuildDeck();
+	FTransform BuildHandCardTransform(
+		USceneComponent* HandRoot,
+		const FSDCardHandLayoutSettings& HandLayoutSettings,
+		int32 CardIndex,
+		int32 CardCount) const;
 };

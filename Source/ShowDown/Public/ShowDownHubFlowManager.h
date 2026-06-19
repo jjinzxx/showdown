@@ -112,7 +112,6 @@ private:
 	UPROPERTY(EditAnywhere, Category = "ShowDown|UI")
 	TSubclassOf<UShowDownLobbyWidget> LobbyWidgetClass;
 
-	// Optional cameras for each hub state. Empty values keep the current view.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera")
 	ACameraActor* LoginCamera;
 
@@ -129,8 +128,35 @@ private:
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera")
 	ACameraActor* GameCamera;
 
-	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera")
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera", meta = (ClampMin = "0.0"))
 	float CameraBlendTime = 0.75f;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera")
+	bool bEnableGameCameraMouseLook = true;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera", meta = (ClampMin = "0.0"))
+	float GameCameraLookSensitivity = 0.2f;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera")
+	float GameCameraMinPitch = -35.0f;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera")
+	float GameCameraMaxPitch = 35.0f;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera")
+	float GameCameraMinYawOffset = -45.0f;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera")
+	float GameCameraMaxYawOffset = 45.0f;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera")
+	bool bInvertGameCameraMouseY = true;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Developer")
+	bool bDeveloperAutoStartSinglePlayer = true;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Developer")
+	bool bDeveloperSkipOnlineReward = true;
 
 	// Multiplayer stays in a separate level while the rest of the hub stays together.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Level")
@@ -143,6 +169,7 @@ private:
 	FTimerHandle ReturnToHubTimerHandle;
 	FString CurrentRewardMatchId;
 	bool bPendingMultiplayerOpenAfterEosLogin = false;
+	bool bCurrentMatchAllowsOnlineReward = false;
 
 	UPROPERTY()
 	UShowDownLoginWidget* LoginWidget;
@@ -167,7 +194,11 @@ private:
 
 	void SetActiveWidget(UUserWidget* NextWidget);
 	void SetUiOnlyInput(UUserWidget* FocusWidget);
-	void BlendToCamera(ACameraActor* Camera);
+	void StartDeveloperSinglePlayPreview();
+	void ShowSinglePlayPreviewInternal(bool bAllowOnlineReward);
+	bool PlayCamera(ACameraActor* Camera, bool bCut = false);
+	bool PlayViewTarget(AActor* ViewTarget, bool bCut = false);
+	void ClearGameplayCameraLook();
 	APlayerController* GetPrimaryPlayerController() const;
 
 	UFUNCTION()

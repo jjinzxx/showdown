@@ -11,7 +11,6 @@
 ASDPressableButtonActor::ASDPressableButtonActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
-	AutoReceiveInput = EAutoReceiveInput::Player0;
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
@@ -40,12 +39,6 @@ void ASDPressableButtonActor::BeginPlay()
 		if (bEnablePlayerClickEventsOnBeginPlay)
 		{
 			PlayerController->bEnableClickEvents = true;
-		}
-
-		if (bEnableKeyboardTestInput)
-		{
-			EnableInput(PlayerController);
-			BindKeyboardTestInput();
 		}
 	}
 }
@@ -131,17 +124,6 @@ void ASDPressableButtonActor::Interact_Implementation(AActor* Interactor)
 void ASDPressableButtonActor::HandleButtonClicked(UPrimitiveComponent* TouchedComponent, FKey ButtonPressed)
 {
 	Press();
-}
-
-void ASDPressableButtonActor::BindKeyboardTestInput()
-{
-	if (!InputComponent)
-	{
-		return;
-	}
-
-	InputComponent->BindKey(EKeys::E, IE_Pressed, this, &ASDPressableButtonActor::Press);
-	InputComponent->BindKey(EKeys::SpaceBar, IE_Pressed, this, &ASDPressableButtonActor::Press);
 }
 
 void ASDPressableButtonActor::FinishPressAnimation()

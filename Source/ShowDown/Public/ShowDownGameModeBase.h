@@ -4,12 +4,16 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "SDCardLayoutTypes.h"
 #include "ShowDownTypes.h"
 #include "TimerManager.h"
+#include "Templates/Function.h"
 #include "ShowDownGameModeBase.generated.h"
 
 class ACard;
 class APlayerPawn;
+class ASDCardPlacementAnchor;
+class ASDPlayerSeat;
 class UCardSystem;
 class ACollector;
 class UCollectorAISystem;
@@ -21,6 +25,7 @@ struct FSDLLMBossContext;
 class AShowDownGameStateBase;
 class AController;
 class APlayerController;
+class USceneComponent;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
 USTRUCT(BlueprintType)
@@ -94,19 +99,22 @@ public:
 
 	// 카드 사이 간격
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float HandSpacing = 55.0f;
+	float CardSpacing = 70.0f;
 
 	// 카드 위치
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float HandForwardOffset = 180.0f;
+	float ForwardOffset = 180.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
+	float HeightOffset = 65.0f;
 
 	// 카드 각도
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float HandFanAngle = 40.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "-45.0", ClampMax = "45.0"))
+	float LeanAngle = 0.0f;
 
-	// 카드가 양끝으로 빠지는 정도
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card")
-	float HandFanDepth = 25.0f;
+	// 같은 줄에서 살짝 앞뒤로 겹치는 정도
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Card", meta = (ClampMin = "0.0"))
+	float LayerStep = 0.5f;
 	
 	
 	
@@ -186,6 +194,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Flow")
 	bool bAutoStartOnBeginPlay = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Presentation")
+	bool bAutoAdvanceRevealWithoutPresentation = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Presentation", meta = (ClampMin = "0.0"))
+	float RevealAutoAdvanceSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Debug")
+	bool bShowGameFlowDebugMessages = true;
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
+	void RequestPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
+
 
 protected:
 	virtual void BeginPlay() override;
@@ -206,11 +226,17 @@ private:
 	int32 BettingRaisesLeft = 6;
 	bool bHasLastRaiser = false;
 	EShowDownSide LastRaiser = EShowDownSide::Player;
+	EShowDownSide CurrentRoundFirstSide = EShowDownSide::Player;
+	EShowDownSide NextRoundFirstSide = EShowDownSide::Player;
 	bool bHasPendingRoundReveal = false;
 	bool bHasPendingFoldReveal = false;
+	bool bCollectorActionPresentationInProgress = false;
 	EShowDownRoundResult PendingRoundResult = EShowDownRoundResult::Draw;
 	EShowDownSide PendingFoldedSide = EShowDownSide::Player;
 	int32 PendingFoldLoadCount = 1;
+	FTimerHandle CollectorActionPresentationTimerHandle;
+	TFunction<void()> CollectorActionPresentationContinuation;
+	TArray<TFunction<void()>> QueuedCollectorActionPresentationContinuations;
 	FString LatestPlayerDialogueInput;
 	FString RecentDialogueHistory;
 	FString RecentRoundHistory;
@@ -243,23 +269,44 @@ private:
 	void RecordCurrentRoundAction(const FString& ActionText);
 	void AppendRecentRoundSummary(EShowDownRoundResult Result, const FString& Reason);
 	FString GetSideText(EShowDownSide Side) const;
+	FString GetSideDisplayText(EShowDownSide Side) const;
 	FString GetRoundResultText(EShowDownRoundResult Result) const;
+	void BeginCardSelectionRound();
+	void SetNextRoundFirstSideFromResult(EShowDownRoundResult Result);
 	void FinishBettingAndResolveRound();
 	void BroadcastBossResultReaction(EShowDownRoundResult Result);
 	void ResolveFold(EShowDownSide FoldedSide);
 	void ContinueRoundAfterReveal(EShowDownRoundResult Result);
 	void ContinueFoldAfterReveal(EShowDownSide FoldedSide, int32 LoadCount);
-	void ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount);
+	void ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount, TFunction<void()>&& Continuation);
 	void EndRound();
 	void ClearForeheadCards();
 	void ClearHandCards();
 	void SetPlayerHandSelectable(bool bSelectable);
+	void PlayCollectorActionPresentation();
+	void PlayCollectorActionPresentationThen(TFunction<void()>&& Continuation);
+	void FinishCollectorActionPresentation();
+	FSDCardHandLayoutSettings GetDefaultHandLayoutSettings() const;
+	FSDCardHandLayoutSettings ResolveHandLayoutSettings(EShowDownSide Side) const;
+	void ApplyCardMotionForSide(EShowDownSide Side, const TArray<ACard*>& Cards) const;
+	void ReflowHandCards(EShowDownSide Side);
 	void RefreshNetworkPlayerSlots();
 	EShowDownPlayerSlot FindNextOpenPlayerSlot() const;
 	void StartStage(int32 StageIndex);
 	void AdvanceStage();
 	const FShowDownStageRule* GetCurrentStageRule() const;
 	AShowDownGameStateBase* GetShowDownGameState() const;
+	APlayerPawn* GetPrimaryPlayerPawn() const;
+	ASDCardPlacementAnchor* GetCardPlacementAnchor(EShowDownSide Side, bool bForeheadSlot) const;
+	ASDCardPlacementAnchor* GetHandAnchorForSide(EShowDownSide Side) const;
+	ASDCardPlacementAnchor* GetForeheadAnchorForSide(EShowDownSide Side) const;
+	ASDPlayerSeat* GetSeatForSide(EShowDownSide Side) const;
+	ASDPlayerSeat* GetPrimaryPlayerSeat() const;
+	USceneComponent* GetHandSlotForSide(EShowDownSide Side) const;
+	USceneComponent* GetHeadSlotForSide(EShowDownSide Side) const;
+	USceneComponent* GetPlayerHandSlot() const;
+	USceneComponent* GetPlayerHeadSlot() const;
+	void ScheduleRevealAutoAdvanceIfNeeded();
 	void ShowEventDebugMessage(const FString& Message) const;
 	
 };
