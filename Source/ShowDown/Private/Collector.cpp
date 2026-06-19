@@ -1,39 +1,139 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
-
 #include "Collector.h"
 
+#include "Components/PrimitiveComponent.h"
+#include "Components/SceneComponent.h"
 
-// Sets default values
 ACollector::ACollector()
 {
-	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
-	
-	// 루트 메시 컴포넌트 생성
+
 	rootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(rootComp);
-	// 손패 카드 슬롯
+
 	c_HandCard = CreateDefaultSubobject<USceneComponent>(TEXT("CollectorHandCardSlot"));
 	c_HandCard->SetupAttachment(rootComp);
-	//이마 카드 슬롯
+
 	c_HeadCard = CreateDefaultSubobject<USceneComponent>(TEXT("CollectorHeadCardSlot"));
 	c_HeadCard->SetupAttachment(rootComp);
 }
 
-// Called when the game starts or when spawned
 void ACollector::BeginPlay()
 {
 	Super::BeginPlay();
-	
 }
 
-// Called every frame
 void ACollector::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	if (!bActionSpinActive)
+	{
+		return;
+	}
+
+	USceneComponent* Target = ActiveActionSpinTarget.Get();
+	if (!Target)
+	{
+		bActionSpinActive = false;
+		QueuedActionSpinCount = 0;
+		return;
+	}
+
+	ActionSpinElapsed += DeltaTime;
+	const float Duration = FMath::Max(ActionSpinDuration, KINDA_SMALL_NUMBER);
+	const float Alpha = FMath::Clamp(ActionSpinElapsed / Duration, 0.0f, 1.0f);
+	const FVector SpinAxis = ActionSpinAxisLocal.IsNearlyZero()
+		? FVector::UpVector
+		: ActionSpinAxisLocal.GetSafeNormal();
+	const float SpinRadians = Alpha * TWO_PI * FMath::Max(ActionSpinTurns, 1);
+	const FQuat SpinRotation(SpinAxis, SpinRadians);
+
+	Target->SetRelativeRotation(ActionSpinStartRotation * SpinRotation);
+
+	if (Alpha < 1.0f)
+	{
+		return;
+	}
+
+	Target->SetRelativeRotation(ActionSpinStartRotation);
+	bActionSpinActive = false;
+	ActionSpinElapsed = 0.0f;
+	ActiveActionSpinTarget = nullptr;
+
+	if (QueuedActionSpinCount > 0)
+	{
+		--QueuedActionSpinCount;
+		StartActionSpin();
+	}
 }
 
+void ACollector::PlayActionSpin()
+{
+	if (!bEnableActionSpin)
+	{
+		return;
+	}
 
+	if (bActionSpinActive)
+	{
+		QueuedActionSpinCount = FMath::Clamp(QueuedActionSpinCount + 1, 0, MaxQueuedActionSpins);
+		return;
+	}
 
+	StartActionSpin();
+}
 
+float ACollector::GetActionSpinTotalSeconds() const
+{
+	return FMath::Max(0.0f, ActionSpinDuration) + FMath::Max(0.0f, ActionSpinHoldSeconds);
+}
+
+USceneComponent* ACollector::ResolveActionSpinTarget() const
+{
+	if (ActionSpinTarget)
+	{
+		return ActionSpinTarget;
+	}
+
+	TArray<USceneComponent*> SceneComponents;
+	GetComponents(SceneComponents);
+	for (USceneComponent* Component : SceneComponents)
+	{
+		if (Component && Component->ComponentHasTag(ActionSpinTargetTag))
+		{
+			return Component;
+		}
+	}
+
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	GetComponents(PrimitiveComponents);
+	for (UPrimitiveComponent* Component : PrimitiveComponents)
+	{
+		if (!Component
+			|| Component == rootComp.Get()
+			|| Component == c_HandCard.Get()
+			|| Component == c_HeadCard.Get()
+			|| !Component->IsVisible())
+		{
+			continue;
+		}
+
+		return Component;
+	}
+
+	return rootComp;
+}
+
+void ACollector::StartActionSpin()
+{
+	USceneComponent* Target = ResolveActionSpinTarget();
+	if (!Target)
+	{
+		return;
+	}
+
+	ActiveActionSpinTarget = Target;
+	ActionSpinStartRotation = Target->GetRelativeRotation().Quaternion();
+	ActionSpinElapsed = 0.0f;
+	bActionSpinActive = true;
+}

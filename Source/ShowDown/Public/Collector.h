@@ -1,5 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -13,25 +11,61 @@ class SHOWDOWN_API ACollector : public AActor
 
 public:
 	ACollector();
-	
-	//루트 컴포넌트
-	UPROPERTY(VisibleAnywhere, Category= Components)
-	USceneComponent* rootComp;
 
-	//손패 카드 슬롯 위치 컴포넌트
+	UPROPERTY(VisibleAnywhere, Category = Components)
+	TObjectPtr<USceneComponent> rootComp;
+
 	UPROPERTY(VisibleAnywhere, Category = CardSlot)
-	class USceneComponent* c_HandCard;
-	
-	//상대가 나에게 주는 카드 위치 컴포넌트
+	TObjectPtr<USceneComponent> c_HandCard;
+
 	UPROPERTY(VisibleAnywhere, Category = CardSlot)
-	class USceneComponent* c_HeadCard;
+	TObjectPtr<USceneComponent> c_HeadCard;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Presentation|Debug Spin")
+	bool bEnableActionSpin = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Presentation|Debug Spin")
+	TObjectPtr<USceneComponent> ActionSpinTarget = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Presentation|Debug Spin")
+	FName ActionSpinTargetTag = TEXT("ActionSpinTarget");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Presentation|Debug Spin", meta = (ClampMin = "0.01"))
+	float ActionSpinDuration = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Presentation|Debug Spin", meta = (ClampMin = "0.0"))
+	float ActionSpinHoldSeconds = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Presentation|Debug Spin", meta = (ClampMin = "1", ClampMax = "8"))
+	int32 ActionSpinTurns = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Presentation|Debug Spin")
+	FVector ActionSpinAxisLocal = FVector::UpVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Presentation|Debug Spin", meta = (ClampMin = "0", ClampMax = "32"))
+	int32 MaxQueuedActionSpins = 8;
+
+	UFUNCTION(BlueprintCallable, Category = "Presentation|Debug Spin")
+	void PlayActionSpin();
+
+	UFUNCTION(BlueprintPure, Category = "Presentation|Debug Spin")
+	float GetActionSpinTotalSeconds() const;
 
 protected:
-	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
 public:
-	// Called every frame
 	virtual void Tick(float DeltaTime) override;
-	
+
+private:
+	USceneComponent* ResolveActionSpinTarget() const;
+	void StartActionSpin();
+
+	UPROPERTY(Transient)
+	TObjectPtr<USceneComponent> ActiveActionSpinTarget = nullptr;
+
+	FQuat ActionSpinStartRotation = FQuat::Identity;
+	float ActionSpinElapsed = 0.0f;
+	int32 QueuedActionSpinCount = 0;
+	bool bActionSpinActive = false;
 };

@@ -7,6 +7,7 @@
 #include "SDCardLayoutTypes.h"
 #include "ShowDownTypes.h"
 #include "TimerManager.h"
+#include "Templates/Function.h"
 #include "ShowDownGameModeBase.generated.h"
 
 class ACard;
@@ -197,10 +198,10 @@ public:
 	bool bAutoAdvanceRevealWithoutPresentation = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Presentation", meta = (ClampMin = "0.0"))
-	float RevealAutoAdvanceSeconds = 5.0f;
+	float RevealAutoAdvanceSeconds = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Debug")
-	bool bShowGameFlowDebugMessages = false;
+	bool bShowGameFlowDebugMessages = true;
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void RequestPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
@@ -225,11 +226,17 @@ private:
 	int32 BettingRaisesLeft = 6;
 	bool bHasLastRaiser = false;
 	EShowDownSide LastRaiser = EShowDownSide::Player;
+	EShowDownSide CurrentRoundFirstSide = EShowDownSide::Player;
+	EShowDownSide NextRoundFirstSide = EShowDownSide::Player;
 	bool bHasPendingRoundReveal = false;
 	bool bHasPendingFoldReveal = false;
+	bool bCollectorActionPresentationInProgress = false;
 	EShowDownRoundResult PendingRoundResult = EShowDownRoundResult::Draw;
 	EShowDownSide PendingFoldedSide = EShowDownSide::Player;
 	int32 PendingFoldLoadCount = 1;
+	FTimerHandle CollectorActionPresentationTimerHandle;
+	TFunction<void()> CollectorActionPresentationContinuation;
+	TArray<TFunction<void()>> QueuedCollectorActionPresentationContinuations;
 	FString LatestPlayerDialogueInput;
 	FString RecentDialogueHistory;
 	FString RecentRoundHistory;
@@ -262,17 +269,23 @@ private:
 	void RecordCurrentRoundAction(const FString& ActionText);
 	void AppendRecentRoundSummary(EShowDownRoundResult Result, const FString& Reason);
 	FString GetSideText(EShowDownSide Side) const;
+	FString GetSideDisplayText(EShowDownSide Side) const;
 	FString GetRoundResultText(EShowDownRoundResult Result) const;
+	void BeginCardSelectionRound();
+	void SetNextRoundFirstSideFromResult(EShowDownRoundResult Result);
 	void FinishBettingAndResolveRound();
 	void BroadcastBossResultReaction(EShowDownRoundResult Result);
 	void ResolveFold(EShowDownSide FoldedSide);
 	void ContinueRoundAfterReveal(EShowDownRoundResult Result);
 	void ContinueFoldAfterReveal(EShowDownSide FoldedSide, int32 LoadCount);
-	void ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount);
+	void ApplyRouletteResult(EShowDownSide TargetSide, int32 BulletCount, TFunction<void()>&& Continuation);
 	void EndRound();
 	void ClearForeheadCards();
 	void ClearHandCards();
 	void SetPlayerHandSelectable(bool bSelectable);
+	void PlayCollectorActionPresentation();
+	void PlayCollectorActionPresentationThen(TFunction<void()>&& Continuation);
+	void FinishCollectorActionPresentation();
 	FSDCardHandLayoutSettings GetDefaultHandLayoutSettings() const;
 	FSDCardHandLayoutSettings ResolveHandLayoutSettings(EShowDownSide Side) const;
 	void ApplyCardMotionForSide(EShowDownSide Side, const TArray<ACard*>& Cards) const;
