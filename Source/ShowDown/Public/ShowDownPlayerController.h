@@ -70,6 +70,14 @@ public:
 	void ClearFixedCameraMouseLook();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Camera")
+	void SetFixedCameraBreathingSway(
+		bool bEnable,
+		float Speed,
+		FRotator RotationAmplitude,
+		FVector LocationAmplitude,
+		float BlendInTime);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Camera")
 	void SetFixedCameraComponentMouseLook(
 		USceneComponent* CameraComponent,
 		float Sensitivity,
@@ -145,6 +153,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
 	float MaxYaw = 45.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	bool bEnableFixedCameraBreathingSway = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing", meta = (ClampMin = "0.0"))
+	float BreathingSwaySpeed = 0.38f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	FRotator BreathingSwayRotationAmplitude = FRotator(0.12f, 0.05f, 0.08f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	FVector BreathingSwayLocationAmplitude = FVector(0.0f, 0.0f, 0.8f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing", meta = (ClampMin = "0.0"))
+	float BreathingSwayBlendInTime = 1.0f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ShowDown|Chat")
 	TSubclassOf<UShowDownChatWidget> ChatWidgetClass;
 
@@ -186,7 +209,10 @@ private:
 	void SelectCard(ACard* SelectedCard);
 	void SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
 	void ApplyPawnCameraInput(float YawInput, float PitchInput);
-	void UpdateFixedCameraMouseLook();
+	void UpdateFixedCameraMouseLook(float DeltaTime);
+	void RestoreFixedCameraBaseTransform();
+	FRotator GetBreathingSwayRotationOffset(float Strength) const;
+	FVector GetBreathingSwayLocationOffset(const FRotator& CameraRotation, float Strength) const;
 	void HandleBettingHotkeys();
 	void EnsureChatWidget();
 	void ApplyChatInputMode(bool bOpen);
@@ -215,10 +241,14 @@ private:
 
 	bool bChatOpen = false;
 	FRotator FixedCameraBaseRotation = FRotator::ZeroRotator;
+	FRotator FixedCameraLookRotation = FRotator::ZeroRotator;
+	FVector FixedCameraBaseLocation = FVector::ZeroVector;
 	float FixedCameraLookSensitivity = 0.2f;
 	float FixedCameraMinPitch = -35.0f;
 	float FixedCameraMaxPitch = 35.0f;
 	float FixedCameraMinYawOffset = -45.0f;
 	float FixedCameraMaxYawOffset = 45.0f;
+	float BreathingSwayElapsedTime = 0.0f;
+	float BreathingSwayBlendElapsedTime = 0.0f;
 	bool bFixedCameraInvertMouseY = true;
 };

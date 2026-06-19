@@ -130,6 +130,12 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
 
+	const bool bHasFixedCameraLook = FixedCameraMouseLookTarget != nullptr;
+	if (bHasFixedCameraLook)
+	{
+		UpdateFixedCameraMouseLook(DeltaTime);
+	}
+
 	if (!bHandleShowDownGameplayInput)
 	{
 		SetHoveredCard(nullptr);
@@ -164,11 +170,7 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 		HandleBettingHotkeys();
 	}
 
-	if (FixedCameraMouseLookTarget)
-	{
-		UpdateFixedCameraMouseLook();
-	}
-	else if (GetPawn() && bEnablePawnCameraMouseLook && (!bRequireRightMouseForPawnCameraLook || IsInputKeyDown(EKeys::RightMouseButton)))
+	if (!bHasFixedCameraLook && GetPawn() && bEnablePawnCameraMouseLook && (!bRequireRightMouseForPawnCameraLook || IsInputKeyDown(EKeys::RightMouseButton)))
 	{
 		float MouseDeltaX = 0.0f;
 		float MouseDeltaY = 0.0f;
@@ -623,6 +625,11 @@ void AShowDownPlayerController::SetFixedCameraComponentMouseLook(
 	float MaxYawOffsetDegrees,
 	bool bInvertY)
 {
+	if (FixedCameraMouseLookTarget)
+	{
+		RestoreFixedCameraBaseTransform();
+	}
+
 	FixedCameraMouseLookTarget = CameraComponent;
 	if (!FixedCameraMouseLookTarget)
 	{
@@ -630,19 +637,40 @@ void AShowDownPlayerController::SetFixedCameraComponentMouseLook(
 	}
 
 	FixedCameraBaseRotation = FixedCameraMouseLookTarget->GetComponentRotation();
+	FixedCameraLookRotation = FixedCameraBaseRotation;
+	FixedCameraBaseLocation = FixedCameraMouseLookTarget->GetComponentLocation();
 	FixedCameraLookSensitivity = Sensitivity;
 	FixedCameraMinPitch = MinPitchDegrees;
 	FixedCameraMaxPitch = MaxPitchDegrees;
 	FixedCameraMinYawOffset = MinYawOffsetDegrees;
 	FixedCameraMaxYawOffset = MaxYawOffsetDegrees;
 	bFixedCameraInvertMouseY = bInvertY;
+	BreathingSwayElapsedTime = 0.0f;
+	BreathingSwayBlendElapsedTime = 0.0f;
 	UpdateCenterCrosshairVisibility();
 }
 
 void AShowDownPlayerController::ClearFixedCameraMouseLook()
 {
+	RestoreFixedCameraBaseTransform();
 	FixedCameraMouseLookTarget = nullptr;
 	UpdateCenterCrosshairVisibility();
+}
+
+void AShowDownPlayerController::SetFixedCameraBreathingSway(
+	bool bEnable,
+	float Speed,
+	FRotator RotationAmplitude,
+	FVector LocationAmplitude,
+	float BlendInTime)
+{
+	bEnableFixedCameraBreathingSway = bEnable;
+	BreathingSwaySpeed = FMath::Max(0.0f, Speed);
+	BreathingSwayRotationAmplitude = RotationAmplitude;
+	BreathingSwayLocationAmplitude = LocationAmplitude;
+	BreathingSwayBlendInTime = FMath::Max(0.0f, BlendInTime);
+	BreathingSwayElapsedTime = 0.0f;
+	BreathingSwayBlendElapsedTime = 0.0f;
 }
 
 void AShowDownPlayerController::SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetBet)
@@ -695,37 +723,90 @@ void AShowDownPlayerController::ApplyPawnCameraInput(float YawInput, float Pitch
 	SetControlRotation(FRotator(NewPitch, NewYaw, 0.0f));
 }
 
-void AShowDownPlayerController::UpdateFixedCameraMouseLook()
+void AShowDownPlayerController::UpdateFixedCameraMouseLook(float DeltaTime)
 {
 	if (!FixedCameraMouseLookTarget)
 	{
 		return;
 	}
 
+	BreathingSwayElapsedTime += DeltaTime;
+	BreathingSwayBlendElapsedTime += DeltaTime;
+
 	float MouseDeltaX = 0.0f;
 	float MouseDeltaY = 0.0f;
 	GetInputMouseDelta(MouseDeltaX, MouseDeltaY);
-	if (FMath::IsNearlyZero(MouseDeltaX) && FMath::IsNearlyZero(MouseDeltaY))
+	if (!FMath::IsNearlyZero(MouseDeltaX) || !FMath::IsNearlyZero(MouseDeltaY))
+	{
+		FixedCameraLookRotation.Yaw += MouseDeltaX * FixedCameraLookSensitivity;
+
+		const float RelativeYaw = FRotator::NormalizeAxis(FixedCameraLookRotation.Yaw - FixedCameraBaseRotation.Yaw);
+		const float ClampedRelativeYaw = FMath::Clamp(RelativeYaw, FixedCameraMinYawOffset, FixedCameraMaxYawOffset);
+		FixedCameraLookRotation.Yaw = FixedCameraBaseRotation.Yaw + ClampedRelativeYaw;
+
+		const float PitchInputSign = bFixedCameraInvertMouseY ? 1.0f : -1.0f;
+		const float CurrentPitch = FRotator::NormalizeAxis(FixedCameraLookRotation.Pitch);
+		FixedCameraLookRotation.Pitch = FMath::Clamp(
+			CurrentPitch + MouseDeltaY * FixedCameraLookSensitivity * PitchInputSign,
+			FixedCameraMinPitch,
+			FixedCameraMaxPitch);
+		FixedCameraLookRotation.Roll = 0.0f;
+	}
+
+	const float SwayStrength = bEnableFixedCameraBreathingSway
+		? (BreathingSwayBlendInTime > KINDA_SMALL_NUMBER
+			? FMath::Clamp(BreathingSwayBlendElapsedTime / BreathingSwayBlendInTime, 0.0f, 1.0f)
+			: 1.0f)
+		: 0.0f;
+
+	const FRotator SwayRotation = GetBreathingSwayRotationOffset(SwayStrength);
+	const FVector SwayLocation = GetBreathingSwayLocationOffset(FixedCameraLookRotation, SwayStrength);
+	FixedCameraMouseLookTarget->SetWorldLocationAndRotation(
+		FixedCameraBaseLocation + SwayLocation,
+		FixedCameraLookRotation + SwayRotation);
+}
+
+void AShowDownPlayerController::RestoreFixedCameraBaseTransform()
+{
+	if (!FixedCameraMouseLookTarget)
 	{
 		return;
 	}
 
-	FRotator NewRotation = FixedCameraMouseLookTarget->GetComponentRotation();
-	NewRotation.Yaw += MouseDeltaX * FixedCameraLookSensitivity;
+	FixedCameraMouseLookTarget->SetWorldLocationAndRotation(FixedCameraBaseLocation, FixedCameraLookRotation);
+}
 
-	const float RelativeYaw = FRotator::NormalizeAxis(NewRotation.Yaw - FixedCameraBaseRotation.Yaw);
-	const float ClampedRelativeYaw = FMath::Clamp(RelativeYaw, FixedCameraMinYawOffset, FixedCameraMaxYawOffset);
-	NewRotation.Yaw = FixedCameraBaseRotation.Yaw + ClampedRelativeYaw;
+FRotator AShowDownPlayerController::GetBreathingSwayRotationOffset(float Strength) const
+{
+	if (Strength <= 0.0f || BreathingSwaySpeed <= 0.0f)
+	{
+		return FRotator::ZeroRotator;
+	}
 
-	const float PitchInputSign = bFixedCameraInvertMouseY ? 1.0f : -1.0f;
-	const float CurrentPitch = FRotator::NormalizeAxis(NewRotation.Pitch);
-	NewRotation.Pitch = FMath::Clamp(
-		CurrentPitch + MouseDeltaY * FixedCameraLookSensitivity * PitchInputSign,
-		FixedCameraMinPitch,
-		FixedCameraMaxPitch);
-	NewRotation.Roll = 0.0f;
+	const float Time = BreathingSwayElapsedTime * BreathingSwaySpeed * 2.0f * PI;
+	return FRotator(
+		FMath::Sin(Time) * BreathingSwayRotationAmplitude.Pitch,
+		FMath::Sin(Time * 0.72f + 1.1f) * BreathingSwayRotationAmplitude.Yaw,
+		FMath::Sin(Time * 0.91f + 2.0f) * BreathingSwayRotationAmplitude.Roll) * Strength;
+}
 
-	FixedCameraMouseLookTarget->SetWorldRotation(NewRotation);
+FVector AShowDownPlayerController::GetBreathingSwayLocationOffset(const FRotator& CameraRotation, float Strength) const
+{
+	if (Strength <= 0.0f || BreathingSwaySpeed <= 0.0f)
+	{
+		return FVector::ZeroVector;
+	}
+
+	const float Time = BreathingSwayElapsedTime * BreathingSwaySpeed * 2.0f * PI;
+	const FRotationMatrix CameraMatrix(CameraRotation);
+	const FVector Forward = CameraMatrix.GetScaledAxis(EAxis::X);
+	const FVector Right = CameraMatrix.GetScaledAxis(EAxis::Y);
+	const FVector Up = CameraMatrix.GetScaledAxis(EAxis::Z);
+
+	return (
+		Forward * FMath::Sin(Time * 0.53f + 0.4f) * BreathingSwayLocationAmplitude.X +
+		Right * FMath::Sin(Time * 0.79f + 1.7f) * BreathingSwayLocationAmplitude.Y +
+		Up * FMath::Sin(Time) * BreathingSwayLocationAmplitude.Z) * Strength;
 }
 
 void AShowDownPlayerController::HandleBettingHotkeys()

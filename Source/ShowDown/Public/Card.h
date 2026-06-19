@@ -52,6 +52,36 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Select")
 	float MoveSpeed = 10.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion")
+	bool bUseSlotAttachMotion = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion", meta = (ClampMin = "0.05"))
+	float SlotAttachDuration = 0.85f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion", meta = (ClampMin = "0.0"))
+	float SlotAttachArcHeight = 55.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion", meta = (ClampMin = "0.0"))
+	float SlotAttachOvershootDistance = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion", meta = (ClampMin = "0.1"))
+	float SlotAttachTargetScale = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion")
+	FRotator SlotAttachFlightRotationAmplitude = FRotator(8.0f, 0.0f, 16.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion", meta = (ClampMin = "0.0"))
+	float SlotAttachSettleDuration = 0.24f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion", meta = (ClampMin = "0.0"))
+	float SlotAttachSettleLocationAmplitude = 6.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion")
+	FRotator SlotAttachSettleRotationAmplitude = FRotator(0.0f, 0.0f, 5.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Slot Attach Motion", meta = (ClampMin = "0.0"))
+	float SlotAttachSettleOscillations = 1.5f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Card|Interaction")
 	FVector InteractionBoundsExtent = FVector(45.0f, 65.0f, 8.0f);
 
@@ -85,6 +115,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Card")
 	void MoveToSlot(USceneComponent* Slot, bool bNewFaceUp);
 
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Card")
+	float GetSlotAttachMotionTotalSeconds() const;
+
 	UFUNCTION(BlueprintCallable, Category = "Card")
 	void MoveToHandTransform(const FTransform& NewTransform);
 
@@ -99,12 +132,22 @@ protected:
 	UFUNCTION()
 	void OnRep_CardVisual();
 
+	UFUNCTION()
+	void OnRep_TargetVisualScaleMultiplier();
+
 public:
 	virtual void Tick(float DeltaTime) override;
 
 private:
 	void ConfigureInteractionComponents();
 	void UpdateTargetTransform();
+	void StartSlotAttachMotion(const FTransform& TargetTransform);
+	void UpdateSlotAttachMotion(float DeltaTime);
+	void UpdateSlotAttachSettle(float DeltaTime, FVector& InOutVisualWorldOffset, FRotator& OutVisualRelativeRotation);
+	void SetTargetVisualScaleMultiplier(float NewTargetScaleMultiplier);
+	void StartVisualScaleMotion(float NewTargetScaleMultiplier);
+	void UpdateVisualScale(float DeltaTime);
+	FRotator ScaleRotator(const FRotator& Rotator, float Scale) const;
 
 	UPROPERTY(VisibleAnywhere, Category = "Card")
 	bool bSelected = false;
@@ -118,4 +161,21 @@ private:
 	FVector TargetVisualWorldOffset = FVector::ZeroVector;
 	FRotator DefaultRotation = FRotator::ZeroRotator;
 	FRotator TargetRotation = FRotator::ZeroRotator;
+	FVector BaseVisualRootScale = FVector::OneVector;
+	FVector SlotAttachStartLocation = FVector::ZeroVector;
+	FVector SlotAttachTargetLocation = FVector::ZeroVector;
+	FVector SlotAttachTravelDirection = FVector::ForwardVector;
+	FQuat SlotAttachStartRotation = FQuat::Identity;
+	FQuat SlotAttachTargetRotation = FQuat::Identity;
+	float CurrentVisualScaleMultiplier = 1.0f;
+	float VisualScaleStartMultiplier = 1.0f;
+	float VisualScaleElapsedTime = 0.0f;
+	float SlotAttachElapsedTime = 0.0f;
+	float SlotAttachSettleElapsedTime = 0.0f;
+	UPROPERTY(ReplicatedUsing = OnRep_TargetVisualScaleMultiplier)
+	float TargetVisualScaleMultiplier = 1.0f;
+
+	bool bVisualScaleMotionActive = false;
+	bool bSlotAttachMotionActive = false;
+	bool bSlotAttachSettleActive = false;
 };

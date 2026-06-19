@@ -234,7 +234,9 @@ private:
 	EShowDownRoundResult PendingRoundResult = EShowDownRoundResult::Draw;
 	EShowDownSide PendingFoldedSide = EShowDownSide::Player;
 	int32 PendingFoldLoadCount = 1;
+	FTimerHandle CardPlacementDelayHandle;
 	FTimerHandle CollectorActionPresentationTimerHandle;
+	TFunction<void()> CardPlacementDelayContinuation;
 	TFunction<void()> CollectorActionPresentationContinuation;
 	TArray<TFunction<void()>> QueuedCollectorActionPresentationContinuations;
 	FString LatestPlayerDialogueInput;
@@ -283,6 +285,8 @@ private:
 	void ClearForeheadCards();
 	void ClearHandCards();
 	void SetPlayerHandSelectable(bool bSelectable);
+	void WaitForCardPlacementThen(ACard* Card, TFunction<void()>&& Continuation);
+	void FinishCardPlacementWait();
 	void PlayCollectorActionPresentation();
 	void PlayCollectorActionPresentationThen(TFunction<void()>&& Continuation);
 	void FinishCollectorActionPresentation();
