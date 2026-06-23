@@ -368,7 +368,7 @@ void UShowDownEosSubsystem::StartHostedGame()
 	);
 
 	FOnlineSessionSettings UpdatedSettings = NamedSession->SessionSettings;
-	UpdatedSettings.bAllowJoinInProgress = false;
+	UpdatedSettings.bAllowJoinInProgress = true;
 	UpdatedSettings.Set(SETTING_MAPNAME, PendingGameMapName.ToString(), EOnlineDataAdvertisementType::ViaOnlineService);
 	UpdatedSettings.Set(ShowDownGameStartedKey, true, EOnlineDataAdvertisementType::ViaOnlineService);
 	UpdatedSettings.Set(ShowDownGameMapKey, PendingGameMapName.ToString(), EOnlineDataAdvertisementType::ViaOnlineService);
@@ -465,6 +465,14 @@ void UShowDownEosSubsystem::StopLobbyStartPolling()
 	}
 
 	bLobbyStartPollInFlight = false;
+}
+
+void UShowDownEosSubsystem::MarkEnteredMultiplayerGame()
+{
+	StopLobbyStartPolling();
+	bInMultiplayerLobby = false;
+	bLobbyHost = false;
+	PendingSessionFlow = ESessionFlow::None;
 }
 
 void UShowDownEosSubsystem::FindAndJoinFirstSession()
@@ -653,7 +661,7 @@ void UShowDownEosSubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 				StopLobbyStartPolling();
 				bInMultiplayerLobby = false;
 				PendingStartedGameSearchResult = SessionSearch->SearchResults[MatchIndex];
-				PendingSessionFlow = ESessionFlow::JoinStartedGame;
+				PendingSessionFlow = ESessionFlow::None;
 				OnSessionResult.Broadcast(true, TEXT("Host started. Waiting for server travel..."));
 			}
 			return;
@@ -705,6 +713,7 @@ void UShowDownEosSubsystem::HandleJoinSessionComplete(
 
 	if (Result != EOnJoinSessionCompleteResult::Success || !SessionInterface.IsValid())
 	{
+		const bool bJoiningStartedGame = PendingSessionFlow == ESessionFlow::JoinStartedGame;
 		FString FailureMessage = TEXT("방 입장에 실패했습니다.");
 		switch (Result)
 		{
@@ -725,13 +734,22 @@ void UShowDownEosSubsystem::HandleJoinSessionComplete(
 		}
 		PendingSessionFlow = ESessionFlow::None;
 		OnSessionResult.Broadcast(false, FailureMessage);
+		if (bJoiningStartedGame)
+		{
+			StartLobbyStartPolling();
+		}
 		return;
 	}
 
 	FString ConnectString;
 	if (!SessionInterface->GetResolvedConnectString(SessionName, ConnectString) || ConnectString.IsEmpty())
 	{
+		const bool bJoiningStartedGame = PendingSessionFlow == ESessionFlow::JoinStartedGame;
 		OnSessionResult.Broadcast(false, TEXT("EOS connect string was empty."));
+		if (bJoiningStartedGame)
+		{
+			StartLobbyStartPolling();
+		}
 		return;
 	}
 
@@ -750,6 +768,10 @@ void UShowDownEosSubsystem::HandleJoinSessionComplete(
 	}
 
 	OnSessionResult.Broadcast(false, TEXT("Player controller was unavailable for travel."));
+	if (PendingSessionFlow == ESessionFlow::JoinStartedGame)
+	{
+		StartLobbyStartPolling();
+	}
 }
 
 void UShowDownEosSubsystem::HandleDestroySessionComplete(FName SessionName, bool bWasSuccessful)
@@ -875,6 +897,7 @@ void UShowDownEosSubsystem::JoinStartedGameSession()
 			SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteDelegateHandle);
 			DestroySessionCompleteDelegateHandle.Reset();
 			OnSessionResult.Broadcast(false, TEXT("Could not refresh EOS session before joining game."));
+			StartLobbyStartPolling();
 		}
 		return;
 	}
@@ -896,6 +919,7 @@ void UShowDownEosSubsystem::JoinStartedGameSession()
 		SessionInterface->ClearOnJoinSessionCompleteDelegate_Handle(JoinSessionCompleteDelegateHandle);
 		JoinSessionCompleteDelegateHandle.Reset();
 		OnSessionResult.Broadcast(false, TEXT("EOS game join could not start."));
+		StartLobbyStartPolling();
 	}
 }
 

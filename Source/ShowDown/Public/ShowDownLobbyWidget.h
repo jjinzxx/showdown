@@ -35,6 +35,8 @@ protected:
 
 private:
 	FString CachedRoomCode;
+	FString CachedParticipantText;
+	float ParticipantRefreshElapsed = 0.0f;
 	bool bCachedIsHost = false;
 
 	UPROPERTY()

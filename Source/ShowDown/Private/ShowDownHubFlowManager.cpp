@@ -647,6 +647,28 @@ void AShowDownHubFlowManager::HandleEosSessionResult(bool bSuccess, const FStrin
 {
 	UE_LOG(LogTemp, Log, TEXT("EOS session result: %s"), *Message);
 
+	if (bSuccess && Message == TEXT("EOS game joined."))
+	{
+		SetActiveWidget(nullptr);
+		LobbyWidget = nullptr;
+		MultiplayerWidget = nullptr;
+
+		if (APlayerController* PlayerController = GetPrimaryPlayerController())
+		{
+			FInputModeGameOnly InputMode;
+			PlayerController->SetInputMode(InputMode);
+			PlayerController->bShowMouseCursor = false;
+			PlayerController->bEnableClickEvents = false;
+			PlayerController->bEnableMouseOverEvents = false;
+
+			if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+			{
+				ShowDownController->bHandleShowDownGameplayInput = true;
+			}
+		}
+		return;
+	}
+
 	if (MultiplayerWidget)
 	{
 		MultiplayerWidget->ShowStatusMessage(Message, bSuccess ? FLinearColor::Green : FLinearColor::Yellow);

@@ -170,6 +170,22 @@ void AShowDownPlayerController::OnPossess(APawn* InPawn)
 
 void AShowDownPlayerController::ClientEnterMultiplayerGameplay_Implementation()
 {
+	if (UShowDownEosSubsystem* EosSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownEosSubsystem>()
+		: nullptr)
+	{
+		EosSubsystem->MarkEnteredMultiplayerGame();
+	}
+
+	RemoveCenterCrosshairWidget();
+	if (GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->RemoveAllViewportWidgets();
+	}
+	ChatWidget = nullptr;
+	LeaveConfirmWidget = nullptr;
+	bChatOpen = false;
+
 	bHandleShowDownGameplayInput = true;
 	// Multiplayer follows the same first-person interaction model as single
 	// player: raw mouse movement controls the view and the centre reticle is
@@ -181,6 +197,7 @@ void AShowDownPlayerController::ClientEnterMultiplayerGameplay_Implementation()
 
 	RestoreMultiplayerGameplayInput();
 	EnsureChatWidget();
+	CreateCenterCrosshairWidget();
 	PawnCameraBaseRotation = GetControlRotation();
 	bHasPawnCameraBaseRotation = true;
 	UpdateCenterCrosshairVisibility();

@@ -63,6 +63,19 @@ namespace
 		default: return INDEX_NONE;
 		}
 	}
+
+	int32 GetCardSeatIndexFromPlayerSlot(EShowDownPlayerSlot Slot)
+	{
+		switch (Slot)
+		{
+		case EShowDownPlayerSlot::Player1: return 1;
+		case EShowDownPlayerSlot::Player2: return 0;
+		case EShowDownPlayerSlot::Player3: return 3;
+		case EShowDownPlayerSlot::Player4: return 2;
+		case EShowDownPlayerSlot::None:
+		default: return INDEX_NONE;
+		}
+	}
 }
 
 AShowDownGameModeBase::AShowDownGameModeBase()
@@ -2030,7 +2043,17 @@ void AShowDownGameModeBase::StartMultiplayerMatch(const TArray<ASDPlayerState*>&
 
 	if (MultiplayerPlayers.Num() >= 2)
 	{
-		StartMultiplayerDuel(MultiplayerPlayers[0], MultiplayerPlayers[1]);
+		ASDPlayerState* InitialFirstPlayer = MultiplayerPlayers[0];
+		for (ASDPlayerState* Player : MultiplayerPlayers)
+		{
+			if (Player && Player->bHostPlayer)
+			{
+				InitialFirstPlayer = Player;
+				break;
+			}
+		}
+
+		StartMultiplayerDuel(InitialFirstPlayer, FindNextAliveMultiplayerPlayer(InitialFirstPlayer));
 	}
 }
 
@@ -2192,8 +2215,12 @@ void AShowDownGameModeBase::EnsureMultiplayerSeatAnchors()
 	}
 	MultiplayerSeatAnchors.Reset();
 
-	for (int32 SeatIndex = 0; SeatIndex < MultiplayerPlayers.Num(); ++SeatIndex)
+	for (int32 PlayerIndex = 0; PlayerIndex < MultiplayerPlayers.Num(); ++PlayerIndex)
 	{
+		const ASDPlayerState* Player = MultiplayerPlayers[PlayerIndex];
+		const int32 SeatIndexFromSlot = Player ? GetCardSeatIndexFromPlayerSlot(Player->ShowDownSlot) : INDEX_NONE;
+		const int32 SeatIndex = SeatIndexFromSlot == INDEX_NONE ? PlayerIndex : SeatIndexFromSlot;
+
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Owner = this;
 		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -2317,7 +2344,7 @@ void AShowDownGameModeBase::DealMultiplayerHands()
 		if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
 		{
 			// The seat anchor is already placed in front of the camera.
-			HandLayout.CardSpacing = 46.0f;
+			HandLayout.CardSpacing = 32.0f;
 			HandLayout.ForwardOffset = 0.0f;
 			HandLayout.HeightOffset = 0.0f;
 			HandLayout.LeanAngle = 0.0f;
@@ -2479,10 +2506,12 @@ void AShowDownGameModeBase::HandleMultiplayerSelectedCard(ASDPlayerState* Submit
 
 	CardSystem->RemoveCardFromHand(SubmittingPlayer->HandCards, SelectedCard);
 	ReflowMultiplayerHand(SubmittingPlayer);
+	SubmittingPlayer->ForceNetUpdate();
 
 	MultiplayerCardReceiver->ForeheadCard = SelectedCard;
+	MultiplayerCardReceiver->ForceNetUpdate();
 	SelectedCard->SetHandOwnerSlot(EShowDownPlayerSlot::None);
-	SelectedCard->SetHiddenFromSlot(MultiplayerCardReceiver->ShowDownSlot);
+	SelectedCard->SetHiddenFromSlot(EShowDownPlayerSlot::None);
 	SelectedCard->SetFaceUp(true);
 	SelectedCard->SetSelectable(false);
 	if (USceneComponent* HeadSlot = GetHeadSlotForPlayerState(MultiplayerCardReceiver))
@@ -2630,9 +2659,9 @@ void AShowDownGameModeBase::FinishMultiplayerRoundByReveal()
 {
 	bMultiplayerRoundResolving = true;
 	int32 HighestRank = 0;
-	ASDPlayerState* RoundLoser = nullptr;
 	int32 LowestRank = TNumericLimits<int32>::Max();
 	TArray<ASDPlayerState*> Winners;
+	TArray<ASDPlayerState*> RevealedPlayers;
 
 	for (ASDPlayerState* Player : MultiplayerPlayers)
 	{
@@ -2643,6 +2672,7 @@ void AShowDownGameModeBase::FinishMultiplayerRoundByReveal()
 
 		Player->ForeheadCard->SetHiddenFromSlot(EShowDownPlayerSlot::None);
 		Player->ForeheadCard->SetFaceUp(true);
+		RevealedPlayers.Add(Player);
 		const int32 Rank = Player->ForeheadCard->Rank;
 		if (Rank > HighestRank)
 		{
@@ -2658,7 +2688,6 @@ void AShowDownGameModeBase::FinishMultiplayerRoundByReveal()
 		if (Rank < LowestRank)
 		{
 			LowestRank = Rank;
-			RoundLoser = Player;
 		}
 	}
 
@@ -2683,20 +2712,48 @@ void AShowDownGameModeBase::FinishMultiplayerRoundByReveal()
 			}
 			WinnerNames += Winner->GetPlayerName();
 		}
-		NotifyMultiplayerStatus(FString::Printf(TEXT("공개 결과: %s 승리."), *WinnerNames));
 
-		for (ASDPlayerState* Player : MultiplayerPlayers)
+		const bool bAllRevealedPlayersTied = RevealedPlayers.Num() > 0 && Winners.Num() == RevealedPlayers.Num();
+		TArray<ASDPlayerState*> RouletteTargets;
+		if (bAllRevealedPlayersTied)
 		{
-			if (!Player || Player->Lives <= 0 || MultiplayerFoldedPlayers.Contains(Player) || Winners.Contains(Player))
+			RouletteTargets = RevealedPlayers;
+			NotifyMultiplayerStatus(TEXT("공개 결과: 전원 동점. 모두 룰렛을 돌립니다."));
+		}
+		else
+		{
+			NotifyMultiplayerStatus(FString::Printf(TEXT("공개 결과: %s 승리."), *WinnerNames));
+			for (ASDPlayerState* Player : RevealedPlayers)
+			{
+				if (Player && !Winners.Contains(Player))
+				{
+					RouletteTargets.Add(Player);
+				}
+			}
+		}
+
+		ASDPlayerState* NextFirstCandidate = nullptr;
+		int32 NextFirstRank = TNumericLimits<int32>::Min();
+		for (ASDPlayerState* Player : RouletteTargets)
+		{
+			if (!Player || !Player->ForeheadCard)
 			{
 				continue;
 			}
+
+			const int32 Rank = Player->ForeheadCard->Rank;
+			if (!NextFirstCandidate || Rank > NextFirstRank)
+			{
+				NextFirstCandidate = Player;
+				NextFirstRank = Rank;
+			}
+
 			ApplyMultiplayerRoulette(Player, Player->CurrentBet);
 		}
 
-		if (!MultiplayerNextFirstPlayer)
+		if (NextFirstCandidate)
 		{
-			MultiplayerNextFirstPlayer = RoundLoser;
+			MultiplayerNextFirstPlayer = NextFirstCandidate;
 		}
 	}
 
@@ -2853,7 +2910,7 @@ void AShowDownGameModeBase::ReflowMultiplayerHand(ASDPlayerState* Player)
 		FSDCardHandLayoutSettings HandLayout = GetDefaultHandLayoutSettings();
 		if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
 		{
-			HandLayout.CardSpacing = 46.0f;
+			HandLayout.CardSpacing = 32.0f;
 			HandLayout.ForwardOffset = 0.0f;
 			HandLayout.HeightOffset = 0.0f;
 			HandLayout.LeanAngle = 0.0f;

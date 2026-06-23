@@ -52,13 +52,20 @@ void UShowDownLobbyWidget::NativeDestruct()
 void UShowDownLobbyWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
-	RefreshParticipantText();
+
+	ParticipantRefreshElapsed += InDeltaTime;
+	if (ParticipantRefreshElapsed >= 0.25f)
+	{
+		ParticipantRefreshElapsed = 0.0f;
+		RefreshParticipantText();
+	}
 }
 
 void UShowDownLobbyWidget::SetLobbyInfo(const FString& RoomCode, bool bIsHost)
 {
 	CachedRoomCode = RoomCode;
 	bCachedIsHost = bIsHost;
+	ParticipantRefreshElapsed = 0.0f;
 	RefreshLobbyText();
 }
 
@@ -209,7 +216,12 @@ void UShowDownLobbyWidget::RefreshParticipantText()
 		: nullptr;
 	if (!ShowDownGameState)
 	{
-		Text_Players->SetText(FText::FromString(TEXT("참여자 (0/4)\n참가자 정보를 불러오는 중...")));
+		const FString LoadingText = TEXT("참여자 (0/4)\n참가자 정보를 불러오는 중...");
+		if (CachedParticipantText != LoadingText)
+		{
+			CachedParticipantText = LoadingText;
+			Text_Players->SetText(FText::FromString(CachedParticipantText));
+		}
 		return;
 	}
 
@@ -226,7 +238,11 @@ void UShowDownLobbyWidget::RefreshParticipantText()
 		ParticipantText += FString::Printf(TEXT("\n%d번  %s"), static_cast<int32>(PlayerSlot.Slot), *DisplayName);
 	}
 
-	Text_Players->SetText(FText::FromString(ParticipantText));
+	if (CachedParticipantText != ParticipantText)
+	{
+		CachedParticipantText = ParticipantText;
+		Text_Players->SetText(FText::FromString(CachedParticipantText));
+	}
 }
 
 void UShowDownLobbyWidget::HandleStartClicked()

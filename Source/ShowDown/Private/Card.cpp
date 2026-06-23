@@ -102,6 +102,7 @@ void ACard::BeginPlay()
 	DefaultRotation = GetActorRotation();
 	TargetRotation = DefaultRotation;
 	RefreshVisual();
+	SetActorTickEnabled(false);
 }
 
 void ACard::Tick(float DeltaTime)
@@ -117,40 +118,69 @@ void ACard::Tick(float DeltaTime)
 		VisualRoot->SetRelativeLocation(VisualRelativeOffset);
 	}
 
-	RefreshVisual();
-
 	if (!HasAuthority())
 	{
+		if (CurrentVisualWorldOffset.Equals(TargetVisualWorldOffset, 0.1f))
+		{
+			CurrentVisualWorldOffset = TargetVisualWorldOffset;
+			if (VisualRoot)
+			{
+				const FVector VisualRelativeOffset = GetActorTransform().InverseTransformVectorNoScale(CurrentVisualWorldOffset);
+				VisualRoot->SetRelativeLocation(VisualRelativeOffset);
+			}
+			SetActorTickEnabled(false);
+		}
 		return;
 	}
 
 	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaTime, MoveSpeed);
 	const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime, MoveSpeed);
 	SetActorLocationAndRotation(NewLocation, NewRotation);
+	ForceNetUpdate();
+
+	const bool bVisualAtTarget = CurrentVisualWorldOffset.Equals(TargetVisualWorldOffset, 0.1f);
+	const bool bActorAtTarget = GetActorLocation().Equals(TargetLocation, 0.1f)
+		&& GetActorRotation().Equals(TargetRotation, 0.1f);
+	if (bVisualAtTarget && bActorAtTarget)
+	{
+		CurrentVisualWorldOffset = TargetVisualWorldOffset;
+		if (VisualRoot)
+		{
+			const FVector VisualRelativeOffset = GetActorTransform().InverseTransformVectorNoScale(CurrentVisualWorldOffset);
+			VisualRoot->SetRelativeLocation(VisualRelativeOffset);
+		}
+		SetActorLocationAndRotation(TargetLocation, TargetRotation);
+		ForceNetUpdate();
+		SetActorTickEnabled(false);
+	}
 }
 
 void ACard::SetCard(int32 NewRank)
 {
 	Rank = FMath::Clamp(NewRank, 1, 7);
 	RefreshVisual();
+	ForceNetUpdate();
 }
 
 void ACard::SetFaceUp(bool bNewFaceUp)
 {
 	bFaceUp = bNewFaceUp;
 	RefreshVisual();
+	ForceNetUpdate();
 }
 
 void ACard::SetHiddenFromSlot(EShowDownPlayerSlot NewHiddenFromSlot)
 {
 	HiddenFromSlot = NewHiddenFromSlot;
 	RefreshVisual();
+	ForceNetUpdate();
 }
 
 void ACard::SetHandOwnerSlot(EShowDownPlayerSlot NewHandOwnerSlot)
 {
 	HandOwnerSlot = NewHandOwnerSlot;
 	RefreshVisual();
+	ForceNetUpdate();
 }
 
 void ACard::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -183,27 +213,32 @@ void ACard::RefreshVisual()
 		LocalPlayerState = LocalPlayerController->GetPlayerState<ASDPlayerState>();
 	}
 
-	if (HandOwnerSlot != EShowDownPlayerSlot::None && LocalPlayerState)
-	{
-		// In multiplayer a player must choose from their own hand without seeing
-		// its ranks. The other seats can see that player's face-up hand, matching
-		// the same information rule used by the single-player game.
-		bVisibleToLocalPlayer = LocalPlayerState->ShowDownSlot != HandOwnerSlot;
-	}
-
 	if (HiddenFromSlot != EShowDownPlayerSlot::None && LocalPlayerState)
 	{
 		bVisibleToLocalPlayer = bVisibleToLocalPlayer && LocalPlayerState->ShowDownSlot != HiddenFromSlot;
 	}
 
-	CardText->SetVisibility(bFaceUp && bVisibleToLocalPlayer);
-	CardText->SetText(FText::AsNumber(Rank));
+	const bool bShouldShowText = bFaceUp && bVisibleToLocalPlayer;
+	if (!bHasCachedVisual || bCachedVisualVisible != bShouldShowText)
+	{
+		CardText->SetVisibility(bShouldShowText);
+		bCachedVisualVisible = bShouldShowText;
+	}
+
+	if (!bHasCachedVisual || CachedVisualRank != Rank)
+	{
+		CardText->SetText(FText::AsNumber(Rank));
+		CachedVisualRank = Rank;
+	}
+
+	bHasCachedVisual = true;
 }
 
 void ACard::SelectCard(bool bNewSelected)
 {
 	bSelected = bNewSelected;
 	UpdateTargetTransform();
+	EnableMotionTick();
 }
 
 bool ACard::IsSelected() const
@@ -215,6 +250,7 @@ void ACard::SetHovered(bool bNewHovered)
 {
 	bHovered = bNewHovered && bSelectable;
 	UpdateTargetTransform();
+	EnableMotionTick();
 }
 
 bool ACard::IsHovered() const
@@ -230,7 +266,9 @@ void ACard::SetSelectable(bool bNewSelectable)
 		bSelected = false;
 		bHovered = false;
 		UpdateTargetTransform();
+		EnableMotionTick();
 	}
+	ForceNetUpdate();
 }
 
 bool ACard::IsCardSelectable() const
@@ -251,7 +289,9 @@ void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
 	DefaultLocation = Slot->GetComponentLocation();
 	DefaultRotation = Slot->GetComponentRotation();
 	UpdateTargetTransform();
+	EnableMotionTick();
 	SetFaceUp(bNewFaceUp);
+	ForceNetUpdate();
 }
 
 void ACard::MoveToHandTransform(const FTransform& NewTransform)
@@ -259,6 +299,13 @@ void ACard::MoveToHandTransform(const FTransform& NewTransform)
 	DefaultLocation = NewTransform.GetLocation();
 	DefaultRotation = NewTransform.GetRotation().Rotator();
 	UpdateTargetTransform();
+	EnableMotionTick();
+	ForceNetUpdate();
+}
+
+void ACard::EnableMotionTick()
+{
+	SetActorTickEnabled(true);
 }
 
 void ACard::UpdateTargetTransform()

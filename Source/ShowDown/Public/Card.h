@@ -118,6 +118,7 @@ public:
 private:
 	void ConfigureInteractionComponents();
 	void UpdateTargetTransform();
+	void EnableMotionTick();
 
 	UPROPERTY(VisibleAnywhere, Category = "Card")
 	bool bSelected = false;
@@ -131,4 +132,7 @@ private:
 	FVector TargetVisualWorldOffset = FVector::ZeroVector;
 	FRotator DefaultRotation = FRotator::ZeroRotator;
 	FRotator TargetRotation = FRotator::ZeroRotator;
+	int32 CachedVisualRank = INDEX_NONE;
+	bool bCachedVisualVisible = false;
+	bool bHasCachedVisual = false;
 };

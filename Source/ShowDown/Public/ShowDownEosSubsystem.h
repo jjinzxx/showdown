@@ -60,6 +60,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void StopLobbyStartPolling();
 
+	void MarkEnteredMultiplayerGame();
+
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	bool IsInMultiplayerLobby() const;
 
