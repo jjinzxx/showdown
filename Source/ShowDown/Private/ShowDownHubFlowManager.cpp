@@ -675,7 +675,8 @@ void AShowDownHubFlowManager::HandleLobbyLeaveRequested()
 	{
 		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
 		{
-			EosSubsystem->StopLobbyStartPolling();
+			EosSubsystem->LeaveLobby(FName(TEXT("L_Hub")));
+			return;
 		}
 	}
 

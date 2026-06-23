@@ -14,6 +14,8 @@ class ACard;
 class APlayerPawn;
 class ASDCardPlacementAnchor;
 class ASDPlayerSeat;
+class ASDMultiplayerTable;
+class ASDMultiplayerSeatAnchor;
 class UCardSystem;
 class ACollector;
 class UCollectorAISystem;
@@ -187,6 +189,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
 	void StartMultiplayerGame();
 
+	void RefreshMultiplayerLobbyPlayers();
+
 	// 게임 종료 후 허브(메인메뉴)로 돌아갈 때 게임판을 정리합니다.
 	// 진행 중인 타이머/베팅 상태를 끄고 테이블의 카드를 모두 제거합니다.
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
@@ -214,6 +218,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 
@@ -276,6 +281,23 @@ private:
 	UPROPERTY()
 	TObjectPtr<ASDPlayerState> MultiplayerLastCheckedPlayer = nullptr;
 
+	// The player who lost the previous round leads the next multiplayer round.
+	// A draw keeps the current lead; an eliminated loser falls back to the next survivor.
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerNextFirstPlayer = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDMultiplayerTable> MultiplayerTable = nullptr;
+
+	UPROPERTY()
+	TArray<TObjectPtr<ASDMultiplayerSeatAnchor>> MultiplayerSeatAnchors;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerRoundLeader = nullptr;
+
+	TSet<TObjectPtr<ASDPlayerState>> MultiplayerFoldedPlayers;
+	TSet<TObjectPtr<ASDPlayerState>> MultiplayerPlayersActed;
+
 	FTimerHandle MultiplayerStartTimerHandle;
 	bool bMultiplayerMatchStarted = false;
 	bool bMultiplayerRoundResolving = false;
@@ -326,6 +348,8 @@ private:
 	void StartMultiplayerMatch(const TArray<ASDPlayerState*>& Players);
 	TArray<ASDPlayerState*> GetConnectedShowDownPlayers() const;
 	ASDPlayerState* GetPlayerStateForController(AController* Controller) const;
+	void EnsureMultiplayerTable();
+	void EnsureMultiplayerSeatAnchors();
 	void EnsureMultiplayerPawns();
 	FTransform GetMultiplayerPawnSpawnTransform(AController* Controller, int32 PlayerIndex);
 	ASDPlayerState* FindNextAliveMultiplayerPlayer(ASDPlayerState* AfterPlayer) const;
@@ -334,6 +358,8 @@ private:
 	void ClearMultiplayerHands();
 	void ClearMultiplayerForeheadCards();
 	void StartMultiplayerDuel(ASDPlayerState* FirstPlayer, ASDPlayerState* SecondPlayer);
+	bool AreAllAliveMultiplayerPlayersReadyToReveal() const;
+	bool AreAllActiveMultiplayerPlayersDoneBetting(int32 CurrentBet) const;
 	void StartMultiplayerCardSelection(ASDPlayerState* Giver, ASDPlayerState* Receiver);
 	void HandleMultiplayerSelectedCard(ASDPlayerState* SubmittingPlayer, ACard* SelectedCard);
 	void StartMultiplayerBetting();

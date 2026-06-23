@@ -49,6 +49,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void StartHostedGame();
 
+	// Leaves the current room and tears down the local EOS session before returning
+	// to the hub. A host leaving closes its listen-server room for the other clients.
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
+	void LeaveLobby(FName HubMapName = TEXT("L_Hub"));
+
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void StartLobbyStartPolling();
 
@@ -64,6 +69,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	FString GetLobbyCode() const;
 
+	int32 GetExpectedLobbyPlayerCount() const { return ExpectedLobbyPlayerCount; }
+
 private:
 	enum class ESessionFlow
 	{
@@ -72,7 +79,8 @@ private:
 		HostLobby,
 		JoinLobby,
 		PollLobbyStart,
-		JoinStartedGame
+		JoinStartedGame,
+		LeaveLobby
 	};
 
 	FDelegateHandle LoginCompleteDelegateHandle;
@@ -89,6 +97,7 @@ private:
 	FName PendingGameMapName = TEXT("L_MultiplayerGame");
 	FString PendingJoinCode;
 	FString LobbyCode;
+	int32 ExpectedLobbyPlayerCount = 2;
 	ESessionFlow PendingSessionFlow = ESessionFlow::None;
 	bool bLobbyStartPollInFlight = false;
 	bool bInMultiplayerLobby = false;
@@ -107,5 +116,6 @@ private:
 	void PollLobbyStart();
 	void JoinStartedGameSession();
 	void TravelHostedGame();
+	void CompleteLobbyLeave(bool bSessionDestroyed);
 	bool TravelToSearchResult(const FOnlineSessionSearchResult& SearchResult, const FString& StatusMessage);
 };

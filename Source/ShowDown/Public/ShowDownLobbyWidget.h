@@ -31,6 +31,7 @@ protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 private:
 	FString CachedRoomCode;
@@ -46,6 +47,9 @@ private:
 	UTextBlock* Text_Status;
 
 	UPROPERTY()
+	UTextBlock* Text_Players;
+
+	UPROPERTY()
 	UButton* Button_Start;
 
 	UPROPERTY()
@@ -54,6 +58,7 @@ private:
 	void BuildDefaultLayout();
 	UButton* CreateMenuButton(const FString& Label);
 	void RefreshLobbyText();
+	void RefreshParticipantText();
 
 	UFUNCTION()
 	void HandleStartClicked();

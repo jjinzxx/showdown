@@ -12,6 +12,7 @@ class AShowDownGameModeBase;
 class SWidget;
 class USceneComponent;
 class UShowDownChatWidget;
+class UShowDownLeaveConfirmWidget;
 
 UCLASS()
 class SHOWDOWN_API AShowDownPlayerController : public APlayerController
@@ -55,6 +56,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void RequestPlayerFold();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Multiplayer")
+	void RequestLeaveMultiplayerMatch();
+
+	void ConfirmLeaveMultiplayerMatch();
+	void CancelLeaveMultiplayerMatch();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Camera")
 	void SetFixedCameraMouseLook(
@@ -154,6 +161,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
 	FKey CloseChatKey = EKeys::Escape;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Multiplayer")
+	FKey LeaveMatchKey = EKeys::Escape;
+
 	UFUNCTION(Server, Reliable)
 	void ServerSubmitSelectedCard(ACard* SelectedCard);
 
@@ -172,8 +182,19 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerPlayerFold();
 
+	UFUNCTION(Server, Reliable)
+	void ServerSetMultiplayerDisplayName(const FString& DisplayName);
+
 	UFUNCTION(Client, Reliable)
 	void ClientShowStatusMessage(const FString& Message);
+
+	// Restores gameplay input after travelling from the UI-only multiplayer lobby.
+	UFUNCTION(Client, Reliable)
+	void ClientEnterMultiplayerGameplay();
+
+	// Selects one of the level-placed multiplayer seat cameras by its zero-based index.
+	UFUNCTION(Client, Reliable)
+	void ClientUseMultiplayerSeatCamera(int32 SeatIndex);
 
 private:
 	void InitializeFromPossessedPawn();
@@ -190,12 +211,17 @@ private:
 	void SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
 	void ApplyPawnCameraInput(float YawInput, float PitchInput);
 	void UpdateFixedCameraMouseLook();
+	bool TryApplyPendingMultiplayerSeatCamera();
+	bool UseFallbackMultiplayerSeatCamera(int32 SeatIndex);
 	void HandleBettingHotkeys();
 	void EnsureChatWidget();
+	void EnsureLeaveConfirmWidget();
+	void RestoreMultiplayerGameplayInput();
 	void ApplyChatInputMode(bool bOpen);
 	void CreateCenterCrosshairWidget();
 	void UpdateCenterCrosshairVisibility();
 	void RemoveCenterCrosshairWidget();
+	void SubmitLocalMultiplayerDisplayName();
 	FString GetChatSenderName() const;
 	AShowDownGameModeBase* ResolveGameMode() const;
 
@@ -212,11 +238,23 @@ private:
 	UShowDownChatWidget* ChatWidget = nullptr;
 
 	UPROPERTY()
+	UShowDownLeaveConfirmWidget* LeaveConfirmWidget = nullptr;
+
+	UPROPERTY()
 	TObjectPtr<USceneComponent> FixedCameraMouseLookTarget = nullptr;
+
+	// Created only on a local client when the map does not contain an authored
+	// MP_SeatCamera_* actor. It is deliberately non-replicated: every player
+	// must keep an independent, slot-specific view of the shared table.
+	TObjectPtr<ACameraActor> LocalFallbackSeatCamera = nullptr;
 
 	TSharedPtr<SWidget> CenterCrosshairWidget;
 
 	bool bChatOpen = false;
+	bool bPendingMultiplayerSeatCamera = false;
+	int32 PendingMultiplayerSeatIndex = INDEX_NONE;
+	FRotator PawnCameraBaseRotation = FRotator::ZeroRotator;
+	bool bHasPawnCameraBaseRotation = false;
 	FRotator FixedCameraBaseRotation = FRotator::ZeroRotator;
 	float FixedCameraLookSensitivity = 0.2f;
 	float FixedCameraMinPitch = -35.0f;

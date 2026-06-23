@@ -8,6 +8,7 @@
 #include "Net/UnrealNetwork.h"
 #include "SDPlayerState.h"
 #include "ShowDownPlayerController.h"
+#include "UObject/ConstructorHelpers.h"
 
 ACard::ACard()
 {
@@ -26,6 +27,15 @@ ACard::ACard()
 	CardMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	CardMesh->SetCollisionObjectType(ECC_WorldDynamic);
 	CardMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CardMeshAsset(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	// A native fallback keeps multiplayer cards visible even without a BP_Card
+	// override. The cube is flattened into an upright playing-card shape.
+	if (CardMeshAsset.Succeeded())
+	{
+		CardMesh->SetStaticMesh(CardMeshAsset.Object);
+		CardMesh->SetRelativeScale3D(FVector(0.03f, 0.45f, 0.65f));
+	}
+
 
 	InteractionBounds = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBounds"));
 	InteractionBounds->SetupAttachment(RootComp);
@@ -175,7 +185,10 @@ void ACard::RefreshVisual()
 
 	if (HandOwnerSlot != EShowDownPlayerSlot::None && LocalPlayerState)
 	{
-		bVisibleToLocalPlayer = LocalPlayerState->ShowDownSlot == HandOwnerSlot;
+		// In multiplayer a player must choose from their own hand without seeing
+		// its ranks. The other seats can see that player's face-up hand, matching
+		// the same information rule used by the single-player game.
+		bVisibleToLocalPlayer = LocalPlayerState->ShowDownSlot != HandOwnerSlot;
 	}
 
 	if (HiddenFromSlot != EShowDownPlayerSlot::None && LocalPlayerState)

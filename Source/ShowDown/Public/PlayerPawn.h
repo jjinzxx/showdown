@@ -21,6 +21,7 @@ class SHOWDOWN_API APlayerPawn : public APawn
 
 public:
 	APlayerPawn();
+
 	
 	//루트 컴포넌트
 	UPROPERTY(VisibleAnywhere, Category= Components)
@@ -189,6 +190,7 @@ public:
 
 protected:
 	// Called when the game starts or when spawned
+	virtual void PreInitializeComponents() override;
 	virtual void BeginPlay() override;
 	virtual void PossessedBy(AController* NewController) override;
 

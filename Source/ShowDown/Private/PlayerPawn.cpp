@@ -14,6 +14,7 @@
 #include "ShowDownChatWidget.h"
 #include "ShowDownPlayerController.h"
 #include "SupabaseSubsystem.h"
+#include "UObject/ConstructorHelpers.h"
 
 namespace
 {
@@ -30,6 +31,17 @@ APlayerPawn::APlayerPawn()
 	PrimaryActorTick.bCanEverTick = true;
 	AutoPossessPlayer = EAutoReceiveInput::Player0;
 	bReplicates = true;
+
+	static ConstructorHelpers::FClassFinder<UShowDownChatWidget> ChatWidgetBlueprint(
+		TEXT("/Game/UI/WBP_Chat"));
+	if (ChatWidgetBlueprint.Succeeded())
+	{
+		ChatWidgetClass = ChatWidgetBlueprint.Class;
+	}
+	else
+	{
+		ChatWidgetClass = UShowDownChatWidget::StaticClass();
+	}
 
 	// 루트 메시 컴포넌트 생성
 	rootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -49,6 +61,28 @@ APlayerPawn::APlayerPawn()
 	// 머리 위 카드 슬롯
 	PlayerHeadCard = CreateDefaultSubobject<USceneComponent>(TEXT("PlayerHeadCardSlot"));
 	PlayerHeadCard->SetupAttachment(rootComp);
+}
+
+void APlayerPawn::PreInitializeComponents()
+{
+	// Preserve the authored standalone map behavior, while preventing every
+	// replicated pawn from trying to claim local Player0 in a networked match.
+	if (GetNetMode() != NM_Standalone)
+	{
+		AutoPossessPlayer = EAutoReceiveInput::Disabled;
+
+		// The multiplayer map does not depend on authored pawn instances. Keep the
+		// player's own hand directly in front of the camera so center-screen card
+		// tracing works for every replicated pawn.
+		cameraComp->SetRelativeLocation(FVector(-220.0f, 0.0f, 220.0f));
+		// Each player's own hand is rendered in front of their seat camera.
+		// Keeping it slightly below the horizon makes it selectable without
+		// covering the shared table.
+		PlayerHandCard->SetRelativeLocation(FVector(300.0f, 0.0f, -35.0f));
+		PlayerHeadCard->SetRelativeLocation(FVector(250.0f, 0.0f, 125.0f));
+	}
+
+	Super::PreInitializeComponents();
 }
 
 void APlayerPawn::BeginPlay()
