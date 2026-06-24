@@ -2,6 +2,7 @@
 
 #include "Camera/CameraActor.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Components/AudioComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SceneComponent.h"
@@ -208,6 +209,7 @@ void ASDSelfShotGunActor::Tick(float DeltaSeconds)
 	}
 
 	UpdateHitSequence(DeltaSeconds);
+	UpdateTinnitusSound(DeltaSeconds);
 	UpdateSelfShotCinematicCamera(DeltaSeconds);
 	UpdateCinematicCameraSteppedShake(DeltaSeconds);
 
@@ -391,6 +393,18 @@ void ASDSelfShotGunActor::StartMechanismAnimation()
 	ChamberTargetRotation = ChamberCurrentRotation + ChamberStepRotationOffset;
 	AnimState = EGunAnimState::Cocking;
 	StateElapsedTime = 0.0f;
+
+	if (TriggerPullSound)
+	{
+		if (bPlayTriggerPullSound2D)
+		{
+			UGameplayStatics::PlaySound2D(this, TriggerPullSound);
+		}
+		else
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, TriggerPullSound, TriggerPivot->GetComponentLocation());
+		}
+	}
 }
 
 void ASDSelfShotGunActor::UpdateMechanismCocking()
@@ -782,6 +796,7 @@ void ASDSelfShotGunActor::EnterHitSequenceRecovery()
 	}
 
 	SetBlackoutInstant(0.0f, false);
+	StartTinnitusSound();
 	if (bSelfShotCinematicCameraActive && SelfShotCinematicCamera)
 	{
 		PlayCinematicCameraSteppedShake(
@@ -817,6 +832,79 @@ void ASDSelfShotGunActor::FinishHitSequence()
 	SetBlackoutInstant(0.0f, false);
 	HitSequenceState = EHitSequenceState::Idle;
 	HitSequenceElapsedTime = 0.0f;
+}
+
+void ASDSelfShotGunActor::StartTinnitusSound()
+{
+	StopTinnitusSound();
+
+	if (!TinnitusSound || TinnitusPlayDuration <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	TinnitusAudioComponent = UGameplayStatics::SpawnSound2D(
+		this,
+		TinnitusSound,
+		TinnitusVolumeMultiplier,
+		1.0f,
+		TinnitusStartTime,
+		nullptr,
+		false,
+		false);
+
+	if (TinnitusAudioComponent)
+	{
+		TinnitusElapsedTime = 0.0f;
+		bTinnitusFadeOutStarted = false;
+		TinnitusAudioComponent->FadeIn(
+			FMath::Min(TinnitusFadeInDuration, TinnitusPlayDuration),
+			TinnitusVolumeMultiplier,
+			TinnitusStartTime);
+	}
+}
+
+void ASDSelfShotGunActor::UpdateTinnitusSound(float DeltaSeconds)
+{
+	if (!TinnitusAudioComponent)
+	{
+		return;
+	}
+
+	TinnitusElapsedTime += DeltaSeconds;
+	const float FadeOutDuration = FMath::Min(TinnitusFadeOutDuration, TinnitusPlayDuration);
+	const float FadeOutStartTime = FMath::Max(0.0f, TinnitusPlayDuration - FadeOutDuration);
+
+	if (!bTinnitusFadeOutStarted && TinnitusElapsedTime >= FadeOutStartTime)
+	{
+		bTinnitusFadeOutStarted = true;
+		if (FadeOutDuration > KINDA_SMALL_NUMBER)
+		{
+			TinnitusAudioComponent->FadeOut(FadeOutDuration, 0.0f);
+		}
+		else
+		{
+			TinnitusAudioComponent->Stop();
+		}
+	}
+
+	if (TinnitusElapsedTime >= TinnitusPlayDuration)
+	{
+		StopTinnitusSound();
+	}
+}
+
+void ASDSelfShotGunActor::StopTinnitusSound()
+{
+	if (TinnitusAudioComponent)
+	{
+		TinnitusAudioComponent->Stop();
+		TinnitusAudioComponent->DestroyComponent();
+		TinnitusAudioComponent = nullptr;
+	}
+
+	TinnitusElapsedTime = 0.0f;
+	bTinnitusFadeOutStarted = false;
 }
 
 void ASDSelfShotGunActor::SetBlackoutInstant(float Alpha, bool bHoldWhenFinished)

@@ -13,7 +13,7 @@
 
 namespace
 {
-	FSDArtToneSettings LerpArtToneSettings(const FSDArtToneSettings& From, const FSDArtToneSettings& To, float Alpha)
+	FSDArtToneSettings LerpCigaretteArtToneSettings(const FSDArtToneSettings& From, const FSDArtToneSettings& To, float Alpha)
 	{
 		FSDArtToneSettings Result;
 		Result.PixelCount = FMath::Lerp(From.PixelCount, To.PixelCount, Alpha);
@@ -408,7 +408,7 @@ void ASDSmokableCigaretteActor::UpdateScreenEffect(float DeltaSeconds)
 			? FMath::Clamp(EffectElapsedTime / ScreenEffectFadeInTime, 0.0f, 1.0f)
 			: 1.0f;
 		const float EffectStrength = FMath::InterpEaseInOut(0.0f, FMath::Clamp(ScreenEffectMaxStrength, 0.0f, 1.0f), FadeAlpha, 2.0f);
-		Controller->ApplyArtTone(LerpArtToneSettings(ScreenEffectBaseSettings, SmokeScreenEffectSettings, EffectStrength));
+		Controller->ApplyArtTone(LerpCigaretteArtToneSettings(ScreenEffectBaseSettings, SmokeScreenEffectSettings, EffectStrength));
 		return;
 	}
 
@@ -419,7 +419,7 @@ void ASDSmokableCigaretteActor::UpdateScreenEffect(float DeltaSeconds)
 			? FMath::Clamp(ScreenEffectRestoreElapsedTime / ScreenEffectFadeOutTime, 0.0f, 1.0f)
 			: 1.0f;
 		const float EasedAlpha = FMath::InterpEaseInOut(0.0f, 1.0f, FadeAlpha, 2.0f);
-		Controller->ApplyArtTone(LerpArtToneSettings(ScreenEffectReleaseStartSettings, ScreenEffectBaseSettings, EasedAlpha));
+		Controller->ApplyArtTone(LerpCigaretteArtToneSettings(ScreenEffectReleaseStartSettings, ScreenEffectBaseSettings, EasedAlpha));
 
 		if (FadeAlpha >= 1.0f)
 		{

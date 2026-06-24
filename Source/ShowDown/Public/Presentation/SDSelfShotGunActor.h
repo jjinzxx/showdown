@@ -8,6 +8,7 @@
 
 class UBoxComponent;
 class ACameraActor;
+class UAudioComponent;
 class UPointLightComponent;
 class USceneComponent;
 class USoundBase;
@@ -202,6 +203,30 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects")
 	bool bPlayGunshotSound2D = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects")
+	TObjectPtr<USoundBase> TriggerPullSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects")
+	bool bPlayTriggerPullSound2D = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Tinnitus")
+	TObjectPtr<USoundBase> TinnitusSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Tinnitus", meta = (ClampMin = "0.05"))
+	float TinnitusPlayDuration = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Tinnitus", meta = (ClampMin = "0.0"))
+	float TinnitusFadeInDuration = 0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Tinnitus", meta = (ClampMin = "0.0"))
+	float TinnitusFadeOutDuration = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Tinnitus", meta = (ClampMin = "0.0"))
+	float TinnitusStartTime = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Tinnitus", meta = (ClampMin = "0.0"))
+	float TinnitusVolumeMultiplier = 1.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Muzzle Flash", meta = (ClampMin = "0.0"))
 	float MuzzleFlashIntensity = 100000.0f;
 
@@ -320,6 +345,9 @@ private:
 	void EnterHitSequenceBlackout();
 	void EnterHitSequenceRecovery();
 	void FinishHitSequence();
+	void StartTinnitusSound();
+	void UpdateTinnitusSound(float DeltaSeconds);
+	void StopTinnitusSound();
 	void SetBlackoutInstant(float Alpha, bool bHoldWhenFinished);
 	ASDArtToneController* ResolveHitSequenceArtToneController();
 	FTransform GetFirstPersonGunTransform() const;
@@ -352,11 +380,15 @@ private:
 	float CinematicCameraShakeSeed = 0.0f;
 	float HitSequenceElapsedTime = 0.0f;
 	float MuzzleFlashElapsedTime = 0.0f;
+	float TinnitusElapsedTime = 0.0f;
 	bool bSelfShotCinematicCameraActive = false;
 	bool bSelfShotCinematicCameraStartPending = false;
 	bool bSelfShotCinematicCameraHoldStarted = false;
 	bool bHasCachedFirstPersonPoseCamera = false;
 	bool bCinematicCameraShakeActive = false;
+	bool bTinnitusFadeOutStarted = false;
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> TinnitusAudioComponent;
 	FRotator CinematicCameraShakeRotationAmplitude = FRotator::ZeroRotator;
 	FVector CinematicCameraShakeLocationAmplitude = FVector::ZeroVector;
 	FTransform CinematicCameraShakeBaseTransform;
