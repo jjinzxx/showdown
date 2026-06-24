@@ -7,6 +7,7 @@
 #include "SDSelfShotGunActor.generated.h"
 
 class UBoxComponent;
+class ACameraActor;
 class UPointLightComponent;
 class USceneComponent;
 class USoundBase;
@@ -67,16 +68,43 @@ protected:
 	TObjectPtr<UStaticMeshComponent> ChamberMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> BulletMesh01;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> BulletMesh02;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> BulletMesh03;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> BulletMesh04;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> BulletMesh05;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> BulletMesh06;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> TriggerPivot;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> TriggerMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> HammerPivot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> HammerMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> HandleMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> RatchetMechanismMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> ExtraMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> MuzzlePoint;
@@ -87,11 +115,26 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person")
 	bool bUseFirstPersonPose = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person|Preview", meta = (EditCondition = "bUseFirstPersonPose", DisplayName = "Preview First Person Pose (PIE)", ToolTip = "During PIE, keeps the gun at its first-person pose while idle so offsets can be adjusted without triggering the interaction."))
+	bool bPreviewFirstPersonPose = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person", meta = (DisplayName = "Camera Offset (Forward, Right, Up)", ToolTip = "X moves forward and backward from the camera. Y moves right and left. Z moves up and down."))
 	FVector FirstPersonCameraOffset = FVector(34.0f, 26.0f, -18.0f);
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person", meta = (DisplayName = "Rotation Offset (Pitch, Yaw, Roll)", ToolTip = "Pitch tilts the barrel up and down. Yaw turns it left and right. Roll twists it sideways."))
 	FRotator FirstPersonRotationOffset = FRotator(-22.0f, 0.0f, -58.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person|Held Jitter")
+	bool bEnableHeldGunJitter = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person|Held Jitter")
+	FRotator HeldGunJitterRotationAmplitude = FRotator(0.28f, 0.38f, 0.32f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person|Held Jitter")
+	FVector HeldGunJitterLocationAmplitude = FVector(0.18f, 0.28f, 0.16f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person|Held Jitter", meta = (ClampMin = "0.01"))
+	float HeldGunJitterStepInterval = 0.07f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Timing", meta = (ClampMin = "0.01"))
 	float RaiseTime = 0.45f;
@@ -104,6 +147,54 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Timing", meta = (ClampMin = "0.01"))
 	float ReturnTime = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism")
+	bool bEnableMechanismAnimation = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Timing", meta = (ClampMin = "0.01"))
+	float MechanismCockTime = 0.24f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Timing", meta = (ClampMin = "0.01"))
+	float HammerReleaseTime = 0.055f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Timing", meta = (ClampMin = "0.01"))
+	float TriggerResetTime = 0.16f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Rotation")
+	FRotator TriggerPulledRotationOffset = FRotator(-18.0f, 0.0f, 0.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Rotation")
+	FRotator HammerCockedRotationOffset = FRotator(-38.0f, 0.0f, 0.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Rotation")
+	FRotator HammerFiredRotationOffset = FRotator(5.0f, 0.0f, 0.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Rotation")
+	FRotator ChamberStepRotationOffset = FRotator(0.0f, 0.0f, 60.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism")
+	bool bKeepChamberRotationAfterShot = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Cinematic Camera")
+	bool bUseSelfShotCinematicCamera = true;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Self Shot Gun|Cinematic Camera")
+	TObjectPtr<ACameraActor> SelfShotCinematicCamera;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Cinematic Camera", meta = (ClampMin = "0.0"))
+	float CinematicCameraStartDelay = 0.3f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Cinematic Camera", meta = (ClampMin = "0.0"))
+	float CinematicCameraBlendInTime = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Cinematic Camera", meta = (ClampMin = "0.0"))
+	float CinematicCameraHoldTime = 2.4f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Cinematic Camera", meta = (ClampMin = "0.0"))
+	float CinematicCameraBlendOutTime = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Cinematic Camera", meta = (ClampMin = "1.0"))
+	float CinematicCameraBlendExponent = 2.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects")
 	TObjectPtr<USoundBase> GunshotSound;
@@ -189,6 +280,8 @@ private:
 		Idle,
 		Raising,
 		Aiming,
+		Cocking,
+		HammerReleasing,
 		Fired,
 		Returning
 	};
@@ -204,6 +297,24 @@ private:
 
 	void FireGun();
 	void FinishSequence();
+	void StartMechanismAnimation();
+	void UpdateMechanismCocking();
+	void UpdateHammerRelease();
+	void UpdateMechanismReset();
+	void ResetTriggerAndHammer();
+	void StartSelfShotCinematicCamera();
+	void ActivateSelfShotCinematicCamera();
+	void UpdateSelfShotCinematicCamera(float DeltaSeconds);
+	void CaptureFirstPersonPoseCamera();
+	FTransform ApplyHeldGunJitter(const FTransform& BaseTransform) const;
+	void PlayCinematicCameraSteppedShake(
+		float HoldDuration,
+		float BlendOutTime,
+		FRotator RotationAmplitude,
+		FVector LocationAmplitude,
+		float StepInterval);
+	void UpdateCinematicCameraSteppedShake(float DeltaSeconds);
+	static FRotator LerpRotation(const FRotator& From, const FRotator& To, float Alpha);
 	void StartHitSequence();
 	void UpdateHitSequence(float DeltaSeconds);
 	void EnterHitSequenceBlackout();
@@ -217,11 +328,37 @@ private:
 	FTransform RestActorTransform;
 	FTransform RaiseStartTransform;
 	FTransform ReturnStartTransform;
+	FRotator TriggerRestRotation = FRotator::ZeroRotator;
+	FRotator HammerRestRotation = FRotator::ZeroRotator;
+	FRotator ChamberInitialRotation = FRotator::ZeroRotator;
+	FRotator ChamberCurrentRotation = FRotator::ZeroRotator;
+	FRotator ChamberStartRotation = FRotator::ZeroRotator;
+	FRotator ChamberTargetRotation = FRotator::ZeroRotator;
+	FRotator CachedFirstPersonCameraRotation = FRotator::ZeroRotator;
+	FVector CachedFirstPersonCameraLocation = FVector::ZeroVector;
+	TWeakObjectPtr<AActor> PreviousViewTarget;
 	ECollisionEnabled::Type OriginalCollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 	EGunAnimState AnimState = EGunAnimState::Idle;
 	EHitSequenceState HitSequenceState = EHitSequenceState::Idle;
 	float StateElapsedTime = 0.0f;
+	float MechanismResetElapsedTime = 0.0f;
+	float HeldGunJitterElapsedTime = 0.0f;
+	float CinematicCameraStartElapsedTime = 0.0f;
+	float CinematicCameraElapsedTime = 0.0f;
+	float CinematicCameraShakeElapsedTime = 0.0f;
+	float CinematicCameraShakeHoldDuration = 0.0f;
+	float CinematicCameraShakeBlendOutTime = 0.0f;
+	float CinematicCameraShakeStepInterval = 0.06f;
+	float CinematicCameraShakeSeed = 0.0f;
 	float HitSequenceElapsedTime = 0.0f;
 	float MuzzleFlashElapsedTime = 0.0f;
+	bool bSelfShotCinematicCameraActive = false;
+	bool bSelfShotCinematicCameraStartPending = false;
+	bool bSelfShotCinematicCameraHoldStarted = false;
+	bool bHasCachedFirstPersonPoseCamera = false;
+	bool bCinematicCameraShakeActive = false;
+	FRotator CinematicCameraShakeRotationAmplitude = FRotator::ZeroRotator;
+	FVector CinematicCameraShakeLocationAmplitude = FVector::ZeroVector;
+	FTransform CinematicCameraShakeBaseTransform;
 	FSDArtToneSettings HitSequenceBaseSettings;
 };
