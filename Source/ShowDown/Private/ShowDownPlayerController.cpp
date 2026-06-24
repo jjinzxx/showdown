@@ -19,6 +19,7 @@
 #include "ShowDownEosSubsystem.h"
 #include "ShowDownGameModeBase.h"
 #include "ShowDownLeaveConfirmWidget.h"
+#include "ShowDownMultiRankWidget.h"
 #include "UObject/ConstructorHelpers.h"
 #include "SlateOptMacros.h"
 #include "Styling/CoreStyle.h"
@@ -139,6 +140,17 @@ AShowDownPlayerController::AShowDownPlayerController()
 	{
 		ChatWidgetClass = UShowDownChatWidget::StaticClass();
 	}
+
+	static ConstructorHelpers::FClassFinder<UShowDownMultiRankWidget> MultiRankWidgetBlueprint(
+		TEXT("/Game/UI/WBP_MultiRank"));
+	if (MultiRankWidgetBlueprint.Succeeded())
+	{
+		MultiplayerRankWidgetClass = MultiRankWidgetBlueprint.Class;
+	}
+	else
+	{
+		MultiplayerRankWidgetClass = UShowDownMultiRankWidget::StaticClass();
+	}
 }
 
 void AShowDownPlayerController::BeginPlay()
@@ -184,6 +196,7 @@ void AShowDownPlayerController::ClientEnterMultiplayerGameplay_Implementation()
 	}
 	ChatWidget = nullptr;
 	LeaveConfirmWidget = nullptr;
+	MultiplayerRankWidget = nullptr;
 	bChatOpen = false;
 
 	bHandleShowDownGameplayInput = true;
@@ -1318,8 +1331,81 @@ void AShowDownPlayerController::ServerSetMultiplayerDisplayName_Implementation(c
 void AShowDownPlayerController::ClientShowStatusMessage_Implementation(const FString& Message)
 {
 	UE_LOG(LogTemp, Log, TEXT("ShowDown status: %s"), *Message);
+	if (MultiplayerRankWidget)
+	{
+		MultiplayerRankWidget->SetRestartStatus(Message);
+	}
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Green, Message);
 	}
+}
+
+void AShowDownPlayerController::ServerRequestMultiplayerRestart_Implementation()
+{
+	if (AShowDownGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AShowDownGameModeBase>() : nullptr)
+	{
+		GameMode->RequestMultiplayerRestartFromController(this);
+	}
+}
+
+void AShowDownPlayerController::ClientShowMultiplayerRank_Implementation(const TArray<FString>& PlayerNames)
+{
+	RemoveCenterCrosshairWidget();
+	if (ChatWidget)
+	{
+		ChatWidget->RemoveFromParent();
+		ChatWidget = nullptr;
+	}
+	if (LeaveConfirmWidget)
+	{
+		LeaveConfirmWidget->RemoveFromParent();
+		LeaveConfirmWidget = nullptr;
+	}
+
+	if (MultiplayerRankWidget)
+	{
+		MultiplayerRankWidget->RemoveFromParent();
+		MultiplayerRankWidget = nullptr;
+	}
+
+	if (!MultiplayerRankWidgetClass)
+	{
+		MultiplayerRankWidgetClass = UShowDownMultiRankWidget::StaticClass();
+	}
+
+	MultiplayerRankWidget = CreateWidget<UShowDownMultiRankWidget>(this, MultiplayerRankWidgetClass);
+	if (!MultiplayerRankWidget)
+	{
+		return;
+	}
+
+	MultiplayerRankWidget->OnRestartRequested.AddDynamic(this, &AShowDownPlayerController::HandleMultiRankRestartRequested);
+	MultiplayerRankWidget->OnMainMenuRequested.AddDynamic(this, &AShowDownPlayerController::HandleMultiRankMainMenuRequested);
+	MultiplayerRankWidget->SetRanking(PlayerNames);
+	MultiplayerRankWidget->AddToViewport(100);
+
+	FInputModeUIOnly InputMode;
+	InputMode.SetWidgetToFocus(MultiplayerRankWidget->TakeWidget());
+	SetInputMode(InputMode);
+	bShowMouseCursor = true;
+	bEnableClickEvents = true;
+	bEnableMouseOverEvents = true;
+	bHandleShowDownGameplayInput = false;
+	UpdateCenterCrosshairVisibility();
+}
+
+void AShowDownPlayerController::HandleMultiRankRestartRequested()
+{
+	if (MultiplayerRankWidget)
+	{
+		MultiplayerRankWidget->SetRestartStatus(TEXT("재시작 동의 완료. 다른 참가자를 기다리는 중..."));
+	}
+
+	ServerRequestMultiplayerRestart();
+}
+
+void AShowDownPlayerController::HandleMultiRankMainMenuRequested()
+{
+	ConfirmLeaveMultiplayerMatch();
 }

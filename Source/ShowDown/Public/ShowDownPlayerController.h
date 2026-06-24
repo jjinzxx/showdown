@@ -13,6 +13,7 @@ class SWidget;
 class USceneComponent;
 class UShowDownChatWidget;
 class UShowDownLeaveConfirmWidget;
+class UShowDownMultiRankWidget;
 
 UCLASS()
 class SHOWDOWN_API AShowDownPlayerController : public APlayerController
@@ -155,6 +156,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ShowDown|Chat")
 	TSubclassOf<UShowDownChatWidget> ChatWidgetClass;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ShowDown|Multiplayer")
+	TSubclassOf<UShowDownMultiRankWidget> MultiplayerRankWidgetClass;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
 	FKey ToggleChatKey = EKeys::T;
 
@@ -185,8 +189,14 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerSetMultiplayerDisplayName(const FString& DisplayName);
 
+	UFUNCTION(Server, Reliable)
+	void ServerRequestMultiplayerRestart();
+
 	UFUNCTION(Client, Reliable)
 	void ClientShowStatusMessage(const FString& Message);
+
+	UFUNCTION(Client, Reliable)
+	void ClientShowMultiplayerRank(const TArray<FString>& PlayerNames);
 
 	// Restores gameplay input after travelling from the UI-only multiplayer lobby.
 	UFUNCTION(Client, Reliable)
@@ -223,6 +233,10 @@ private:
 	void RemoveCenterCrosshairWidget();
 	void SubmitLocalMultiplayerDisplayName();
 	FString GetChatSenderName() const;
+	UFUNCTION()
+	void HandleMultiRankRestartRequested();
+	UFUNCTION()
+	void HandleMultiRankMainMenuRequested();
 	AShowDownGameModeBase* ResolveGameMode() const;
 
 	UPROPERTY()
@@ -239,6 +253,9 @@ private:
 
 	UPROPERTY()
 	UShowDownLeaveConfirmWidget* LeaveConfirmWidget = nullptr;
+
+	UPROPERTY()
+	UShowDownMultiRankWidget* MultiplayerRankWidget = nullptr;
 
 	UPROPERTY()
 	TObjectPtr<USceneComponent> FixedCameraMouseLookTarget = nullptr;

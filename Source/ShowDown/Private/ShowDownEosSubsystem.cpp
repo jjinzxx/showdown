@@ -346,10 +346,6 @@ void UShowDownEosSubsystem::StartHostedGame()
 		return;
 	}
 
-	// Server travel is asynchronous for clients. Preserve the exact lobby
-	// population so the destination map cannot begin with only early arrivals.
-	ExpectedLobbyPlayerCount = FMath::Clamp(FMath::Max(PlayerControllerCount, LobbySlotCount), 2, 4);
-
 	const IOnlineSessionPtr SessionInterface = GetSessionInterface();
 	FNamedOnlineSession* NamedSession = SessionInterface.IsValid()
 		? SessionInterface->GetNamedSession(ShowDownSessionName)
@@ -357,10 +353,20 @@ void UShowDownEosSubsystem::StartHostedGame()
 
 	if (!SessionInterface.IsValid() || !NamedSession)
 	{
+		ExpectedLobbyPlayerCount = FMath::Clamp(FMath::Max(PlayerControllerCount, LobbySlotCount), 2, 4);
 		OnSessionResult.Broadcast(true, TEXT("Starting game without EOS session update..."));
 		TravelHostedGame();
 		return;
 	}
+
+	const int32 RegisteredPlayerCount = NamedSession->RegisteredPlayers.Num();
+
+	// Server travel is asynchronous for clients. Preserve the exact lobby
+	// population so the destination map cannot begin with only early arrivals.
+	ExpectedLobbyPlayerCount = FMath::Clamp(
+		FMath::Max3(PlayerControllerCount, LobbySlotCount, RegisteredPlayerCount),
+		2,
+		4);
 
 	if (UpdateSessionCompleteDelegateHandle.IsValid())
 	{

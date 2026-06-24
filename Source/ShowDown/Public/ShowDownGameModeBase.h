@@ -191,6 +191,8 @@ public:
 
 	void RefreshMultiplayerLobbyPlayers();
 
+	void RequestMultiplayerRestartFromController(AController* RequestingController);
+
 	// 게임 종료 후 허브(메인메뉴)로 돌아갈 때 게임판을 정리합니다.
 	// 진행 중인 타이머/베팅 상태를 끄고 테이블의 카드를 모두 제거합니다.
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
@@ -264,6 +266,9 @@ private:
 	TArray<TObjectPtr<ASDPlayerState>> MultiplayerPlayers;
 
 	UPROPERTY()
+	TArray<TObjectPtr<ASDPlayerState>> MultiplayerEliminationOrder;
+
+	UPROPERTY()
 	TObjectPtr<ASDPlayerState> MultiplayerDuelA = nullptr;
 
 	UPROPERTY()
@@ -297,6 +302,7 @@ private:
 
 	TSet<TObjectPtr<ASDPlayerState>> MultiplayerFoldedPlayers;
 	TSet<TObjectPtr<ASDPlayerState>> MultiplayerPlayersActed;
+	TSet<TObjectPtr<ASDPlayerState>> MultiplayerRestartVotes;
 
 	FTimerHandle MultiplayerStartTimerHandle;
 	bool bMultiplayerMatchStarted = false;
@@ -368,6 +374,7 @@ private:
 	void FinishMultiplayerRoundByFold(ASDPlayerState* FoldedPlayer);
 	void ApplyMultiplayerRoulette(ASDPlayerState* TargetPlayer, int32 BulletCount);
 	void EndMultiplayerRound();
+	void ShowMultiplayerFinalRanking(ASDPlayerState* Winner);
 	void SetMultiplayerSelectableHand(ASDPlayerState* Player);
 	void ReflowMultiplayerHand(ASDPlayerState* Player);
 	USceneComponent* GetHandSlotForPlayerState(ASDPlayerState* Player) const;

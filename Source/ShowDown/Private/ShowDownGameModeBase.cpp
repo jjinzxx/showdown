@@ -211,6 +211,37 @@ void AShowDownGameModeBase::PostLogin(APlayerController* NewPlayer)
 
 	if (bMultiplayerMatchStarted)
 	{
+		int32 ExpectedPlayerCount = 4;
+		if (const UGameInstance* GameInstance = GetGameInstance())
+		{
+			if (const UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+			{
+				ExpectedPlayerCount = FMath::Clamp(EosSubsystem->GetExpectedLobbyPlayerCount(), 2, 4);
+			}
+		}
+
+		if (ASDPlayerState* ShowDownPlayerState = NewPlayer ? NewPlayer->GetPlayerState<ASDPlayerState>() : nullptr)
+		{
+			if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
+			{
+				ShowDownPlayerState->SetShowDownSlot(FindNextOpenPlayerSlot());
+			}
+
+			RefreshNetworkPlayerSlots();
+			TArray<ASDPlayerState*> ConnectedPlayers = GetConnectedShowDownPlayers();
+			if (ShowDownPlayerState->ShowDownSlot != EShowDownPlayerSlot::None
+				&& ConnectedPlayers.Num() <= ExpectedPlayerCount
+				&& MultiplayerPlayers.Num() < ExpectedPlayerCount)
+			{
+				NotifyMultiplayerStatus(FString::Printf(
+					TEXT("늦게 도착한 참가자 포함. 멀티플레이어 동기화 중... %d/%d"),
+					ConnectedPlayers.Num(),
+					ExpectedPlayerCount));
+				StartMultiplayerMatch(ConnectedPlayers);
+				return;
+			}
+		}
+
 		if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(NewPlayer))
 		{
 			ShowDownController->ClientShowStatusMessage(TEXT("게임이 이미 시작되어 입장할 수 없습니다."));
@@ -1997,6 +2028,8 @@ void AShowDownGameModeBase::StartMultiplayerMatch(const TArray<ASDPlayerState*>&
 	bMultiplayerMatchStarted = true;
 	bMultiplayerRoundResolving = false;
 	MultiplayerPlayers.Reset();
+	MultiplayerEliminationOrder.Reset();
+	MultiplayerRestartVotes.Reset();
 	MultiplayerNextFirstPlayer = nullptr;
 
 	for (ASDPlayerState* Player : Players)
@@ -2799,6 +2832,7 @@ void AShowDownGameModeBase::ApplyMultiplayerRoulette(ASDPlayerState* TargetPlaye
 
 	const int32 ClampedBulletCount = FMath::Clamp(BulletCount, 1, 6);
 	const bool bHit = RouletteSystem->RollRoulette(ClampedBulletCount);
+	const int32 PreviousLives = TargetPlayer->Lives;
 	NotifyMultiplayerStatus(FString::Printf(
 		TEXT("%s 룰렛 %d/6: %s"),
 		*TargetPlayer->GetPlayerName(),
@@ -2808,6 +2842,10 @@ void AShowDownGameModeBase::ApplyMultiplayerRoulette(ASDPlayerState* TargetPlaye
 	if (bHit)
 	{
 		TargetPlayer->Lives = FMath::Max(0, TargetPlayer->Lives - 1);
+		if (PreviousLives > 0 && TargetPlayer->Lives <= 0)
+		{
+			MultiplayerEliminationOrder.AddUnique(TargetPlayer);
+		}
 		NotifyMultiplayerStatus(FString::Printf(
 			TEXT("%s 남은 목숨: %d"),
 			*TargetPlayer->GetPlayerName(),
@@ -2841,6 +2879,7 @@ void AShowDownGameModeBase::EndMultiplayerRound()
 		NotifyMultiplayerStatus(FString::Printf(
 			TEXT("게임 종료. 승자: %s"),
 			Winner ? *Winner->GetPlayerName() : TEXT("없음")));
+		ShowMultiplayerFinalRanking(Winner);
 		return;
 	}
 
@@ -2876,6 +2915,118 @@ void AShowDownGameModeBase::EndMultiplayerRound()
 
 	ASDPlayerState* NextSecond = FindNextAliveMultiplayerPlayer(NextFirst);
 	StartMultiplayerDuel(NextFirst, NextSecond);
+}
+
+void AShowDownGameModeBase::ShowMultiplayerFinalRanking(ASDPlayerState* Winner)
+{
+	MultiplayerRestartVotes.Reset();
+
+	TArray<ASDPlayerState*> FinalRanking;
+	if (Winner)
+	{
+		FinalRanking.Add(Winner);
+	}
+
+	for (int32 Index = MultiplayerEliminationOrder.Num() - 1; Index >= 0; --Index)
+	{
+		ASDPlayerState* EliminatedPlayer = MultiplayerEliminationOrder[Index];
+		if (EliminatedPlayer)
+		{
+			FinalRanking.AddUnique(EliminatedPlayer);
+		}
+	}
+
+	for (ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (Player)
+		{
+			FinalRanking.AddUnique(Player);
+		}
+	}
+
+	TArray<FString> RankNames;
+	for (ASDPlayerState* Player : FinalRanking)
+	{
+		RankNames.Add(Player ? Player->GetPlayerName() : TEXT("Unknown"));
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+		{
+			if (AShowDownPlayerController* PlayerController = Cast<AShowDownPlayerController>(Iterator->Get()))
+			{
+				PlayerController->ClientShowMultiplayerRank(RankNames);
+			}
+		}
+	}
+}
+
+void AShowDownGameModeBase::RequestMultiplayerRestartFromController(AController* RequestingController)
+{
+	ASDPlayerState* RequestingPlayer = GetPlayerStateForController(RequestingController);
+	if (!RequestingPlayer)
+	{
+		return;
+	}
+
+	AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState();
+	if (!ShowDownGameState || ShowDownGameState->CurrentPhase != EShowDownPhase::GameOver)
+	{
+		if (AShowDownPlayerController* PlayerController = Cast<AShowDownPlayerController>(RequestingController))
+		{
+			PlayerController->ClientShowStatusMessage(TEXT("게임 종료 화면에서만 재시작할 수 있습니다."));
+		}
+		return;
+	}
+
+	TArray<ASDPlayerState*> ConnectedPlayers = GetConnectedShowDownPlayers();
+	if (ConnectedPlayers.Num() <= 0)
+	{
+		return;
+	}
+
+	MultiplayerRestartVotes.Add(RequestingPlayer);
+	TSet<TObjectPtr<ASDPlayerState>> ConnectedPlayerSet;
+	for (ASDPlayerState* ConnectedPlayer : ConnectedPlayers)
+	{
+		ConnectedPlayerSet.Add(ConnectedPlayer);
+	}
+
+	for (auto VoteIterator = MultiplayerRestartVotes.CreateIterator(); VoteIterator; ++VoteIterator)
+	{
+		if (!ConnectedPlayerSet.Contains(*VoteIterator))
+		{
+			VoteIterator.RemoveCurrent();
+		}
+	}
+
+	const int32 RequiredVotes = ConnectedPlayers.Num();
+	const int32 CurrentVotes = MultiplayerRestartVotes.Num();
+	const FString VoteMessage = FString::Printf(TEXT("재시작 동의 %d/%d"), CurrentVotes, RequiredVotes);
+	NotifyMultiplayerStatus(VoteMessage);
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+	{
+		if (AShowDownPlayerController* PlayerController = Cast<AShowDownPlayerController>(Iterator->Get()))
+		{
+			PlayerController->ClientShowStatusMessage(VoteMessage);
+		}
+	}
+
+	if (CurrentVotes < RequiredVotes)
+	{
+		return;
+	}
+
+	NotifyMultiplayerStatus(TEXT("전원 동의. 게임을 재시작합니다."));
+	StartMultiplayerMatch(ConnectedPlayers);
 }
 
 void AShowDownGameModeBase::SetMultiplayerSelectableHand(ASDPlayerState* Player)
