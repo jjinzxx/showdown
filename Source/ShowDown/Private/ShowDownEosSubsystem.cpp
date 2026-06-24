@@ -8,6 +8,7 @@
 #include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
 #include "OnlineSubsystem.h"
+#include "ShowDownGameStateBase.h"
 #include "SupabaseSubsystem.h"
 
 namespace
@@ -324,14 +325,18 @@ void UShowDownEosSubsystem::StartHostedGame()
 	{
 		++PlayerControllerCount;
 	}
+	const int32 LobbySlotCount = World->GetGameState<AShowDownGameStateBase>()
+		? World->GetGameState<AShowDownGameStateBase>()->PlayerSlots.Num()
+		: 0;
 
 	AGameModeBase* GameMode = World->GetAuthGameMode();
 	UE_LOG(
 		LogTemp,
 		Log,
-		TEXT("Starting hosted game. NetMode=%d, PlayerControllers=%d, TargetMap=%s"),
+		TEXT("Starting hosted game. NetMode=%d, PlayerControllers=%d, LobbySlots=%d, TargetMap=%s"),
 		static_cast<int32>(World->GetNetMode()),
 		PlayerControllerCount,
+		LobbySlotCount,
 		*PendingGameMapName.ToString()
 	);
 
@@ -343,7 +348,7 @@ void UShowDownEosSubsystem::StartHostedGame()
 
 	// Server travel is asynchronous for clients. Preserve the exact lobby
 	// population so the destination map cannot begin with only early arrivals.
-	ExpectedLobbyPlayerCount = FMath::Clamp(PlayerControllerCount, 2, 4);
+	ExpectedLobbyPlayerCount = FMath::Clamp(FMath::Max(PlayerControllerCount, LobbySlotCount), 2, 4);
 
 	const IOnlineSessionPtr SessionInterface = GetSessionInterface();
 	FNamedOnlineSession* NamedSession = SessionInterface.IsValid()
@@ -472,6 +477,8 @@ void UShowDownEosSubsystem::MarkEnteredMultiplayerGame()
 	StopLobbyStartPolling();
 	bInMultiplayerLobby = false;
 	bLobbyHost = false;
+	PendingJoinCode.Empty();
+	SessionSearch.Reset();
 	PendingSessionFlow = ESessionFlow::None;
 }
 
@@ -660,8 +667,10 @@ void UShowDownEosSubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 
 				StopLobbyStartPolling();
 				bInMultiplayerLobby = false;
+				PendingJoinCode.Empty();
 				PendingStartedGameSearchResult = SessionSearch->SearchResults[MatchIndex];
 				PendingSessionFlow = ESessionFlow::None;
+				SessionSearch.Reset();
 				OnSessionResult.Broadcast(true, TEXT("Host started. Waiting for server travel..."));
 			}
 			return;
