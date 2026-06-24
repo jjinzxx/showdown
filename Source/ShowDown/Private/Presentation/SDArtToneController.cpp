@@ -129,21 +129,39 @@ void ASDArtToneController::SetPixelCount(float NewPixelCount)
 	ApplyPixelateParameters(CurrentSettings);
 }
 
-void ASDArtToneController::SetScanlineCount(float NewScanlineCount)
-{
-	CurrentSettings.ScanlineCount = FMath::Max(1.0f, NewScanlineCount);
-	ApplyPixelateParameters(CurrentSettings);
-}
-
-void ASDArtToneController::SetScanlineStrength(float NewScanlineStrength)
-{
-	CurrentSettings.ScanlineStrength = FMath::Max(0.0f, NewScanlineStrength);
-	ApplyPixelateParameters(CurrentSettings);
-}
-
 void ASDArtToneController::SetColorSteps(float NewColorSteps)
 {
 	CurrentSettings.ColorSteps = FMath::Max(1.0f, NewColorSteps);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
+void ASDArtToneController::SetHalftoneStrength(float NewHalftoneStrength)
+{
+	CurrentSettings.HalftoneStrength = FMath::Clamp(NewHalftoneStrength, 0.0f, 1.0f);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
+void ASDArtToneController::SetHalftoneCount(float NewHalftoneCount)
+{
+	CurrentSettings.HalftoneCount = FMath::Max(1.0f, NewHalftoneCount);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
+void ASDArtToneController::SetHalftoneRadius(float NewHalftoneRadius)
+{
+	CurrentSettings.HalftoneRadius = FMath::Clamp(NewHalftoneRadius, 0.0f, 1.0f);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
+void ASDArtToneController::SetHalftoneSoftness(float NewHalftoneSoftness)
+{
+	CurrentSettings.HalftoneSoftness = FMath::Clamp(NewHalftoneSoftness, 0.001f, 1.0f);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
+void ASDArtToneController::SetHalftoneShape(float NewHalftoneShape)
+{
+	CurrentSettings.HalftoneShape = FMath::Clamp(NewHalftoneShape, 0.0f, 1.0f);
 	ApplyPixelateParameters(CurrentSettings);
 }
 
@@ -221,18 +239,24 @@ void ASDArtToneController::ApplyPixelateParameters(const FSDArtToneSettings& Set
 	}
 
 	PixelateMID->SetScalarParameterValue(TEXT("PixelCount"), Settings.PixelCount);
-	PixelateMID->SetScalarParameterValue(TEXT("ScanlineCount"), Settings.ScanlineCount);
-	PixelateMID->SetScalarParameterValue(TEXT("ScanlineStrength"), Settings.ScanlineStrength);
 	PixelateMID->SetScalarParameterValue(TEXT("ColorSteps"), Settings.ColorSteps);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneStrength"), Settings.HalftoneStrength);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneCount"), Settings.HalftoneCount);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneRadius"), Settings.HalftoneRadius);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneSoftness"), Settings.HalftoneSoftness);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneShape"), Settings.HalftoneShape);
 }
 
 FSDArtToneSettings ASDArtToneController::LerpSettings(const FSDArtToneSettings& From, const FSDArtToneSettings& To, float Alpha)
 {
 	FSDArtToneSettings Result;
 	Result.PixelCount = FMath::Lerp(From.PixelCount, To.PixelCount, Alpha);
-	Result.ScanlineCount = FMath::Lerp(From.ScanlineCount, To.ScanlineCount, Alpha);
-	Result.ScanlineStrength = FMath::Lerp(From.ScanlineStrength, To.ScanlineStrength, Alpha);
 	Result.ColorSteps = FMath::Lerp(From.ColorSteps, To.ColorSteps, Alpha);
+	Result.HalftoneStrength = FMath::Lerp(From.HalftoneStrength, To.HalftoneStrength, Alpha);
+	Result.HalftoneCount = FMath::Lerp(From.HalftoneCount, To.HalftoneCount, Alpha);
+	Result.HalftoneRadius = FMath::Lerp(From.HalftoneRadius, To.HalftoneRadius, Alpha);
+	Result.HalftoneSoftness = FMath::Lerp(From.HalftoneSoftness, To.HalftoneSoftness, Alpha);
+	Result.HalftoneShape = FMath::Lerp(From.HalftoneShape, To.HalftoneShape, Alpha);
 	Result.ExposureCompensation = FMath::Lerp(From.ExposureCompensation, To.ExposureCompensation, Alpha);
 	Result.Saturation = FMath::Lerp(From.Saturation, To.Saturation, Alpha);
 	Result.Contrast = FMath::Lerp(From.Contrast, To.Contrast, Alpha);

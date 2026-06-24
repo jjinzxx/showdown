@@ -3,15 +3,19 @@
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
 #include "Card.h"
+#include "Components/MeshComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "CollisionQueryParams.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "Engine/PostProcessVolume.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerState.h"
 #include "Interaction/SDInteractable.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "PlayerPawn.h"
 #include "ShowDownChatWidget.h"
 #include "ShowDownGameModeBase.h"
@@ -20,6 +24,19 @@
 #include "SupabaseSubsystem.h"
 #include "TimerManager.h"
 #include "Widgets/SLeafWidget.h"
+
+namespace
+{
+	const TCHAR* DefaultInteractionOutlineMaterialPath = TEXT("/Game/ArtTone/M_PP_InteractionOutline.M_PP_InteractionOutline");
+
+	bool IsOutlineablePrimitive(const UPrimitiveComponent* Component)
+	{
+		return Component
+			&& Component->IsRegistered()
+			&& Component->IsVisible()
+			&& Component->IsA<UMeshComponent>();
+	}
+}
 
 class SSDCenterCrosshairWidget : public SLeafWidget
 {
@@ -109,12 +126,19 @@ void AShowDownPlayerController::BeginPlay()
 	bEnableClickEvents = false;
 	bEnableMouseOverEvents = false;
 	InitializeFromPossessedPawn();
+	InitializeInteractableOutlinePostProcess();
 	CreateCenterCrosshairWidget();
 	UpdateCenterCrosshairVisibility();
 }
 
 void AShowDownPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	SetFocusedInteractable(nullptr);
+	if (InteractionOutlinePostProcessVolume)
+	{
+		InteractionOutlinePostProcessVolume->Destroy();
+		InteractionOutlinePostProcessVolume = nullptr;
+	}
 	SetHoveredCard(nullptr);
 	RemoveCenterCrosshairWidget();
 	Super::EndPlay(EndPlayReason);
@@ -138,6 +162,7 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 
 	if (!bHandleShowDownGameplayInput)
 	{
+		SetFocusedInteractable(nullptr);
 		SetHoveredCard(nullptr);
 		UpdateCenterCrosshairVisibility();
 		return;
@@ -145,6 +170,7 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 
 	if (bChatOpen)
 	{
+		SetFocusedInteractable(nullptr);
 		SetHoveredCard(nullptr);
 		UpdateCenterCrosshairVisibility();
 		if (WasInputKeyJustPressed(CloseChatKey))
@@ -181,6 +207,7 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 		}
 	}
 
+	UpdateFocusedInteractable();
 	UpdateHoveredCard();
 	UpdateCenterCrosshairVisibility();
 }
@@ -210,6 +237,75 @@ void AShowDownPlayerController::InitializeFromPossessedPawn()
 	bEnableLegacyKeyboardBetHotkeys = ShowDownPawn->bEnableLegacyKeyboardBetHotkeys;
 	ToggleChatKey = ShowDownPawn->ToggleChatKey;
 	CloseChatKey = ShowDownPawn->CloseChatKey;
+}
+
+void AShowDownPlayerController::InitializeInteractableOutlinePostProcess()
+{
+	if (!IsLocalController())
+	{
+		if (InteractionOutlinePostProcessVolume)
+		{
+			InteractionOutlinePostProcessVolume->BlendWeight = 0.0f;
+		}
+		return;
+	}
+
+	if (!InteractionOutlineMaterial)
+	{
+		InteractionOutlineMaterial = LoadObject<UMaterialInterface>(nullptr, DefaultInteractionOutlineMaterialPath);
+	}
+
+	if (!InteractionOutlineMaterial)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Interaction outline material is missing: %s"), DefaultInteractionOutlineMaterialPath);
+		return;
+	}
+
+	if (!InteractionOutlineMID)
+	{
+		InteractionOutlineMID = UMaterialInstanceDynamic::Create(InteractionOutlineMaterial, this);
+	}
+
+	if (!InteractionOutlineMID)
+	{
+		return;
+	}
+
+	if (!InteractionOutlinePostProcessVolume)
+	{
+		UWorld* World = GetWorld();
+		if (!World)
+		{
+			return;
+		}
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.ObjectFlags |= RF_Transient;
+		InteractionOutlinePostProcessVolume = World->SpawnActor<APostProcessVolume>(APostProcessVolume::StaticClass(), FTransform::Identity, SpawnParams);
+	}
+
+	if (!InteractionOutlinePostProcessVolume)
+	{
+		return;
+	}
+
+	InteractionOutlinePostProcessVolume->bUnbound = true;
+	InteractionOutlinePostProcessVolume->Priority = 1000.0f;
+	InteractionOutlinePostProcessVolume->BlendWeight = 1.0f;
+
+	RefreshInteractableOutlineMaterialParameters();
+
+	FWeightedBlendables& WeightedBlendables = InteractionOutlinePostProcessVolume->Settings.WeightedBlendables;
+	for (int32 BlendableIndex = WeightedBlendables.Array.Num() - 1; BlendableIndex >= 0; --BlendableIndex)
+	{
+		if (WeightedBlendables.Array[BlendableIndex].Object.Get() == InteractionOutlineMID)
+		{
+			WeightedBlendables.Array.RemoveAt(BlendableIndex);
+		}
+	}
+
+	WeightedBlendables.Array.Add(FWeightedBlendable(1.0f, InteractionOutlineMID));
 }
 
 void AShowDownPlayerController::HandlePrimaryClick()
@@ -345,6 +441,123 @@ ACard* AShowDownPlayerController::ResolveCardFromHit(const FHitResult& Hit) cons
 	}
 
 	return nullptr;
+}
+
+AActor* AShowDownPlayerController::ResolveInteractableFromHit(const FHitResult& Hit) const
+{
+	AActor* HitActor = Hit.GetActor();
+	if (!HitActor && Hit.GetComponent())
+	{
+		HitActor = Hit.GetComponent()->GetOwner();
+	}
+
+	if (!HitActor || !bEnableInteractableTrace || !HitActor->GetClass()->ImplementsInterface(USDInteractable::StaticClass()))
+	{
+		return nullptr;
+	}
+
+	return ISDInteractable::Execute_CanInteract(HitActor, const_cast<AShowDownPlayerController*>(this))
+		? HitActor
+		: nullptr;
+}
+
+AActor* AShowDownPlayerController::FindFocusedInteractable() const
+{
+	if (!bEnableInteractableAimOutline || !bHandleShowDownGameplayInput || bChatOpen)
+	{
+		return nullptr;
+	}
+
+	FHitResult Hit;
+	return TracePrimaryInteraction(Hit) ? ResolveInteractableFromHit(Hit) : nullptr;
+}
+
+void AShowDownPlayerController::UpdateFocusedInteractable()
+{
+	SetFocusedInteractable(FindFocusedInteractable());
+}
+
+void AShowDownPlayerController::SetFocusedInteractable(AActor* NewFocusedInteractable)
+{
+	if (!IsValid(NewFocusedInteractable))
+	{
+		NewFocusedInteractable = nullptr;
+	}
+
+	if (FocusedInteractable == NewFocusedInteractable)
+	{
+		if (FocusedInteractable && InteractionOutlineMID)
+		{
+			RefreshInteractableOutlineMaterialParameters();
+		}
+		return;
+	}
+
+	ClearInteractableOutline();
+	FocusedInteractable = NewFocusedInteractable;
+
+	if (FocusedInteractable)
+	{
+		ApplyInteractableOutline(FocusedInteractable);
+	}
+}
+
+void AShowDownPlayerController::ApplyInteractableOutline(AActor* Actor)
+{
+	if (!Actor)
+	{
+		return;
+	}
+
+	InitializeInteractableOutlinePostProcess();
+	RefreshInteractableOutlineMaterialParameters();
+
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	Actor->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+
+	for (UPrimitiveComponent* Component : PrimitiveComponents)
+	{
+		if (!IsOutlineablePrimitive(Component))
+		{
+			continue;
+		}
+
+		FSDPrimitiveCustomDepthState& SavedState = FocusedPrimitiveStates.AddDefaulted_GetRef();
+		SavedState.Component = Component;
+		SavedState.bRenderCustomDepth = Component->bRenderCustomDepth;
+		SavedState.CustomDepthStencilValue = Component->CustomDepthStencilValue;
+
+		Component->SetRenderCustomDepth(true);
+		Component->SetCustomDepthStencilValue(InteractableOutlineStencilValue);
+	}
+}
+
+void AShowDownPlayerController::ClearInteractableOutline()
+{
+	for (const FSDPrimitiveCustomDepthState& SavedState : FocusedPrimitiveStates)
+	{
+		if (UPrimitiveComponent* Component = SavedState.Component.Get())
+		{
+			Component->SetCustomDepthStencilValue(SavedState.CustomDepthStencilValue);
+			Component->SetRenderCustomDepth(SavedState.bRenderCustomDepth);
+		}
+	}
+
+	FocusedPrimitiveStates.Reset();
+	FocusedInteractable = nullptr;
+}
+
+void AShowDownPlayerController::RefreshInteractableOutlineMaterialParameters()
+{
+	if (!InteractionOutlineMID)
+	{
+		return;
+	}
+
+	InteractionOutlineMID->SetVectorParameterValue(TEXT("OutlineColor"), InteractableOutlineColor);
+	InteractionOutlineMID->SetScalarParameterValue(TEXT("OutlineThickness"), FMath::Max(1.0f, InteractableOutlineThickness));
+	InteractionOutlineMID->SetScalarParameterValue(TEXT("OutlineOpacity"), FMath::Clamp(InteractableOutlineOpacity, 0.0f, 1.0f));
+	InteractionOutlineMID->SetScalarParameterValue(TEXT("TargetStencil"), FMath::Clamp(static_cast<float>(InteractableOutlineStencilValue), 1.0f, 255.0f));
 }
 
 ACard* AShowDownPlayerController::FindSelectableCardNearCenterAim() const
@@ -526,6 +739,7 @@ void AShowDownPlayerController::ToggleChat()
 
 void AShowDownPlayerController::OpenChat()
 {
+	SetFocusedInteractable(nullptr);
 	SetHoveredCard(nullptr);
 	EnsureChatWidget();
 	if (!ChatWidget)
@@ -673,6 +887,22 @@ void AShowDownPlayerController::SetFixedCameraBreathingSway(
 	BreathingSwayBlendElapsedTime = 0.0f;
 }
 
+void AShowDownPlayerController::PlayFixedCameraSteppedShake(
+	float HoldDuration,
+	float BlendOutTime,
+	FRotator RotationAmplitude,
+	FVector LocationAmplitude,
+	float StepInterval)
+{
+	CameraSteppedShakeHoldDuration = FMath::Max(0.0f, HoldDuration);
+	CameraSteppedShakeBlendOutTime = FMath::Max(0.0f, BlendOutTime);
+	CameraSteppedShakeElapsedTime = 0.0f;
+	CameraSteppedShakeRotationAmplitude = RotationAmplitude;
+	CameraSteppedShakeLocationAmplitude = LocationAmplitude;
+	CameraSteppedShakeStepInterval = FMath::Max(0.01f, StepInterval);
+	CameraSteppedShakeSeed = FMath::FRandRange(10.0f, 10000.0f);
+}
+
 void AShowDownPlayerController::SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetBet)
 {
 	if (HasAuthority())
@@ -732,6 +962,11 @@ void AShowDownPlayerController::UpdateFixedCameraMouseLook(float DeltaTime)
 
 	BreathingSwayElapsedTime += DeltaTime;
 	BreathingSwayBlendElapsedTime += DeltaTime;
+	const float SteppedShakeTotalTime = CameraSteppedShakeHoldDuration + CameraSteppedShakeBlendOutTime;
+	if (CameraSteppedShakeElapsedTime < SteppedShakeTotalTime)
+	{
+		CameraSteppedShakeElapsedTime = FMath::Min(CameraSteppedShakeElapsedTime + DeltaTime, SteppedShakeTotalTime);
+	}
 
 	float MouseDeltaX = 0.0f;
 	float MouseDeltaY = 0.0f;
@@ -761,9 +996,11 @@ void AShowDownPlayerController::UpdateFixedCameraMouseLook(float DeltaTime)
 
 	const FRotator SwayRotation = GetBreathingSwayRotationOffset(SwayStrength);
 	const FVector SwayLocation = GetBreathingSwayLocationOffset(FixedCameraLookRotation, SwayStrength);
+	const FRotator SteppedShakeRotation = GetCameraSteppedShakeRotationOffset();
+	const FVector SteppedShakeLocation = GetCameraSteppedShakeLocationOffset(FixedCameraLookRotation);
 	FixedCameraMouseLookTarget->SetWorldLocationAndRotation(
-		FixedCameraBaseLocation + SwayLocation,
-		FixedCameraLookRotation + SwayRotation);
+		FixedCameraBaseLocation + SwayLocation + SteppedShakeLocation,
+		FixedCameraLookRotation + SwayRotation + SteppedShakeRotation);
 }
 
 void AShowDownPlayerController::RestoreFixedCameraBaseTransform()
@@ -807,6 +1044,58 @@ FVector AShowDownPlayerController::GetBreathingSwayLocationOffset(const FRotator
 		Forward * FMath::Sin(Time * 0.53f + 0.4f) * BreathingSwayLocationAmplitude.X +
 		Right * FMath::Sin(Time * 0.79f + 1.7f) * BreathingSwayLocationAmplitude.Y +
 		Up * FMath::Sin(Time) * BreathingSwayLocationAmplitude.Z) * Strength;
+}
+
+FRotator AShowDownPlayerController::GetCameraSteppedShakeRotationOffset() const
+{
+	const float TotalTime = CameraSteppedShakeHoldDuration + CameraSteppedShakeBlendOutTime;
+	if (CameraSteppedShakeElapsedTime >= TotalTime || TotalTime <= KINDA_SMALL_NUMBER)
+	{
+		return FRotator::ZeroRotator;
+	}
+
+	const float Strength = CameraSteppedShakeElapsedTime <= CameraSteppedShakeHoldDuration
+		? 1.0f
+		: (CameraSteppedShakeBlendOutTime > KINDA_SMALL_NUMBER
+			? 1.0f - FMath::Clamp(
+				(CameraSteppedShakeElapsedTime - CameraSteppedShakeHoldDuration) / CameraSteppedShakeBlendOutTime,
+				0.0f,
+				1.0f)
+			: 0.0f);
+	const float Step = FMath::FloorToFloat(CameraSteppedShakeElapsedTime / CameraSteppedShakeStepInterval);
+
+	return FRotator(
+		FMath::PerlinNoise1D(Step * 1.73f + CameraSteppedShakeSeed) * CameraSteppedShakeRotationAmplitude.Pitch,
+		FMath::PerlinNoise1D(Step * 2.11f + CameraSteppedShakeSeed + 31.0f) * CameraSteppedShakeRotationAmplitude.Yaw,
+		FMath::PerlinNoise1D(Step * 2.67f + CameraSteppedShakeSeed + 73.0f) * CameraSteppedShakeRotationAmplitude.Roll) * Strength;
+}
+
+FVector AShowDownPlayerController::GetCameraSteppedShakeLocationOffset(const FRotator& CameraRotation) const
+{
+	const float TotalTime = CameraSteppedShakeHoldDuration + CameraSteppedShakeBlendOutTime;
+	if (CameraSteppedShakeElapsedTime >= TotalTime || TotalTime <= KINDA_SMALL_NUMBER)
+	{
+		return FVector::ZeroVector;
+	}
+
+	const float Strength = CameraSteppedShakeElapsedTime <= CameraSteppedShakeHoldDuration
+		? 1.0f
+		: (CameraSteppedShakeBlendOutTime > KINDA_SMALL_NUMBER
+			? 1.0f - FMath::Clamp(
+				(CameraSteppedShakeElapsedTime - CameraSteppedShakeHoldDuration) / CameraSteppedShakeBlendOutTime,
+				0.0f,
+				1.0f)
+			: 0.0f);
+	const float Step = FMath::FloorToFloat(CameraSteppedShakeElapsedTime / CameraSteppedShakeStepInterval);
+	const FRotationMatrix CameraMatrix(CameraRotation);
+	const FVector Forward = CameraMatrix.GetScaledAxis(EAxis::X);
+	const FVector Right = CameraMatrix.GetScaledAxis(EAxis::Y);
+	const FVector Up = CameraMatrix.GetScaledAxis(EAxis::Z);
+
+	return (
+		Forward * FMath::PerlinNoise1D(Step * 1.91f + CameraSteppedShakeSeed + 101.0f) * CameraSteppedShakeLocationAmplitude.X +
+		Right * FMath::PerlinNoise1D(Step * 2.29f + CameraSteppedShakeSeed + 151.0f) * CameraSteppedShakeLocationAmplitude.Y +
+		Up * FMath::PerlinNoise1D(Step * 2.83f + CameraSteppedShakeSeed + 211.0f) * CameraSteppedShakeLocationAmplitude.Z) * Strength;
 }
 
 void AShowDownPlayerController::HandleBettingHotkeys()

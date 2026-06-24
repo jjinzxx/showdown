@@ -17,9 +17,12 @@ namespace
 	{
 		FSDArtToneSettings Result;
 		Result.PixelCount = FMath::Lerp(From.PixelCount, To.PixelCount, Alpha);
-		Result.ScanlineCount = FMath::Lerp(From.ScanlineCount, To.ScanlineCount, Alpha);
-		Result.ScanlineStrength = FMath::Lerp(From.ScanlineStrength, To.ScanlineStrength, Alpha);
 		Result.ColorSteps = FMath::Lerp(From.ColorSteps, To.ColorSteps, Alpha);
+		Result.HalftoneStrength = FMath::Lerp(From.HalftoneStrength, To.HalftoneStrength, Alpha);
+		Result.HalftoneCount = FMath::Lerp(From.HalftoneCount, To.HalftoneCount, Alpha);
+		Result.HalftoneRadius = FMath::Lerp(From.HalftoneRadius, To.HalftoneRadius, Alpha);
+		Result.HalftoneSoftness = FMath::Lerp(From.HalftoneSoftness, To.HalftoneSoftness, Alpha);
+		Result.HalftoneShape = FMath::Lerp(From.HalftoneShape, To.HalftoneShape, Alpha);
 		Result.ExposureCompensation = FMath::Lerp(From.ExposureCompensation, To.ExposureCompensation, Alpha);
 		Result.Saturation = FMath::Lerp(From.Saturation, To.Saturation, Alpha);
 		Result.Contrast = FMath::Lerp(From.Contrast, To.Contrast, Alpha);
@@ -56,9 +59,12 @@ ASDSmokableCigaretteActor::ASDSmokableCigaretteActor()
 	SmokeParticle->SetAutoActivate(false);
 
 	SmokeScreenEffectSettings.PixelCount = 180.0f;
-	SmokeScreenEffectSettings.ScanlineCount = 220.0f;
-	SmokeScreenEffectSettings.ScanlineStrength = 0.16f;
 	SmokeScreenEffectSettings.ColorSteps = 4.0f;
+	SmokeScreenEffectSettings.HalftoneStrength = 0.0f;
+	SmokeScreenEffectSettings.HalftoneCount = 120.0f;
+	SmokeScreenEffectSettings.HalftoneRadius = 0.45f;
+	SmokeScreenEffectSettings.HalftoneSoftness = 0.08f;
+	SmokeScreenEffectSettings.HalftoneShape = 0.0f;
 	SmokeScreenEffectSettings.ExposureCompensation = 1.1f;
 	SmokeScreenEffectSettings.Saturation = 0.55f;
 	SmokeScreenEffectSettings.Contrast = 1.15f;
