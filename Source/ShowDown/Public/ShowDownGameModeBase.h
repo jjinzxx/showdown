@@ -363,6 +363,7 @@ private:
 	void DealMultiplayerHands();
 	void ClearMultiplayerHands();
 	void ClearMultiplayerForeheadCards();
+	void ClearLooseMultiplayerCards();
 	void StartMultiplayerDuel(ASDPlayerState* FirstPlayer, ASDPlayerState* SecondPlayer);
 	bool AreAllAliveMultiplayerPlayersReadyToReveal() const;
 	bool AreAllActiveMultiplayerPlayersDoneBetting(int32 CurrentBet) const;

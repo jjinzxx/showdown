@@ -206,6 +206,9 @@ public:
 	UFUNCTION(Client, Reliable)
 	void ClientUseMultiplayerSeatCamera(int32 SeatIndex);
 
+	UFUNCTION(Client, Reliable)
+	void ClientLeaveMultiplayerRoomToHub();
+
 private:
 	void InitializeFromPossessedPawn();
 	void TraceCardUnderCursor();

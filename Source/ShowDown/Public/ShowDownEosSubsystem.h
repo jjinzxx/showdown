@@ -82,7 +82,9 @@ private:
 		JoinLobby,
 		PollLobbyStart,
 		JoinStartedGame,
-		LeaveLobby
+		LeaveLobby,
+		CleanupBeforeHostLobby,
+		CleanupBeforeJoinLobby
 	};
 
 	FDelegateHandle LoginCompleteDelegateHandle;

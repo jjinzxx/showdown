@@ -9,6 +9,7 @@
 #include "OnlineSessionSettings.h"
 #include "OnlineSubsystem.h"
 #include "ShowDownGameStateBase.h"
+#include "ShowDownPlayerController.h"
 #include "SupabaseSubsystem.h"
 
 namespace
@@ -199,7 +200,31 @@ void UShowDownEosSubsystem::HostLobby(FName LobbyMapName, FName GameMapName)
 
 	if (SessionInterface->GetNamedSession(ShowDownSessionName))
 	{
-		OnSessionResult.Broadcast(false, TEXT("이미 참여 중인 방이 있습니다. 먼저 방에서 나가세요."));
+		if (DestroySessionCompleteDelegateHandle.IsValid())
+		{
+			OnSessionResult.Broadcast(false, TEXT("이전 방 정리 중입니다. 잠시만 기다려주세요."));
+			return;
+		}
+
+		PendingHostMapName = LobbyMapName.IsNone() ? FName(TEXT("L_MultiplayerLobby")) : LobbyMapName;
+		PendingGameMapName = GameMapName.IsNone() ? FName(TEXT("L_MultiplayerGame")) : GameMapName;
+		PendingJoinCode.Empty();
+		LobbyCode.Empty();
+		bLobbyHost = false;
+		bInMultiplayerLobby = false;
+		PendingSessionFlow = ESessionFlow::CleanupBeforeHostLobby;
+		DestroySessionCompleteDelegateHandle = SessionInterface->AddOnDestroySessionCompleteDelegate_Handle(
+			FOnDestroySessionCompleteDelegate::CreateUObject(this, &UShowDownEosSubsystem::HandleDestroySessionComplete)
+		);
+
+		OnSessionResult.Broadcast(false, TEXT("이전 방 정보를 정리한 뒤 새 방을 만듭니다..."));
+		if (!SessionInterface->DestroySession(ShowDownSessionName))
+		{
+			SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteDelegateHandle);
+			DestroySessionCompleteDelegateHandle.Reset();
+			PendingSessionFlow = ESessionFlow::None;
+			OnSessionResult.Broadcast(false, TEXT("이전 방 정리에 실패했습니다."));
+		}
 		return;
 	}
 
@@ -270,6 +295,34 @@ void UShowDownEosSubsystem::JoinLobbyByCode(const FString& RoomCode)
 	if (!SessionInterface.IsValid())
 	{
 		OnSessionResult.Broadcast(false, TEXT("EOS session interface is unavailable."));
+		return;
+	}
+
+	if (SessionInterface->GetNamedSession(ShowDownSessionName))
+	{
+		if (DestroySessionCompleteDelegateHandle.IsValid())
+		{
+			OnSessionResult.Broadcast(false, TEXT("이전 방 정리 중입니다. 잠시만 기다려주세요."));
+			return;
+		}
+
+		PendingJoinCode = NormalizedCode;
+		LobbyCode = NormalizedCode;
+		bLobbyHost = false;
+		bInMultiplayerLobby = false;
+		PendingSessionFlow = ESessionFlow::CleanupBeforeJoinLobby;
+		DestroySessionCompleteDelegateHandle = SessionInterface->AddOnDestroySessionCompleteDelegate_Handle(
+			FOnDestroySessionCompleteDelegate::CreateUObject(this, &UShowDownEosSubsystem::HandleDestroySessionComplete)
+		);
+
+		OnSessionResult.Broadcast(false, TEXT("이전 방 정보를 정리한 뒤 입장합니다..."));
+		if (!SessionInterface->DestroySession(ShowDownSessionName))
+		{
+			SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteDelegateHandle);
+			DestroySessionCompleteDelegateHandle.Reset();
+			PendingSessionFlow = ESessionFlow::None;
+			OnSessionResult.Broadcast(false, TEXT("이전 방 정리에 실패했습니다."));
+		}
 		return;
 	}
 
@@ -415,7 +468,14 @@ void UShowDownEosSubsystem::LeaveLobby(FName HubMapName)
 		{
 			if (APlayerController* PlayerController = Iterator->Get(); PlayerController && !PlayerController->IsLocalController())
 			{
-				PlayerController->ClientTravel(HubPath, TRAVEL_Absolute);
+				if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+				{
+					ShowDownController->ClientLeaveMultiplayerRoomToHub();
+				}
+				else
+				{
+					PlayerController->ClientTravel(HubPath, TRAVEL_Absolute);
+				}
 			}
 		}
 	}
@@ -801,6 +861,45 @@ void UShowDownEosSubsystem::HandleDestroySessionComplete(FName SessionName, bool
 	if (PendingSessionFlow == ESessionFlow::LeaveLobby)
 	{
 		CompleteLobbyLeave(bWasSuccessful);
+		return;
+	}
+
+	if (PendingSessionFlow == ESessionFlow::CleanupBeforeHostLobby)
+	{
+		const FName LobbyMapName = PendingHostMapName;
+		const FName GameMapName = PendingGameMapName;
+		PendingSessionFlow = ESessionFlow::None;
+		bInMultiplayerLobby = false;
+		bLobbyHost = false;
+		LobbyCode.Empty();
+		PendingJoinCode.Empty();
+
+		if (!bWasSuccessful)
+		{
+			OnSessionResult.Broadcast(false, TEXT("이전 방 정리에 실패했습니다."));
+			return;
+		}
+
+		HostLobby(LobbyMapName, GameMapName);
+		return;
+	}
+
+	if (PendingSessionFlow == ESessionFlow::CleanupBeforeJoinLobby)
+	{
+		const FString RoomCode = PendingJoinCode;
+		PendingSessionFlow = ESessionFlow::None;
+		bInMultiplayerLobby = false;
+		bLobbyHost = false;
+		LobbyCode.Empty();
+
+		if (!bWasSuccessful)
+		{
+			PendingJoinCode.Empty();
+			OnSessionResult.Broadcast(false, TEXT("이전 방 정리에 실패했습니다."));
+			return;
+		}
+
+		JoinLobbyByCode(RoomCode);
 		return;
 	}
 

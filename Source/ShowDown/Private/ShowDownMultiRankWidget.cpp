@@ -180,13 +180,34 @@ void UShowDownMultiRankWidget::RefreshRanking()
 			: FString::Printf(TEXT("%d등"), Index + 1);
 		const FString PlayerName = CachedPlayerNames[Index].IsEmpty() ? TEXT("Unknown") : CachedPlayerNames[Index];
 
-		UTextBlock* RankText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
-		RankText->SetText(FText::FromString(FString::Printf(TEXT("%-6s    %s"), *RankLabel, *PlayerName)));
-		RankText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-		RankText->SetJustification(ETextJustify::Center);
-		RankText->SetFont(FSlateFontInfo(FCoreStyle::GetDefaultFont(), Index == 0 ? 44 : 38));
+		UHorizontalBox* RankRow = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 
-		if (UVerticalBoxSlot* RankSlot = VerticalBox_RankList->AddChildToVerticalBox(RankText))
+		UTextBlock* RankLabelText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+		RankLabelText->SetText(FText::FromString(RankLabel));
+		RankLabelText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+		RankLabelText->SetJustification(ETextJustify::Right);
+		RankLabelText->SetFont(FSlateFontInfo(FCoreStyle::GetDefaultFont(), Index == 0 ? 44 : 38));
+		if (UHorizontalBoxSlot* LabelSlot = RankRow->AddChildToHorizontalBox(RankLabelText))
+		{
+			LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			LabelSlot->SetHorizontalAlignment(HAlign_Fill);
+			LabelSlot->SetVerticalAlignment(VAlign_Center);
+		}
+
+		UTextBlock* PlayerNameText = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+		PlayerNameText->SetText(FText::FromString(PlayerName));
+		PlayerNameText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+		PlayerNameText->SetJustification(ETextJustify::Left);
+		PlayerNameText->SetFont(FSlateFontInfo(FCoreStyle::GetDefaultFont(), Index == 0 ? 44 : 38));
+		if (UHorizontalBoxSlot* NameSlot = RankRow->AddChildToHorizontalBox(PlayerNameText))
+		{
+			NameSlot->SetPadding(FMargin(72.0f, 0.0f, 0.0f, 0.0f));
+			NameSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			NameSlot->SetHorizontalAlignment(HAlign_Fill);
+			NameSlot->SetVerticalAlignment(VAlign_Center);
+		}
+
+		if (UVerticalBoxSlot* RankSlot = VerticalBox_RankList->AddChildToVerticalBox(RankRow))
 		{
 			RankSlot->SetPadding(FMargin(0.0f, 6.0f, 0.0f, 16.0f));
 			RankSlot->SetHorizontalAlignment(HAlign_Fill);

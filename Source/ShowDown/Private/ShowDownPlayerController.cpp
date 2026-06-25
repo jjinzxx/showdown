@@ -102,21 +102,28 @@ private:
 
 namespace
 {
-	int32 GetSeatIndexFromPlayerSlot(EShowDownPlayerSlot Slot)
-	{
-		switch (Slot)
-		{
-		case EShowDownPlayerSlot::Player1: return 0;
-		case EShowDownPlayerSlot::Player2: return 1;
-		case EShowDownPlayerSlot::Player3: return 2;
-		case EShowDownPlayerSlot::Player4: return 3;
-		default: return INDEX_NONE;
-		}
-	}
-
 	bool IsMultiplayerGameMap(const UWorld* World)
 	{
 		return World && World->GetMapName().Contains(TEXT("L_MultiplayerGame"));
+	}
+
+	bool TryGetMultiplayerTableLocation(UWorld* World, FVector& OutLocation)
+	{
+		if (!World)
+		{
+			return false;
+		}
+
+		for (TActorIterator<ASDMultiplayerTable> It(World); It; ++It)
+		{
+			if (const ASDMultiplayerTable* Table = *It)
+			{
+				OutLocation = Table->GetActorLocation();
+				return true;
+			}
+		}
+
+		return false;
 	}
 }
 
@@ -199,37 +206,43 @@ void AShowDownPlayerController::ClientEnterMultiplayerGameplay_Implementation()
 	MultiplayerRankWidget = nullptr;
 	bChatOpen = false;
 
-	bHandleShowDownGameplayInput = true;
+	bHandleShowDownGameplayInput = false;
 	// Multiplayer follows the same first-person interaction model as single
 	// player: raw mouse movement controls the view and the centre reticle is
 	// used for card/interactable tracing. UI temporarily reveals the cursor.
-	bShowCenterCrosshair = true;
+	bShowCenterCrosshair = false;
 	bShowMouseCursor = false;
 	bEnableClickEvents = false;
 	bEnableMouseOverEvents = false;
 
-	RestoreMultiplayerGameplayInput();
 	EnsureChatWidget();
-	CreateCenterCrosshairWidget();
 	PawnCameraBaseRotation = GetControlRotation();
 	bHasPawnCameraBaseRotation = true;
 	UpdateCenterCrosshairVisibility();
+	ClientShowStatusMessage(TEXT("로딩 중... 멀티플레이 좌석과 카메라를 확인하는 중입니다."));
 }
 
 void AShowDownPlayerController::ClientUseMultiplayerSeatCamera_Implementation(int32 SeatIndex)
 {
+	const ASDPlayerState* ShowDownPlayerState = GetPlayerState<ASDPlayerState>();
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("멀티플레이 좌석 카메라 요청 수신: SeatIndex=%d LocalSlot=%d Player=%s"),
+		SeatIndex,
+		ShowDownPlayerState ? static_cast<int32>(ShowDownPlayerState->ShowDownSlot) : -1,
+		ShowDownPlayerState ? *ShowDownPlayerState->GetPlayerName() : TEXT("None"));
+
 	// A client can receive this RPC while its seamless level transition is still
 	// loading. Keep the seat number and retry from PlayerTick once the target
 	// map's CameraActors actually exist locally.
 	PendingMultiplayerSeatIndex = SeatIndex;
 	bPendingMultiplayerSeatCamera = true;
-	bHandleShowDownGameplayInput = true;
-	bShowCenterCrosshair = true;
+	bHandleShowDownGameplayInput = false;
+	bShowCenterCrosshair = false;
 	bShowMouseCursor = false;
 	bEnableClickEvents = false;
 	bEnableMouseOverEvents = false;
-
-	RestoreMultiplayerGameplayInput();
 
 	if (TryApplyPendingMultiplayerSeatCamera())
 	{
@@ -243,12 +256,33 @@ void AShowDownPlayerController::ClientUseMultiplayerSeatCamera_Implementation(in
 		SetViewTarget(ControlledPawn);
 	}
 	UpdateCenterCrosshairVisibility();
+	ClientShowStatusMessage(TEXT("로딩 중... 멀티플레이 좌석 카메라를 기다리는 중입니다."));
+}
+
+void AShowDownPlayerController::ClientLeaveMultiplayerRoomToHub_Implementation()
+{
+	if (UShowDownEosSubsystem* EosSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownEosSubsystem>()
+		: nullptr)
+	{
+		EosSubsystem->LeaveLobby(FName(TEXT("L_Hub")));
+		return;
+	}
+
+	ClientTravel(TEXT("/Game/Maps/L_Hub"), TRAVEL_Absolute);
 }
 
 bool AShowDownPlayerController::TryApplyPendingMultiplayerSeatCamera()
 {
 	if (!bPendingMultiplayerSeatCamera || PendingMultiplayerSeatIndex == INDEX_NONE || !GetWorld())
 	{
+		return false;
+	}
+
+	FVector TableLocation = FVector::ZeroVector;
+	if (!TryGetMultiplayerTableLocation(GetWorld(), TableLocation))
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("멀티플레이 테이블 대기 중: SeatIndex=%d"), PendingMultiplayerSeatIndex);
 		return false;
 	}
 
@@ -261,6 +295,28 @@ bool AShowDownPlayerController::TryApplyPendingMultiplayerSeatCamera()
 			continue;
 		}
 
+		const float DistanceFromTable = FVector::Dist2D(SeatCamera->GetActorLocation(), TableLocation);
+		UE_LOG(
+			LogTemp,
+			Log,
+			TEXT("멀티플레이 좌석 카메라 후보: Tag=%s Actor=%s Location=%s Rotation=%s TableDistance2D=%.1f"),
+			*SeatCameraTag.ToString(),
+			*SeatCamera->GetName(),
+			*SeatCamera->GetActorLocation().ToCompactString(),
+			*SeatCamera->GetActorRotation().ToCompactString(),
+			DistanceFromTable);
+		if (DistanceFromTable > 2500.0f)
+		{
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("%s 카메라가 테이블에서 너무 멀어 무시합니다. Actor=%s Distance=%.1f"),
+				*SeatCameraTag.ToString(),
+				*SeatCamera->GetName(),
+				DistanceFromTable);
+			continue;
+		}
+
 		SetViewTarget(SeatCamera);
 		SetFixedCameraMouseLook(SeatCamera, 0.08f, -35.0f, 35.0f, -45.0f, 45.0f, true);
 		EnsureChatWidget();
@@ -268,6 +324,7 @@ bool AShowDownPlayerController::TryApplyPendingMultiplayerSeatCamera()
 		bHandleShowDownGameplayInput = true;
 		bShowCenterCrosshair = true;
 		RestoreMultiplayerGameplayInput();
+		CreateCenterCrosshairWidget();
 		UpdateCenterCrosshairVisibility();
 		UE_LOG(LogTemp, Log, TEXT("멀티플레이 좌석 카메라 적용: %s"), *SeatCameraTag.ToString());
 		return true;
@@ -296,14 +353,10 @@ bool AShowDownPlayerController::UseFallbackMultiplayerSeatCamera(int32 SeatIndex
 	};
 	static const float SeatYaws[] = { 90.0f, -90.0f, 0.0f, 180.0f };
 
-	FVector TableCenter(0.0f, 0.0f, 25.0f);
-	for (TActorIterator<ASDMultiplayerTable> It(GetWorld()); It; ++It)
+	FVector TableCenter = FVector::ZeroVector;
+	if (!TryGetMultiplayerTableLocation(GetWorld(), TableCenter))
 	{
-		if (const ASDMultiplayerTable* Table = *It)
-		{
-			TableCenter = Table->GetActorLocation();
-			break;
-		}
+		return false;
 	}
 
 	const FTransform CameraTransform(
@@ -334,6 +387,7 @@ bool AShowDownPlayerController::UseFallbackMultiplayerSeatCamera(int32 SeatIndex
 	bHandleShowDownGameplayInput = true;
 	bShowCenterCrosshair = true;
 	RestoreMultiplayerGameplayInput();
+	CreateCenterCrosshairWidget();
 	UpdateCenterCrosshairVisibility();
 	UE_LOG(LogTemp, Warning, TEXT("Authored seat camera missing; using fallback multiplayer seat camera %d."), SeatIndex + 1);
 	return true;
@@ -343,21 +397,6 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
 
-	// Do not rely solely on the server RPC: with seamless travel a remote
-	// client can finish loading after that RPC was delivered. Its replicated
-	// PlayerState slot is the durable source of truth for its camera seat.
-	if (!FixedCameraMouseLookTarget && IsMultiplayerGameMap(GetWorld()))
-	{
-		if (const ASDPlayerState* ShowDownPlayerState = GetPlayerState<ASDPlayerState>())
-		{
-			const int32 SeatIndex = GetSeatIndexFromPlayerSlot(ShowDownPlayerState->ShowDownSlot);
-			if (SeatIndex != INDEX_NONE)
-			{
-				PendingMultiplayerSeatIndex = SeatIndex;
-				bPendingMultiplayerSeatCamera = true;
-			}
-		}
-	}
 	TryApplyPendingMultiplayerSeatCamera();
 
 	if (!bHandleShowDownGameplayInput)

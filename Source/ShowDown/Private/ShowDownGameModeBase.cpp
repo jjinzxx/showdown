@@ -2025,6 +2025,10 @@ void AShowDownGameModeBase::TryStartMultiplayerMatch()
 
 void AShowDownGameModeBase::StartMultiplayerMatch(const TArray<ASDPlayerState*>& Players)
 {
+	ClearMultiplayerForeheadCards();
+	ClearMultiplayerHands();
+	ClearLooseMultiplayerCards();
+
 	bMultiplayerMatchStarted = true;
 	bMultiplayerRoundResolving = false;
 	MultiplayerPlayers.Reset();
@@ -2048,7 +2052,6 @@ void AShowDownGameModeBase::StartMultiplayerMatch(const TArray<ASDPlayerState*>&
 
 	EnsureMultiplayerTable();
 	EnsureMultiplayerSeatAnchors();
-	EnsureMultiplayerPawns();
 
 	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 	{
@@ -2058,11 +2061,9 @@ void AShowDownGameModeBase::StartMultiplayerMatch(const TArray<ASDPlayerState*>&
 		ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
 	}
 
-	DealMultiplayerHands();
-
 	// The lobby leaves its controller in UI-only mode. This client RPC runs on
 	// every local player after travel so mouse-look, card clicks, and hotkeys are
-	// enabled before the first card-selection turn begins.
+	// held in a loading state until the authoritative seat camera is applied.
 	if (UWorld* World = GetWorld())
 	{
 		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
@@ -2073,6 +2074,9 @@ void AShowDownGameModeBase::StartMultiplayerMatch(const TArray<ASDPlayerState*>&
 			}
 		}
 	}
+
+	EnsureMultiplayerPawns();
+	DealMultiplayerHands();
 
 	if (MultiplayerPlayers.Num() >= 2)
 	{
@@ -2156,6 +2160,15 @@ void AShowDownGameModeBase::EnsureMultiplayerPawns()
 		{
 			continue;
 		}
+
+		UE_LOG(
+			LogTemp,
+			Log,
+			TEXT("멀티플레이 좌석 배정: Player=%s Slot=%d SeatIndex=%d Controller=%s"),
+			*Player->GetPlayerName(),
+			static_cast<int32>(Player->ShowDownSlot),
+			SeatIndex,
+			PlayerController ? *PlayerController->GetName() : TEXT("None"));
 
 		const FTransform SpawnTransform = GetMultiplayerPawnSpawnTransform(PlayerController, SeatIndex);
 		const FRotator GameplayViewRotation(-12.0f, SpawnTransform.Rotator().Yaw, 0.0f);
@@ -2442,6 +2455,32 @@ void AShowDownGameModeBase::ClearMultiplayerForeheadCards()
 	if (CardSystem && DiscardRanks.Num() > 0)
 	{
 		CardSystem->DiscardCards(DiscardRanks);
+	}
+}
+
+void AShowDownGameModeBase::ClearLooseMultiplayerCards()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACard> It(World); It; ++It)
+	{
+		ACard* Card = *It;
+		if (!IsValid(Card))
+		{
+			continue;
+		}
+
+		const bool bLooksLikeMultiplayerCard =
+			Card->HandOwnerSlot != EShowDownPlayerSlot::None
+			|| Card->HiddenFromSlot != EShowDownPlayerSlot::None;
+		if (bLooksLikeMultiplayerCard)
+		{
+			Card->Destroy();
+		}
 	}
 }
 
