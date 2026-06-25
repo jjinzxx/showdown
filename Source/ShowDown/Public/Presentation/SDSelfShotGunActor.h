@@ -25,6 +25,15 @@ enum class ESDHitSequenceEaseMode : uint8
 	EaseInOut UMETA(DisplayName = "Ease In Out")
 };
 
+UENUM(BlueprintType)
+enum class ESDSelfShotRoundMode : uint8
+{
+	AlwaysLive UMETA(DisplayName = "Always Live"),
+	AlwaysEmpty UMETA(DisplayName = "Always Empty"),
+	RandomChance UMETA(DisplayName = "Random Chance"),
+	ChamberPattern UMETA(DisplayName = "Chamber Pattern")
+};
+
 UCLASS(Blueprintable)
 class SHOWDOWN_API ASDSelfShotGunActor : public AActor, public ISDInteractable
 {
@@ -46,6 +55,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Self Shot Gun")
 	FSDSelfShotGunEvent OnGunFired;
+
+	UPROPERTY(BlueprintAssignable, Category = "Self Shot Gun")
+	FSDSelfShotGunEvent OnGunEmptyFired;
 
 	UPROPERTY(BlueprintAssignable, Category = "Self Shot Gun")
 	FSDSelfShotGunEvent OnGunSequenceFinished;
@@ -197,6 +209,36 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Cinematic Camera", meta = (ClampMin = "1.0"))
 	float CinematicCameraBlendExponent = 2.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result")
+	ESDSelfShotRoundMode ShotResultMode = ESDSelfShotRoundMode::AlwaysLive;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result", meta = (ClampMin = "0.0", ClampMax = "1.0", EditCondition = "ShotResultMode == ESDSelfShotRoundMode::RandomChance"))
+	float LiveRoundChance = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result|Chamber Pattern", meta = (ClampMin = "0", ClampMax = "5", EditCondition = "ShotResultMode == ESDSelfShotRoundMode::ChamberPattern", ToolTip = "0 is chamber 1, 5 is chamber 6. This is the next chamber that will be resolved when the hammer drops."))
+	int32 CurrentChamberIndex = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result|Chamber Pattern", meta = (EditCondition = "ShotResultMode == ESDSelfShotRoundMode::ChamberPattern"))
+	bool bChamber1Live = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result|Chamber Pattern", meta = (EditCondition = "ShotResultMode == ESDSelfShotRoundMode::ChamberPattern"))
+	bool bChamber2Live = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result|Chamber Pattern", meta = (EditCondition = "ShotResultMode == ESDSelfShotRoundMode::ChamberPattern"))
+	bool bChamber3Live = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result|Chamber Pattern", meta = (EditCondition = "ShotResultMode == ESDSelfShotRoundMode::ChamberPattern"))
+	bool bChamber4Live = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result|Chamber Pattern", meta = (EditCondition = "ShotResultMode == ESDSelfShotRoundMode::ChamberPattern"))
+	bool bChamber5Live = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result|Chamber Pattern", meta = (EditCondition = "ShotResultMode == ESDSelfShotRoundMode::ChamberPattern"))
+	bool bChamber6Live = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Shot Result|Chamber Pattern", meta = (EditCondition = "ShotResultMode == ESDSelfShotRoundMode::ChamberPattern"))
+	bool bConsumeLiveChamberAfterShot = true;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects")
 	TObjectPtr<USoundBase> GunshotSound;
 
@@ -208,6 +250,42 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects")
 	bool bPlayTriggerPullSound2D = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Empty Shot")
+	TObjectPtr<USoundBase> EmptyShotSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Empty Shot")
+	bool bPlayEmptyShotSound2D = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Empty Shot")
+	bool bEnableEmptyShotShake = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Empty Shot")
+	FRotator EmptyShotShakeRotationAmplitude = FRotator(0.35f, 0.75f, 0.45f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Empty Shot")
+	FVector EmptyShotShakeLocationAmplitude = FVector(0.08f, 0.28f, 0.1f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Empty Shot", meta = (ClampMin = "0.0"))
+	float EmptyShotShakeHoldTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Empty Shot", meta = (ClampMin = "0.01"))
+	float EmptyShotShakeBlendOutTime = 0.28f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Empty Shot", meta = (ClampMin = "0.01"))
+	float EmptyShotShakeStepInterval = 0.055f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Empty Shot", meta = (ClampMin = "0.005"))
+	float EmptyShotImpactTime = 0.035f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Empty Shot", meta = (ClampMin = "0.0"))
+	float EmptyShotImpactHoldTime = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Empty Shot")
+	FRotator EmptyShotTriggerExtraPullRotationOffset = FRotator(-8.0f, 0.0f, 0.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Mechanism|Empty Shot")
+	FRotator EmptyShotHammerImpactRotationOffset = FRotator(14.0f, 0.0f, 0.0f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Effects|Tinnitus")
 	TObjectPtr<USoundBase> TinnitusSound;
@@ -307,6 +385,7 @@ private:
 		Aiming,
 		Cocking,
 		HammerReleasing,
+		EmptyImpact,
 		Fired,
 		Returning
 	};
@@ -321,10 +400,13 @@ private:
 	};
 
 	void FireGun();
+	void FireLiveRound();
+	void FireEmptyRound();
 	void FinishSequence();
 	void StartMechanismAnimation();
 	void UpdateMechanismCocking();
 	void UpdateHammerRelease();
+	void UpdateEmptyShotImpact();
 	void UpdateMechanismReset();
 	void ResetTriggerAndHammer();
 	void StartSelfShotCinematicCamera();
@@ -350,6 +432,12 @@ private:
 	void StopTinnitusSound();
 	void SetBlackoutInstant(float Alpha, bool bHoldWhenFinished);
 	ASDArtToneController* ResolveHitSequenceArtToneController();
+	bool ResolveCurrentShotIsLive() const;
+	void ConsumeCurrentChamberIfNeeded(bool bLiveShot);
+	void AdvanceCurrentChamberIndex();
+	bool IsChamberLive(int32 ChamberIndex) const;
+	void SetChamberLive(int32 ChamberIndex, bool bLive);
+	void PlayConfiguredSound(USoundBase* Sound, bool bPlay2D, const FVector& Location) const;
 	FTransform GetFirstPersonGunTransform() const;
 	void SetActorTransformAlpha(const FTransform& FromTransform, const FTransform& ToTransform, float Alpha);
 
@@ -358,6 +446,8 @@ private:
 	FTransform ReturnStartTransform;
 	FRotator TriggerRestRotation = FRotator::ZeroRotator;
 	FRotator HammerRestRotation = FRotator::ZeroRotator;
+	FRotator MechanismResetStartTriggerRotation = FRotator::ZeroRotator;
+	FRotator MechanismResetStartHammerRotation = FRotator::ZeroRotator;
 	FRotator ChamberInitialRotation = FRotator::ZeroRotator;
 	FRotator ChamberCurrentRotation = FRotator::ZeroRotator;
 	FRotator ChamberStartRotation = FRotator::ZeroRotator;

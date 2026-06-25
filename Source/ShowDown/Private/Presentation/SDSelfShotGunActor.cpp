@@ -189,6 +189,8 @@ void ASDSelfShotGunActor::BeginPlay()
 	OriginalCollisionEnabled = GunMesh->GetCollisionEnabled();
 	TriggerRestRotation = TriggerPivot->GetRelativeRotation();
 	HammerRestRotation = HammerPivot->GetRelativeRotation();
+	MechanismResetStartTriggerRotation = TriggerRestRotation;
+	MechanismResetStartHammerRotation = HammerRestRotation;
 	ChamberInitialRotation = ChamberPivot->GetRelativeRotation();
 	ChamberCurrentRotation = ChamberInitialRotation;
 	ChamberStartRotation = ChamberCurrentRotation;
@@ -230,7 +232,8 @@ void ASDSelfShotGunActor::Tick(float DeltaSeconds)
 	}
 	if (AnimState == EGunAnimState::Aiming
 		|| AnimState == EGunAnimState::Cocking
-		|| AnimState == EGunAnimState::HammerReleasing)
+		|| AnimState == EGunAnimState::HammerReleasing
+		|| AnimState == EGunAnimState::EmptyImpact)
 	{
 		HeldGunJitterElapsedTime += DeltaSeconds;
 	}
@@ -270,6 +273,10 @@ void ASDSelfShotGunActor::Tick(float DeltaSeconds)
 		SetActorTransform(ApplyHeldGunJitter(GetFirstPersonGunTransform()));
 		UpdateHammerRelease();
 		break;
+	case EGunAnimState::EmptyImpact:
+		SetActorTransform(ApplyHeldGunJitter(GetFirstPersonGunTransform()));
+		UpdateEmptyShotImpact();
+		break;
 	case EGunAnimState::Fired:
 		UpdateMechanismReset();
 		if (StateElapsedTime >= ShotHoldTime)
@@ -308,7 +315,7 @@ void ASDSelfShotGunActor::UseGun()
 	StateElapsedTime = 0.0f;
 	MechanismResetElapsedTime = 0.0f;
 	HeldGunJitterElapsedTime = 0.0f;
-	bHasCachedFirstPersonPoseCamera = false;
+	CaptureFirstPersonPoseCamera();
 	StartSelfShotCinematicCamera();
 	AnimState = EGunAnimState::Raising;
 
@@ -335,7 +342,7 @@ void ASDSelfShotGunActor::Interact_Implementation(AActor* Interactor)
 
 void ASDSelfShotGunActor::FireGun()
 {
-	AnimState = EGunAnimState::Fired;
+	const bool bLiveShot = ResolveCurrentShotIsLive();
 	StateElapsedTime = 0.0f;
 	MechanismResetElapsedTime = 0.0f;
 	if (bSelfShotCinematicCameraStartPending)
@@ -344,28 +351,71 @@ void ASDSelfShotGunActor::FireGun()
 	}
 	bSelfShotCinematicCameraHoldStarted = bSelfShotCinematicCameraActive;
 	CinematicCameraElapsedTime = 0.0f;
+
+	if (bLiveShot)
+	{
+		FireLiveRound();
+	}
+	else
+	{
+		FireEmptyRound();
+	}
+
+	ConsumeCurrentChamberIfNeeded(bLiveShot);
+	if (ShotResultMode == ESDSelfShotRoundMode::ChamberPattern)
+	{
+		AdvanceCurrentChamberIndex();
+	}
+}
+
+void ASDSelfShotGunActor::FireLiveRound()
+{
+	AnimState = EGunAnimState::Fired;
+	MechanismResetStartTriggerRotation = TriggerRestRotation + TriggerPulledRotationOffset;
+	MechanismResetStartHammerRotation = HammerRestRotation + HammerFiredRotationOffset;
 	MuzzleFlashElapsedTime = MuzzleFlashDuration;
 	MuzzleFlashLight->SetAttenuationRadius(FMath::Max(0.0f, MuzzleFlashAttenuationRadius));
 	MuzzleFlashLight->SetLightColor(MuzzleFlashColor);
 	MuzzleFlashLight->SetIntensity(MuzzleFlashIntensity);
 
-	if (GunshotSound)
-	{
-		if (bPlayGunshotSound2D)
-		{
-			UGameplayStatics::PlaySound2D(this, GunshotSound);
-		}
-		else
-		{
-			UGameplayStatics::PlaySoundAtLocation(this, GunshotSound, GetActorLocation());
-		}
-	}
+	PlayConfiguredSound(GunshotSound, bPlayGunshotSound2D, GetActorLocation());
 
 	if (bEnableHitSequence)
 	{
 		StartHitSequence();
 	}
 	OnGunFired.Broadcast();
+}
+
+void ASDSelfShotGunActor::FireEmptyRound()
+{
+	AnimState = EGunAnimState::EmptyImpact;
+	MuzzleFlashElapsedTime = 0.0f;
+	MuzzleFlashLight->SetIntensity(0.0f);
+
+	PlayConfiguredSound(EmptyShotSound, bPlayEmptyShotSound2D, HammerPivot->GetComponentLocation());
+	if (bEnableEmptyShotShake)
+	{
+		if (bSelfShotCinematicCameraActive && SelfShotCinematicCamera)
+		{
+			PlayCinematicCameraSteppedShake(
+				EmptyShotShakeHoldTime,
+				EmptyShotShakeBlendOutTime,
+				EmptyShotShakeRotationAmplitude,
+				EmptyShotShakeLocationAmplitude,
+				EmptyShotShakeStepInterval);
+		}
+		else if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(UGameplayStatics::GetPlayerController(this, 0)))
+		{
+			ShowDownController->PlayFixedCameraSteppedShake(
+				EmptyShotShakeHoldTime,
+				EmptyShotShakeBlendOutTime,
+				EmptyShotShakeRotationAmplitude,
+				EmptyShotShakeLocationAmplitude,
+				EmptyShotShakeStepInterval);
+		}
+	}
+	OnGunEmptyFired.Broadcast();
 }
 
 void ASDSelfShotGunActor::FinishSequence()
@@ -451,6 +501,38 @@ void ASDSelfShotGunActor::UpdateHammerRelease()
 	}
 }
 
+void ASDSelfShotGunActor::UpdateEmptyShotImpact()
+{
+	const float ImpactAlpha = EmptyShotImpactTime > KINDA_SMALL_NUMBER
+		? FMath::Clamp(StateElapsedTime / EmptyShotImpactTime, 0.0f, 1.0f)
+		: 1.0f;
+	const float EasedImpactAlpha = FMath::InterpEaseIn(0.0f, 1.0f, ImpactAlpha, 4.0f);
+
+	const FRotator TriggerImpactRotation = TriggerRestRotation
+		+ TriggerPulledRotationOffset
+		+ EmptyShotTriggerExtraPullRotationOffset;
+	const FRotator HammerImpactRotation = HammerRestRotation + EmptyShotHammerImpactRotationOffset;
+
+	TriggerPivot->SetRelativeRotation(LerpRotation(
+		TriggerRestRotation + TriggerPulledRotationOffset,
+		TriggerImpactRotation,
+		EasedImpactAlpha));
+	HammerPivot->SetRelativeRotation(LerpRotation(
+		HammerRestRotation + HammerFiredRotationOffset,
+		HammerImpactRotation,
+		EasedImpactAlpha));
+	ChamberPivot->SetRelativeRotation(ChamberCurrentRotation);
+
+	if (StateElapsedTime >= EmptyShotImpactTime + EmptyShotImpactHoldTime)
+	{
+		MechanismResetStartTriggerRotation = TriggerPivot->GetRelativeRotation();
+		MechanismResetStartHammerRotation = HammerPivot->GetRelativeRotation();
+		AnimState = EGunAnimState::Fired;
+		StateElapsedTime = 0.0f;
+		MechanismResetElapsedTime = 0.0f;
+	}
+}
+
 void ASDSelfShotGunActor::UpdateMechanismReset()
 {
 	if (!bEnableMechanismAnimation)
@@ -461,11 +543,11 @@ void ASDSelfShotGunActor::UpdateMechanismReset()
 	const float Alpha = FMath::Clamp(MechanismResetElapsedTime / TriggerResetTime, 0.0f, 1.0f);
 	const float EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, Alpha, 2.0f);
 	TriggerPivot->SetRelativeRotation(LerpRotation(
-		TriggerRestRotation + TriggerPulledRotationOffset,
+		MechanismResetStartTriggerRotation,
 		TriggerRestRotation,
 		EasedAlpha));
 	HammerPivot->SetRelativeRotation(LerpRotation(
-		HammerRestRotation + HammerFiredRotationOffset,
+		MechanismResetStartHammerRotation,
 		HammerRestRotation,
 		EasedAlpha));
 	ChamberPivot->SetRelativeRotation(ChamberCurrentRotation);
@@ -512,7 +594,10 @@ void ASDSelfShotGunActor::ActivateSelfShotCinematicCamera()
 	APlayerController* PlayerController = UGameplayStatics::GetPlayerController(this, 0);
 	if (PlayerController && SelfShotCinematicCamera)
 	{
-		CaptureFirstPersonPoseCamera();
+		if (!bHasCachedFirstPersonPoseCamera)
+		{
+			CaptureFirstPersonPoseCamera();
+		}
 		PreviousViewTarget = PlayerController->GetViewTarget();
 		PlayerController->SetViewTargetWithBlend(
 			SelfShotCinematicCamera,
@@ -934,6 +1019,102 @@ ASDArtToneController* ASDSelfShotGunActor::ResolveHitSequenceArtToneController()
 	HitSequenceArtToneController = Cast<ASDArtToneController>(
 		UGameplayStatics::GetActorOfClass(this, ASDArtToneController::StaticClass()));
 	return HitSequenceArtToneController;
+}
+
+bool ASDSelfShotGunActor::ResolveCurrentShotIsLive() const
+{
+	switch (ShotResultMode)
+	{
+	case ESDSelfShotRoundMode::AlwaysEmpty:
+		return false;
+	case ESDSelfShotRoundMode::RandomChance:
+		return FMath::FRand() <= FMath::Clamp(LiveRoundChance, 0.0f, 1.0f);
+	case ESDSelfShotRoundMode::ChamberPattern:
+		return IsChamberLive(CurrentChamberIndex);
+	case ESDSelfShotRoundMode::AlwaysLive:
+	default:
+		return true;
+	}
+}
+
+void ASDSelfShotGunActor::ConsumeCurrentChamberIfNeeded(bool bLiveShot)
+{
+	if (ShotResultMode == ESDSelfShotRoundMode::ChamberPattern
+		&& bConsumeLiveChamberAfterShot
+		&& bLiveShot)
+	{
+		SetChamberLive(CurrentChamberIndex, false);
+	}
+}
+
+void ASDSelfShotGunActor::AdvanceCurrentChamberIndex()
+{
+	CurrentChamberIndex = (FMath::Clamp(CurrentChamberIndex, 0, 5) + 1) % 6;
+}
+
+bool ASDSelfShotGunActor::IsChamberLive(int32 ChamberIndex) const
+{
+	switch (FMath::Clamp(ChamberIndex, 0, 5))
+	{
+	case 0:
+		return bChamber1Live;
+	case 1:
+		return bChamber2Live;
+	case 2:
+		return bChamber3Live;
+	case 3:
+		return bChamber4Live;
+	case 4:
+		return bChamber5Live;
+	case 5:
+		return bChamber6Live;
+	default:
+		return false;
+	}
+}
+
+void ASDSelfShotGunActor::SetChamberLive(int32 ChamberIndex, bool bLive)
+{
+	switch (FMath::Clamp(ChamberIndex, 0, 5))
+	{
+	case 0:
+		bChamber1Live = bLive;
+		break;
+	case 1:
+		bChamber2Live = bLive;
+		break;
+	case 2:
+		bChamber3Live = bLive;
+		break;
+	case 3:
+		bChamber4Live = bLive;
+		break;
+	case 4:
+		bChamber5Live = bLive;
+		break;
+	case 5:
+		bChamber6Live = bLive;
+		break;
+	default:
+		break;
+	}
+}
+
+void ASDSelfShotGunActor::PlayConfiguredSound(USoundBase* Sound, bool bPlay2D, const FVector& Location) const
+{
+	if (!Sound)
+	{
+		return;
+	}
+
+	if (bPlay2D)
+	{
+		UGameplayStatics::PlaySound2D(this, Sound);
+	}
+	else
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, Sound, Location);
+	}
 }
 
 FTransform ASDSelfShotGunActor::GetFirstPersonGunTransform() const
