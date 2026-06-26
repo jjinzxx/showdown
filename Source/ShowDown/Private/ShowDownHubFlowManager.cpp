@@ -50,6 +50,12 @@ void AShowDownHubFlowManager::BeginPlay()
 
 	// 시작 순간엔 폰 스폰 카메라에서 패닝되지 않도록 시작 화면 카메라로 즉시 컷합니다.
 	// 이후 ShowLogin/ShowMainMenu의 블렌드는 같은 카메라로의 블렌드라 화면 이동이 보이지 않습니다.
+	if (GetNetMode() != NM_Standalone && !bInMultiplayerLobby)
+	{
+		UE_LOG(LogTemp, Log, TEXT("HubFlowManager disabled on networked gameplay map."));
+		return;
+	}
+
 #if UE_BUILD_SHIPPING
 	const bool bShouldDeveloperAutoStart = false;
 #else
@@ -600,7 +606,7 @@ void AShowDownHubFlowManager::HandleHostMultiplayerRequested()
 		{
 			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
 			EosSubsystem->OnSessionResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
-			EosSubsystem->HostLobby(TEXT("L_Hub"), MultiplayerLevelName);
+			EosSubsystem->HostLobby(MultiplayerLobbyLevelName, MultiplayerLevelName);
 			return;
 		}
 	}
@@ -647,6 +653,28 @@ void AShowDownHubFlowManager::HandleEosSessionResult(bool bSuccess, const FStrin
 {
 	UE_LOG(LogTemp, Log, TEXT("EOS session result: %s"), *Message);
 
+	if (bSuccess && Message == TEXT("EOS game joined."))
+	{
+		SetActiveWidget(nullptr);
+		LobbyWidget = nullptr;
+		MultiplayerWidget = nullptr;
+
+		if (APlayerController* PlayerController = GetPrimaryPlayerController())
+		{
+			FInputModeGameOnly InputMode;
+			PlayerController->SetInputMode(InputMode);
+			PlayerController->bShowMouseCursor = false;
+			PlayerController->bEnableClickEvents = false;
+			PlayerController->bEnableMouseOverEvents = false;
+
+			if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+			{
+				ShowDownController->bHandleShowDownGameplayInput = true;
+			}
+		}
+		return;
+	}
+
 	if (MultiplayerWidget)
 	{
 		MultiplayerWidget->ShowStatusMessage(Message, bSuccess ? FLinearColor::Green : FLinearColor::Yellow);
@@ -675,7 +703,8 @@ void AShowDownHubFlowManager::HandleLobbyLeaveRequested()
 	{
 		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
 		{
-			EosSubsystem->StopLobbyStartPolling();
+			EosSubsystem->LeaveLobby(FName(TEXT("L_Hub")));
+			return;
 		}
 	}
 

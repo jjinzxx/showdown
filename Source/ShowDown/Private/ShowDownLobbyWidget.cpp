@@ -8,6 +8,7 @@
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "ShowDownGameStateBase.h"
 #include "Styling/CoreStyle.h"
 
 TSharedRef<SWidget> UShowDownLobbyWidget::RebuildWidget()
@@ -48,10 +49,23 @@ void UShowDownLobbyWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+void UShowDownLobbyWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	ParticipantRefreshElapsed += InDeltaTime;
+	if (ParticipantRefreshElapsed >= 0.25f)
+	{
+		ParticipantRefreshElapsed = 0.0f;
+		RefreshParticipantText();
+	}
+}
+
 void UShowDownLobbyWidget::SetLobbyInfo(const FString& RoomCode, bool bIsHost)
 {
 	CachedRoomCode = RoomCode;
 	bCachedIsHost = bIsHost;
+	ParticipantRefreshElapsed = 0.0f;
 	RefreshLobbyText();
 }
 
@@ -71,7 +85,7 @@ void UShowDownLobbyWidget::BuildDefaultLayout()
 		return;
 	}
 
-	if (WidgetTree->RootWidget && Text_Title && Text_Code && Text_Status && Button_Start && Button_Leave)
+	if (WidgetTree->RootWidget && Text_Title && Text_Code && Text_Status && Text_Players && Button_Start && Button_Leave)
 	{
 		return;
 	}
@@ -79,6 +93,7 @@ void UShowDownLobbyWidget::BuildDefaultLayout()
 	Text_Title = nullptr;
 	Text_Code = nullptr;
 	Text_Status = nullptr;
+	Text_Players = nullptr;
 	Button_Start = nullptr;
 	Button_Leave = nullptr;
 
@@ -97,7 +112,7 @@ void UShowDownLobbyWidget::BuildDefaultLayout()
 		PanelSlot->SetAnchors(FAnchors(0.5f, 0.5f));
 		PanelSlot->SetAlignment(FVector2D(0.5f, 0.5f));
 		PanelSlot->SetAutoSize(false);
-		PanelSlot->SetSize(FVector2D(460.0f, 320.0f));
+		PanelSlot->SetSize(FVector2D(460.0f, 420.0f));
 		PanelSlot->SetPosition(FVector2D::ZeroVector);
 	}
 
@@ -121,13 +136,22 @@ void UShowDownLobbyWidget::BuildDefaultLayout()
 		CodeSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 18.0f));
 	}
 
+	Text_Players = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("Text_Players"));
+	Text_Players->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+	Text_Players->SetAutoWrapText(true);
+	Text_Players->SetFont(FSlateFontInfo(FCoreStyle::GetDefaultFont(), 16));
+	if (UVerticalBoxSlot* PlayersSlot = RootBox->AddChildToVerticalBox(Text_Players))
+	{
+		PlayersSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, 14.0f));
+	}
+
 	Button_Start = CreateMenuButton(TEXT("Start Game"));
 	if (UVerticalBoxSlot* StartSlot = RootBox->AddChildToVerticalBox(Button_Start))
 	{
 		StartSlot->SetPadding(FMargin(0.0f, 4.0f));
 	}
 
-	Button_Leave = CreateMenuButton(TEXT("Leave"));
+	Button_Leave = CreateMenuButton(TEXT("나가기"));
 	if (UVerticalBoxSlot* LeaveSlot = RootBox->AddChildToVerticalBox(Button_Leave))
 	{
 		LeaveSlot->SetPadding(FMargin(0.0f, 4.0f, 0.0f, 16.0f));
@@ -174,14 +198,56 @@ void UShowDownLobbyWidget::RefreshLobbyText()
 	}
 
 	ShowStatusMessage(
-		bCachedIsHost ? TEXT("Share the code, then start when everyone is ready.") : TEXT("Waiting for host to start..."),
+		bCachedIsHost ? TEXT("방 코드를 공유하고, 모두 입장하면 게임을 시작하세요.") : TEXT("방장이 게임을 시작할 때까지 기다리는 중입니다."),
 		FLinearColor::White
 	);
+	RefreshParticipantText();
+}
+
+void UShowDownLobbyWidget::RefreshParticipantText()
+{
+	if (!Text_Players)
+	{
+		return;
+	}
+
+	const AShowDownGameStateBase* ShowDownGameState = GetWorld()
+		? GetWorld()->GetGameState<AShowDownGameStateBase>()
+		: nullptr;
+	if (!ShowDownGameState)
+	{
+		const FString LoadingText = TEXT("참여자 (0/4)\n참가자 정보를 불러오는 중...");
+		if (CachedParticipantText != LoadingText)
+		{
+			CachedParticipantText = LoadingText;
+			Text_Players->SetText(FText::FromString(CachedParticipantText));
+		}
+		return;
+	}
+
+	TArray<FShowDownNetworkPlayerSlot> Slots = ShowDownGameState->PlayerSlots;
+	Slots.Sort([](const FShowDownNetworkPlayerSlot& Left, const FShowDownNetworkPlayerSlot& Right)
+	{
+		return static_cast<uint8>(Left.Slot) < static_cast<uint8>(Right.Slot);
+	});
+
+	FString ParticipantText = FString::Printf(TEXT("참여자 (%d/4)"), Slots.Num());
+	for (const FShowDownNetworkPlayerSlot& PlayerSlot : Slots)
+	{
+		const FString DisplayName = PlayerSlot.DisplayName.IsEmpty() ? TEXT("이름 없는 플레이어") : PlayerSlot.DisplayName;
+		ParticipantText += FString::Printf(TEXT("\n%d번  %s"), static_cast<int32>(PlayerSlot.Slot), *DisplayName);
+	}
+
+	if (CachedParticipantText != ParticipantText)
+	{
+		CachedParticipantText = ParticipantText;
+		Text_Players->SetText(FText::FromString(CachedParticipantText));
+	}
 }
 
 void UShowDownLobbyWidget::HandleStartClicked()
 {
-	ShowStatusMessage(TEXT("Starting game..."), FLinearColor::Yellow);
+	ShowStatusMessage(TEXT("게임을 시작하는 중..."), FLinearColor::Yellow);
 	OnStartRequested.Broadcast();
 }
 

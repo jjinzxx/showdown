@@ -35,13 +35,13 @@ public:
 	void LoginWithSupabaseSession();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void HostSession(FName MapName = TEXT("ShowDownRoom"));
+	void HostSession(FName MapName = TEXT("L_MultiplayerGame"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void FindAndJoinFirstSession();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void HostLobby(FName LobbyMapName = TEXT("L_Hub"), FName GameMapName = TEXT("ShowDownRoom"));
+	void HostLobby(FName LobbyMapName = TEXT("L_MultiplayerLobby"), FName GameMapName = TEXT("L_MultiplayerGame"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void JoinLobbyByCode(const FString& RoomCode);
@@ -49,11 +49,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void StartHostedGame();
 
+	// Leaves the current room and tears down the local EOS session before returning
+	// to the hub. A host leaving closes its listen-server room for the other clients.
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
+	void LeaveLobby(FName HubMapName = TEXT("L_Hub"));
+
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void StartLobbyStartPolling();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void StopLobbyStartPolling();
+
+	void MarkEnteredMultiplayerGame();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	bool IsInMultiplayerLobby() const;
@@ -64,6 +71,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	FString GetLobbyCode() const;
 
+	int32 GetExpectedLobbyPlayerCount() const { return ExpectedLobbyPlayerCount; }
+
 private:
 	enum class ESessionFlow
 	{
@@ -72,7 +81,10 @@ private:
 		HostLobby,
 		JoinLobby,
 		PollLobbyStart,
-		JoinStartedGame
+		JoinStartedGame,
+		LeaveLobby,
+		CleanupBeforeHostLobby,
+		CleanupBeforeJoinLobby
 	};
 
 	FDelegateHandle LoginCompleteDelegateHandle;
@@ -85,10 +97,11 @@ private:
 	TSharedPtr<FOnlineSessionSearch> SessionSearch;
 	FOnlineSessionSearchResult PendingStartedGameSearchResult;
 	FTimerHandle LobbyStartPollTimerHandle;
-	FName PendingHostMapName = TEXT("ShowDownRoom");
-	FName PendingGameMapName = TEXT("ShowDownRoom");
+	FName PendingHostMapName = TEXT("L_MultiplayerGame");
+	FName PendingGameMapName = TEXT("L_MultiplayerGame");
 	FString PendingJoinCode;
 	FString LobbyCode;
+	int32 ExpectedLobbyPlayerCount = 2;
 	ESessionFlow PendingSessionFlow = ESessionFlow::None;
 	bool bLobbyStartPollInFlight = false;
 	bool bInMultiplayerLobby = false;
@@ -107,5 +120,6 @@ private:
 	void PollLobbyStart();
 	void JoinStartedGameSession();
 	void TravelHostedGame();
+	void CompleteLobbyLeave(bool bSessionDestroyed);
 	bool TravelToSearchResult(const FOnlineSessionSearchResult& SearchResult, const FString& StatusMessage);
 };

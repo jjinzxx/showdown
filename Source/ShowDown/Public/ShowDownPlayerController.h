@@ -16,6 +16,8 @@ class UMaterialInterface;
 class UPrimitiveComponent;
 class USceneComponent;
 class UShowDownChatWidget;
+class UShowDownLeaveConfirmWidget;
+class UShowDownMultiRankWidget;
 
 struct FSDPrimitiveCustomDepthState
 {
@@ -66,6 +68,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void RequestPlayerFold();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Multiplayer")
+	void RequestLeaveMultiplayerMatch();
+
+	void ConfirmLeaveMultiplayerMatch();
+	void CancelLeaveMultiplayerMatch();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Camera")
 	void SetFixedCameraMouseLook(
@@ -208,11 +216,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ShowDown|Chat")
 	TSubclassOf<UShowDownChatWidget> ChatWidgetClass;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ShowDown|Multiplayer")
+	TSubclassOf<UShowDownMultiRankWidget> MultiplayerRankWidgetClass;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
 	FKey ToggleChatKey = EKeys::T;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
 	FKey CloseChatKey = EKeys::Escape;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Multiplayer")
+	FKey LeaveMatchKey = EKeys::Escape;
 
 	UFUNCTION(Server, Reliable)
 	void ServerSubmitSelectedCard(ACard* SelectedCard);
@@ -231,6 +245,29 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerPlayerFold();
+
+	UFUNCTION(Server, Reliable)
+	void ServerSetMultiplayerDisplayName(const FString& DisplayName);
+
+	UFUNCTION(Server, Reliable)
+	void ServerRequestMultiplayerRestart();
+
+	UFUNCTION(Client, Reliable)
+	void ClientShowStatusMessage(const FString& Message);
+
+	UFUNCTION(Client, Reliable)
+	void ClientShowMultiplayerRank(const TArray<FString>& PlayerNames);
+
+	// Restores gameplay input after travelling from the UI-only multiplayer lobby.
+	UFUNCTION(Client, Reliable)
+	void ClientEnterMultiplayerGameplay();
+
+	// Selects one of the level-placed multiplayer seat cameras by its zero-based index.
+	UFUNCTION(Client, Reliable)
+	void ClientUseMultiplayerSeatCamera(int32 SeatIndex);
+
+	UFUNCTION(Client, Reliable)
+	void ClientLeaveMultiplayerRoomToHub();
 
 private:
 	void InitializeFromPossessedPawn();
@@ -262,11 +299,20 @@ private:
 	FVector GetCameraSteppedShakeLocationOffset(const FRotator& CameraRotation) const;
 	void HandleBettingHotkeys();
 	void EnsureChatWidget();
+	void EnsureLeaveConfirmWidget();
+	bool TryApplyPendingMultiplayerSeatCamera();
+	bool UseFallbackMultiplayerSeatCamera(int32 SeatIndex);
+	void RestoreMultiplayerGameplayInput();
 	void ApplyChatInputMode(bool bOpen);
 	void CreateCenterCrosshairWidget();
 	void UpdateCenterCrosshairVisibility();
 	void RemoveCenterCrosshairWidget();
+	void SubmitLocalMultiplayerDisplayName();
 	FString GetChatSenderName() const;
+	UFUNCTION()
+	void HandleMultiRankRestartRequested();
+	UFUNCTION()
+	void HandleMultiRankMainMenuRequested();
 	AShowDownGameModeBase* ResolveGameMode() const;
 
 	UPROPERTY()
@@ -291,12 +337,27 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> InteractionOutlineMID;
 
 	UPROPERTY()
+	UShowDownLeaveConfirmWidget* LeaveConfirmWidget = nullptr;
+
+	UPROPERTY()
+	UShowDownMultiRankWidget* MultiplayerRankWidget = nullptr;
+
+	UPROPERTY()
 	TObjectPtr<USceneComponent> FixedCameraMouseLookTarget = nullptr;
+
+	// Created only on a local client when the map does not contain an authored
+	// MP_SeatCamera_* actor. It is deliberately non-replicated: every player
+	// must keep an independent, slot-specific view of the shared table.
+	TObjectPtr<ACameraActor> LocalFallbackSeatCamera = nullptr;
 
 	TSharedPtr<SWidget> CenterCrosshairWidget;
 	TArray<FSDPrimitiveCustomDepthState> FocusedPrimitiveStates;
 
 	bool bChatOpen = false;
+	bool bPendingMultiplayerSeatCamera = false;
+	int32 PendingMultiplayerSeatIndex = INDEX_NONE;
+	FRotator PawnCameraBaseRotation = FRotator::ZeroRotator;
+	bool bHasPawnCameraBaseRotation = false;
 	FRotator FixedCameraBaseRotation = FRotator::ZeroRotator;
 	FRotator FixedCameraLookRotation = FRotator::ZeroRotator;
 	FVector FixedCameraBaseLocation = FVector::ZeroVector;

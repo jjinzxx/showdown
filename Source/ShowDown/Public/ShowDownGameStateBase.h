@@ -21,6 +21,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownCollectorDialogueSignature
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FShowDownCollectorLLMDecisionSignature, const FString&, Dialogue, const FString&, Intent, EShowDownBetAction, Action, int32, TargetBet);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownCollectorLLMStatusSignature, bool, bSuccess, const FString&, Message);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FShowDownChatMessageSignature, const FString&, SenderName, const FString&, Message);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FShowDownMultiplayerRouletteStartedSignature, EShowDownPlayerSlot, TargetSlot, const FString&, TargetName, int32, BulletCount);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FiveParams(FShowDownMultiplayerRouletteResultSignature, EShowDownPlayerSlot, TargetSlot, const FString&, TargetName, int32, BulletCount, bool, bHit, int32, RemainingLives);
 
 UCLASS()
 class SHOWDOWN_API AShowDownGameStateBase : public AGameStateBase
@@ -83,6 +85,12 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events")
 	FShowDownChatMessageSignature OnChatMessageReceived;
+
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events|Multiplayer")
+	FShowDownMultiplayerRouletteStartedSignature OnMultiplayerRouletteStarted;
+
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|Events|Multiplayer")
+	FShowDownMultiplayerRouletteResultSignature OnMultiplayerRouletteResult;
 
 	//현재 게임 진행 단계
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentPhase, BlueprintReadOnly, Category = "ShowDown|State")
@@ -157,6 +165,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
 	void BroadcastChatMessage(const FString& SenderName, const FString& Message);
 
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Multiplayer|Presentation")
+	void BroadcastMultiplayerRouletteStarted(EShowDownPlayerSlot TargetSlot, const FString& TargetName, int32 BulletCount);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Multiplayer|Presentation")
+	void BroadcastMultiplayerRouletteResult(EShowDownPlayerSlot TargetSlot, const FString& TargetName, int32 BulletCount, bool bHit, int32 RemainingLives);
+
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastCollectorLLMDecision(const FString& Dialogue, const FString& Intent, EShowDownBetAction Action, int32 TargetBet);
 
@@ -165,6 +179,12 @@ public:
 
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastChatMessage(const FString& SenderName, const FString& Message);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastMultiplayerRouletteStarted(EShowDownPlayerSlot TargetSlot, const FString& TargetName, int32 BulletCount);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastMultiplayerRouletteResult(EShowDownPlayerSlot TargetSlot, const FString& TargetName, int32 BulletCount, bool bHit, int32 RemainingLives);
 
 protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
