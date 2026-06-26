@@ -4,6 +4,29 @@
 
 #include "Components/PostProcessComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+#include "UObject/ConstructorHelpers.h"
+
+namespace
+{
+	const TCHAR* DefaultPixelateMaterialPath = TEXT("/Game/ArtTone/M_PP_Pixelate.M_PP_Pixelate");
+
+	bool IsPixelateBlendable(const UObject* BlendableObject, const UMaterialInterface* PixelateMaterial, const UMaterialInstanceDynamic* PixelateMID)
+	{
+		if (!BlendableObject)
+		{
+			return true;
+		}
+
+		if (BlendableObject == PixelateMID || BlendableObject == PixelateMaterial)
+		{
+			return true;
+		}
+
+		const UMaterialInterface* BlendableMaterial = Cast<UMaterialInterface>(BlendableObject);
+		return BlendableMaterial && PixelateMaterial && BlendableMaterial->GetMaterial() == PixelateMaterial->GetMaterial();
+	}
+}
 
 ASDArtToneController::ASDArtToneController()
 {
@@ -14,6 +37,12 @@ ASDArtToneController::ASDArtToneController()
 	PostProcessComponent->bUnbound = bUnbound;
 	PostProcessComponent->Priority = 50.0f;
 	PostProcessComponent->BlendWeight = 1.0f;
+
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> PixelateMaterialFinder(DefaultPixelateMaterialPath);
+	if (PixelateMaterialFinder.Succeeded())
+	{
+		PixelatePostProcessMaterial = PixelateMaterialFinder.Object;
+	}
 
 	CurrentSettings = InitialSettings;
 	BlendStartSettings = InitialSettings;
@@ -56,6 +85,22 @@ void ASDArtToneController::Tick(float DeltaSeconds)
 	}
 }
 
+#if WITH_EDITOR
+void ASDArtToneController::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	PostProcessComponent->bUnbound = bUnbound;
+
+	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(ASDArtToneController, PixelatePostProcessMaterial))
+	{
+		PixelateMID = nullptr;
+	}
+
+	ApplyArtTone(InitialSettings);
+}
+#endif
+
 void ASDArtToneController::ApplyArtTone(const FSDArtToneSettings& NewSettings)
 {
 	CurrentSettings = NewSettings;
@@ -84,30 +129,75 @@ void ASDArtToneController::SetPixelCount(float NewPixelCount)
 	ApplyPixelateParameters(CurrentSettings);
 }
 
-void ASDArtToneController::SetScanlineStrength(float NewScanlineStrength)
-{
-	CurrentSettings.ScanlineStrength = FMath::Max(0.0f, NewScanlineStrength);
-	ApplyPixelateParameters(CurrentSettings);
-}
-
 void ASDArtToneController::SetColorSteps(float NewColorSteps)
 {
 	CurrentSettings.ColorSteps = FMath::Max(1.0f, NewColorSteps);
 	ApplyPixelateParameters(CurrentSettings);
 }
 
+void ASDArtToneController::SetHalftoneStrength(float NewHalftoneStrength)
+{
+	CurrentSettings.HalftoneStrength = FMath::Clamp(NewHalftoneStrength, 0.0f, 1.0f);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
+void ASDArtToneController::SetHalftoneCount(float NewHalftoneCount)
+{
+	CurrentSettings.HalftoneCount = FMath::Max(1.0f, NewHalftoneCount);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
+void ASDArtToneController::SetHalftoneRadius(float NewHalftoneRadius)
+{
+	CurrentSettings.HalftoneRadius = FMath::Clamp(NewHalftoneRadius, 0.0f, 1.0f);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
+void ASDArtToneController::SetHalftoneSoftness(float NewHalftoneSoftness)
+{
+	CurrentSettings.HalftoneSoftness = FMath::Clamp(NewHalftoneSoftness, 0.001f, 1.0f);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
+void ASDArtToneController::SetHalftoneShape(float NewHalftoneShape)
+{
+	CurrentSettings.HalftoneShape = FMath::Clamp(NewHalftoneShape, 0.0f, 1.0f);
+	ApplyPixelateParameters(CurrentSettings);
+}
+
 void ASDArtToneController::EnsurePixelateMaterialInstance()
 {
-	if (PixelateMID || !PixelatePostProcessMaterial)
+	if (!PixelatePostProcessMaterial)
+	{
+		PixelatePostProcessMaterial = LoadObject<UMaterialInterface>(nullptr, DefaultPixelateMaterialPath);
+	}
+
+	if (!PixelatePostProcessMaterial)
 	{
 		return;
 	}
 
-	PixelateMID = UMaterialInstanceDynamic::Create(PixelatePostProcessMaterial, this);
-	if (PixelateMID)
+	if (!PixelateMID)
 	{
-		PostProcessComponent->Settings.WeightedBlendables.Array.Add(FWeightedBlendable(1.0f, PixelateMID));
+		PixelateMID = UMaterialInstanceDynamic::Create(PixelatePostProcessMaterial, this);
 	}
+
+	if (!PixelateMID)
+	{
+		return;
+	}
+
+	FWeightedBlendables& WeightedBlendables = PostProcessComponent->Settings.WeightedBlendables;
+	for (int32 BlendableIndex = WeightedBlendables.Array.Num() - 1; BlendableIndex >= 0; --BlendableIndex)
+	{
+		const UObject* BlendableObject = WeightedBlendables.Array[BlendableIndex].Object.Get();
+		if (IsPixelateBlendable(BlendableObject, PixelatePostProcessMaterial, PixelateMID))
+		{
+			WeightedBlendables.Array.RemoveAt(BlendableIndex);
+		}
+	}
+
+	WeightedBlendables.Array.Add(FWeightedBlendable(1.0f, PixelateMID));
 }
 
 void ASDArtToneController::ApplyPostProcessSettings(const FSDArtToneSettings& Settings)
@@ -149,16 +239,24 @@ void ASDArtToneController::ApplyPixelateParameters(const FSDArtToneSettings& Set
 	}
 
 	PixelateMID->SetScalarParameterValue(TEXT("PixelCount"), Settings.PixelCount);
-	PixelateMID->SetScalarParameterValue(TEXT("ScanlineStrength"), Settings.ScanlineStrength);
 	PixelateMID->SetScalarParameterValue(TEXT("ColorSteps"), Settings.ColorSteps);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneStrength"), Settings.HalftoneStrength);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneCount"), Settings.HalftoneCount);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneRadius"), Settings.HalftoneRadius);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneSoftness"), Settings.HalftoneSoftness);
+	PixelateMID->SetScalarParameterValue(TEXT("HalftoneShape"), Settings.HalftoneShape);
 }
 
 FSDArtToneSettings ASDArtToneController::LerpSettings(const FSDArtToneSettings& From, const FSDArtToneSettings& To, float Alpha)
 {
 	FSDArtToneSettings Result;
 	Result.PixelCount = FMath::Lerp(From.PixelCount, To.PixelCount, Alpha);
-	Result.ScanlineStrength = FMath::Lerp(From.ScanlineStrength, To.ScanlineStrength, Alpha);
 	Result.ColorSteps = FMath::Lerp(From.ColorSteps, To.ColorSteps, Alpha);
+	Result.HalftoneStrength = FMath::Lerp(From.HalftoneStrength, To.HalftoneStrength, Alpha);
+	Result.HalftoneCount = FMath::Lerp(From.HalftoneCount, To.HalftoneCount, Alpha);
+	Result.HalftoneRadius = FMath::Lerp(From.HalftoneRadius, To.HalftoneRadius, Alpha);
+	Result.HalftoneSoftness = FMath::Lerp(From.HalftoneSoftness, To.HalftoneSoftness, Alpha);
+	Result.HalftoneShape = FMath::Lerp(From.HalftoneShape, To.HalftoneShape, Alpha);
 	Result.ExposureCompensation = FMath::Lerp(From.ExposureCompensation, To.ExposureCompensation, Alpha);
 	Result.Saturation = FMath::Lerp(From.Saturation, To.Saturation, Alpha);
 	Result.Contrast = FMath::Lerp(From.Contrast, To.Contrast, Alpha);

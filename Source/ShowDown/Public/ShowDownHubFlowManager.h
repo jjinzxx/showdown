@@ -152,6 +152,21 @@ private:
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera")
 	bool bInvertGameCameraMouseY = true;
 
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera|Breathing")
+	bool bEnableGameCameraBreathingSway = true;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera|Breathing", meta = (ClampMin = "0.0"))
+	float GameCameraBreathingSwaySpeed = 0.38f;
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera|Breathing")
+	FRotator GameCameraBreathingSwayRotationAmplitude = FRotator(0.12f, 0.05f, 0.08f);
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera|Breathing")
+	FVector GameCameraBreathingSwayLocationAmplitude = FVector(0.0f, 0.0f, 0.8f);
+
+	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera|Breathing", meta = (ClampMin = "0.0"))
+	float GameCameraBreathingSwayBlendInTime = 1.0f;
+
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Developer")
 	bool bDeveloperAutoStartSinglePlayer = true;
 

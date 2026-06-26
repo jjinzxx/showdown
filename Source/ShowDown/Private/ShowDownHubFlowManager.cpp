@@ -363,6 +363,12 @@ void AShowDownHubFlowManager::ShowSinglePlayPreviewInternal(bool bAllowOnlineRew
 					GameCameraMinYawOffset,
 					GameCameraMaxYawOffset,
 					bInvertGameCameraMouseY);
+				ShowDownController->SetFixedCameraBreathingSway(
+					bEnableGameCameraBreathingSway,
+					GameCameraBreathingSwaySpeed,
+					GameCameraBreathingSwayRotationAmplitude,
+					GameCameraBreathingSwayLocationAmplitude,
+					GameCameraBreathingSwayBlendInTime);
 			}
 
 		}

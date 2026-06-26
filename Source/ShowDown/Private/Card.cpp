@@ -90,6 +90,12 @@ void ACard::BeginPlay()
 	TargetVisualWorldOffset = FVector::ZeroVector;
 	DefaultRotation = GetActorRotation();
 	TargetRotation = DefaultRotation;
+	if (VisualRoot)
+	{
+		BaseVisualRootScale = VisualRoot->GetRelativeScale3D();
+		CurrentVisualScaleMultiplier = TargetVisualScaleMultiplier;
+		VisualRoot->SetRelativeScale3D(BaseVisualRootScale * CurrentVisualScaleMultiplier);
+	}
 	RefreshVisual();
 }
 
@@ -100,14 +106,27 @@ void ACard::Tick(float DeltaTime)
 	UpdateTargetTransform();
 
 	CurrentVisualWorldOffset = FMath::VInterpTo(CurrentVisualWorldOffset, TargetVisualWorldOffset, DeltaTime, MoveSpeed);
+	FVector VisualWorldOffset = CurrentVisualWorldOffset;
+	FRotator VisualRelativeRotation = FRotator::ZeroRotator;
+	UpdateVisualScale(DeltaTime);
+	UpdateSlotAttachSettle(DeltaTime, VisualWorldOffset, VisualRelativeRotation);
+
 	if (VisualRoot)
 	{
-		const FVector VisualRelativeOffset = GetActorTransform().InverseTransformVectorNoScale(CurrentVisualWorldOffset);
+		const FVector VisualRelativeOffset = GetActorTransform().InverseTransformVectorNoScale(VisualWorldOffset);
 		VisualRoot->SetRelativeLocation(VisualRelativeOffset);
+		VisualRoot->SetRelativeRotation(VisualRelativeRotation);
+		VisualRoot->SetRelativeScale3D(BaseVisualRootScale * CurrentVisualScaleMultiplier);
 	}
 
 	if (!HasAuthority())
 	{
+		return;
+	}
+
+	if (bSlotAttachMotionActive)
+	{
+		UpdateSlotAttachMotion(DeltaTime);
 		return;
 	}
 
@@ -135,11 +154,17 @@ void ACard::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimePro
 	DOREPLIFETIME(ACard, Rank);
 	DOREPLIFETIME(ACard, bSelectable);
 	DOREPLIFETIME(ACard, bFaceUp);
+	DOREPLIFETIME(ACard, TargetVisualScaleMultiplier);
 }
 
 void ACard::OnRep_CardVisual()
 {
 	RefreshVisual();
+}
+
+void ACard::OnRep_TargetVisualScaleMultiplier()
+{
+	StartVisualScaleMotion(TargetVisualScaleMultiplier);
 }
 
 void ACard::RefreshVisual()
@@ -205,10 +230,35 @@ void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
 	DefaultRotation = Slot->GetComponentRotation();
 	UpdateTargetTransform();
 	SetFaceUp(bNewFaceUp);
+	SetTargetVisualScaleMultiplier(SlotAttachTargetScale);
+
+	if (HasAuthority() && bUseSlotAttachMotion)
+	{
+		StartSlotAttachMotion(FTransform(DefaultRotation, DefaultLocation));
+	}
+}
+
+float ACard::GetSlotAttachMotionTotalSeconds() const
+{
+	return bUseSlotAttachMotion
+		? FMath::Max(0.0f, SlotAttachDuration) + FMath::Max(0.0f, SlotAttachSettleDuration)
+		: 0.0f;
 }
 
 void ACard::MoveToHandTransform(const FTransform& NewTransform)
 {
+	bSlotAttachMotionActive = false;
+	bSlotAttachSettleActive = false;
+	bVisualScaleMotionActive = false;
+	SlotAttachElapsedTime = 0.0f;
+	SlotAttachSettleElapsedTime = 0.0f;
+	VisualScaleElapsedTime = 0.0f;
+	SetTargetVisualScaleMultiplier(1.0f);
+	if (VisualRoot)
+	{
+		VisualRoot->SetRelativeRotation(FRotator::ZeroRotator);
+	}
+
 	DefaultLocation = NewTransform.GetLocation();
 	DefaultRotation = NewTransform.GetRotation().Rotator();
 	UpdateTargetTransform();
@@ -232,6 +282,129 @@ void ACard::UpdateTargetTransform()
 	}
 
 	TargetVisualWorldOffset = FVector::ZeroVector;
+}
+
+void ACard::StartSlotAttachMotion(const FTransform& TargetTransform)
+{
+	SlotAttachStartLocation = GetActorLocation();
+	SlotAttachTargetLocation = TargetTransform.GetLocation();
+	SlotAttachTravelDirection = (SlotAttachTargetLocation - SlotAttachStartLocation).GetSafeNormal();
+	if (SlotAttachTravelDirection.IsNearlyZero())
+	{
+		SlotAttachTravelDirection = GetActorForwardVector();
+	}
+
+	SlotAttachStartRotation = GetActorQuat();
+	SlotAttachTargetRotation = TargetTransform.GetRotation();
+	SlotAttachElapsedTime = 0.0f;
+	SlotAttachSettleElapsedTime = 0.0f;
+	bSlotAttachMotionActive = true;
+	bSlotAttachSettleActive = false;
+}
+
+void ACard::UpdateSlotAttachMotion(float DeltaTime)
+{
+	SlotAttachElapsedTime += DeltaTime;
+	const float Duration = FMath::Max(0.05f, SlotAttachDuration);
+	const float Alpha = FMath::Clamp(SlotAttachElapsedTime / Duration, 0.0f, 1.0f);
+	const float EasedAlpha = FMath::InterpEaseInOut(0.0f, 1.0f, Alpha, 2.0f);
+	const float ArcAlpha = FMath::Sin(Alpha * PI);
+	const float OvershootAlpha = FMath::Clamp((Alpha - 0.72f) / 0.28f, 0.0f, 1.0f);
+	const float OvershootAmount = FMath::Sin(OvershootAlpha * PI) * SlotAttachOvershootDistance;
+
+	const FVector ArcOffset = FVector::UpVector * SlotAttachArcHeight * ArcAlpha;
+	const FVector OvershootOffset = SlotAttachTravelDirection * OvershootAmount;
+	const FVector NewLocation =
+		FMath::Lerp(SlotAttachStartLocation, SlotAttachTargetLocation, EasedAlpha)
+		+ ArcOffset
+		+ OvershootOffset;
+
+	const FQuat BaseRotation = FQuat::Slerp(SlotAttachStartRotation, SlotAttachTargetRotation, EasedAlpha).GetNormalized();
+	const FRotator FlightRotation = ScaleRotator(SlotAttachFlightRotationAmplitude, ArcAlpha);
+	const FQuat NewRotation = (BaseRotation * FlightRotation.Quaternion()).GetNormalized();
+	SetActorLocationAndRotation(NewLocation, NewRotation);
+
+	if (Alpha >= 1.0f)
+	{
+		bSlotAttachMotionActive = false;
+		bSlotAttachSettleActive = SlotAttachSettleDuration > KINDA_SMALL_NUMBER;
+		SlotAttachSettleElapsedTime = 0.0f;
+		SetActorLocationAndRotation(SlotAttachTargetLocation, SlotAttachTargetRotation);
+	}
+}
+
+void ACard::UpdateSlotAttachSettle(float DeltaTime, FVector& InOutVisualWorldOffset, FRotator& OutVisualRelativeRotation)
+{
+	if (!bSlotAttachSettleActive)
+	{
+		return;
+	}
+
+	SlotAttachSettleElapsedTime += DeltaTime;
+	const float Duration = FMath::Max(0.01f, SlotAttachSettleDuration);
+	const float Alpha = FMath::Clamp(SlotAttachSettleElapsedTime / Duration, 0.0f, 1.0f);
+	const float Decay = 1.0f - Alpha;
+	const float Wave = FMath::Sin(Alpha * PI * SlotAttachSettleOscillations) * Decay;
+
+	InOutVisualWorldOffset += FVector::UpVector * SlotAttachSettleLocationAmplitude * Wave;
+	OutVisualRelativeRotation = ScaleRotator(SlotAttachSettleRotationAmplitude, Wave);
+
+	if (Alpha >= 1.0f)
+	{
+		bSlotAttachSettleActive = false;
+		SlotAttachSettleElapsedTime = 0.0f;
+		OutVisualRelativeRotation = FRotator::ZeroRotator;
+	}
+}
+
+void ACard::SetTargetVisualScaleMultiplier(float NewTargetScaleMultiplier)
+{
+	const float ClampedTargetScale = FMath::Max(0.1f, NewTargetScaleMultiplier);
+	if (FMath::IsNearlyEqual(TargetVisualScaleMultiplier, ClampedTargetScale))
+	{
+		return;
+	}
+
+	TargetVisualScaleMultiplier = ClampedTargetScale;
+	StartVisualScaleMotion(TargetVisualScaleMultiplier);
+}
+
+void ACard::StartVisualScaleMotion(float NewTargetScaleMultiplier)
+{
+	VisualScaleStartMultiplier = CurrentVisualScaleMultiplier;
+	VisualScaleElapsedTime = 0.0f;
+	bVisualScaleMotionActive = !FMath::IsNearlyEqual(CurrentVisualScaleMultiplier, NewTargetScaleMultiplier);
+
+	if (!bVisualScaleMotionActive)
+	{
+		CurrentVisualScaleMultiplier = NewTargetScaleMultiplier;
+	}
+}
+
+void ACard::UpdateVisualScale(float DeltaTime)
+{
+	if (!bVisualScaleMotionActive)
+	{
+		return;
+	}
+
+	VisualScaleElapsedTime += DeltaTime;
+	const float Duration = FMath::Max(0.05f, SlotAttachDuration);
+	const float Alpha = FMath::Clamp(VisualScaleElapsedTime / Duration, 0.0f, 1.0f);
+	const float EasedAlpha = FMath::InterpEaseInOut(0.0f, 1.0f, Alpha, 2.0f);
+	CurrentVisualScaleMultiplier = FMath::Lerp(VisualScaleStartMultiplier, TargetVisualScaleMultiplier, EasedAlpha);
+
+	if (Alpha >= 1.0f)
+	{
+		CurrentVisualScaleMultiplier = TargetVisualScaleMultiplier;
+		bVisualScaleMotionActive = false;
+		VisualScaleElapsedTime = 0.0f;
+	}
+}
+
+FRotator ACard::ScaleRotator(const FRotator& Rotator, float Scale) const
+{
+	return FRotator(Rotator.Pitch * Scale, Rotator.Yaw * Scale, Rotator.Roll * Scale);
 }
 
 bool ACard::CanInteract_Implementation(AActor* Interactor) const

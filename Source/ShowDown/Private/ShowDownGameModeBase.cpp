@@ -152,6 +152,7 @@ void AShowDownGameModeBase::Logout(AController* Exiting)
 
 void AShowDownGameModeBase::ResetForHubReturn()
 {
+	GetWorldTimerManager().ClearTimer(CardPlacementDelayHandle);
 	GetWorldTimerManager().ClearTimer(RevealDelayHandle);
 	GetWorldTimerManager().ClearTimer(CollectorActionPresentationTimerHandle);
 
@@ -159,6 +160,7 @@ void AShowDownGameModeBase::ResetForHubReturn()
 	bHasPendingRoundReveal = false;
 	bHasPendingFoldReveal = false;
 	bCollectorActionPresentationInProgress = false;
+	CardPlacementDelayContinuation = TFunction<void()>();
 	CollectorActionPresentationContinuation = TFunction<void()>();
 	QueuedCollectorActionPresentationContinuations.Reset();
 
@@ -216,17 +218,20 @@ void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 	CollectorState.ForeheadCard = SelectedCard;
 
 	CardSystem->MoveCardToSlot(SelectedCard, CollectorHeadSlot, true);
-	
-	PlayCollectorActionPresentationThen([this]()
+
+	WaitForCardPlacementThen(SelectedCard, [this]()
 	{
-		if (PlayerState.ForeheadCard)
+		PlayCollectorActionPresentationThen([this]()
 		{
-			StartBettingPhase();
-		}
-		else
-		{
-			CollectorGiveCardToPlayer();
-		}
+			if (PlayerState.ForeheadCard)
+			{
+				StartBettingPhase();
+			}
+			else
+			{
+				CollectorGiveCardToPlayer();
+			}
+		});
 	});
 }
 
@@ -332,6 +337,38 @@ void AShowDownGameModeBase::FindCollector()
 void AShowDownGameModeBase::PlayCollectorActionPresentation()
 {
 	PlayCollectorActionPresentationThen(TFunction<void()>());
+}
+
+void AShowDownGameModeBase::WaitForCardPlacementThen(ACard* Card, TFunction<void()>&& Continuation)
+{
+	CardPlacementDelayContinuation = MoveTemp(Continuation);
+
+	const float PlacementDelay = IsValid(Card) ? Card->GetSlotAttachMotionTotalSeconds() : 0.0f;
+	if (PlacementDelay <= KINDA_SMALL_NUMBER)
+	{
+		FinishCardPlacementWait();
+		return;
+	}
+
+	GetWorldTimerManager().ClearTimer(CardPlacementDelayHandle);
+	GetWorldTimerManager().SetTimer(
+		CardPlacementDelayHandle,
+		this,
+		&AShowDownGameModeBase::FinishCardPlacementWait,
+		PlacementDelay,
+		false);
+}
+
+void AShowDownGameModeBase::FinishCardPlacementWait()
+{
+	GetWorldTimerManager().ClearTimer(CardPlacementDelayHandle);
+
+	TFunction<void()> Continuation = MoveTemp(CardPlacementDelayContinuation);
+	CardPlacementDelayContinuation = TFunction<void()>();
+	if (Continuation)
+	{
+		Continuation();
+	}
 }
 
 void AShowDownGameModeBase::PlayCollectorActionPresentationThen(TFunction<void()>&& Continuation)
@@ -444,20 +481,23 @@ void AShowDownGameModeBase::CollectorGiveCardToPlayer()
 
 	UE_LOG(LogTemp, Log, TEXT("Collector gave card to player: %s, Rank: %d"), *ChosenCard->GetName(), ChosenCard->Rank);
 
-	PlayCollectorActionPresentationThen([this]()
+	WaitForCardPlacementThen(ChosenCard, [this]()
 	{
-		if (CollectorState.ForeheadCard)
+		PlayCollectorActionPresentationThen([this]()
 		{
-			StartBettingPhase();
-		}
-		else
-		{
-			SetPlayerHandSelectable(true);
-			if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+			if (CollectorState.ForeheadCard)
 			{
-				ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
+				StartBettingPhase();
 			}
-		}
+			else
+			{
+				SetPlayerHandSelectable(true);
+				if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+				{
+					ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
+				}
+			}
+		});
 	});
 }
 

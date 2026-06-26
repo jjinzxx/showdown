@@ -18,11 +18,23 @@ struct FSDArtToneSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pixelate", meta = (ClampMin = "1.0"))
 	float PixelCount = 320.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pixelate", meta = (ClampMin = "0.0"))
-	float ScanlineStrength = 0.02f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pixelate", meta = (ClampMin = "1.0"))
 	float ColorSteps = 6.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Halftone", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HalftoneStrength = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Halftone", meta = (ClampMin = "1.0"))
+	float HalftoneCount = 120.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Halftone", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HalftoneRadius = 0.45f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Halftone", meta = (ClampMin = "0.001", ClampMax = "1.0"))
+	float HalftoneSoftness = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Halftone", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HalftoneShape = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Color")
 	float ExposureCompensation = 1.0f;
@@ -69,16 +81,32 @@ public:
 	void SetPixelCount(float NewPixelCount);
 
 	UFUNCTION(BlueprintCallable, Category = "Art Tone")
-	void SetScanlineStrength(float NewScanlineStrength);
+	void SetColorSteps(float NewColorSteps);
 
 	UFUNCTION(BlueprintCallable, Category = "Art Tone")
-	void SetColorSteps(float NewColorSteps);
+	void SetHalftoneStrength(float NewHalftoneStrength);
+
+	UFUNCTION(BlueprintCallable, Category = "Art Tone")
+	void SetHalftoneCount(float NewHalftoneCount);
+
+	UFUNCTION(BlueprintCallable, Category = "Art Tone")
+	void SetHalftoneRadius(float NewHalftoneRadius);
+
+	UFUNCTION(BlueprintCallable, Category = "Art Tone")
+	void SetHalftoneSoftness(float NewHalftoneSoftness);
+
+	UFUNCTION(BlueprintCallable, Category = "Art Tone")
+	void SetHalftoneShape(float NewHalftoneShape);
 
 	UFUNCTION(BlueprintPure, Category = "Art Tone")
 	const FSDArtToneSettings& GetCurrentSettings() const { return CurrentSettings; }
 
 protected:
 	virtual void BeginPlay() override;
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UPostProcessComponent> PostProcessComponent;

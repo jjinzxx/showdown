@@ -8,10 +8,21 @@
 
 class ACard;
 class ACameraActor;
+class APostProcessVolume;
 class AShowDownGameModeBase;
 class SWidget;
+class UMaterialInstanceDynamic;
+class UMaterialInterface;
+class UPrimitiveComponent;
 class USceneComponent;
 class UShowDownChatWidget;
+
+struct FSDPrimitiveCustomDepthState
+{
+	TWeakObjectPtr<UPrimitiveComponent> Component;
+	bool bRenderCustomDepth = false;
+	int32 CustomDepthStencilValue = 0;
+};
 
 UCLASS()
 class SHOWDOWN_API AShowDownPlayerController : public APlayerController
@@ -70,6 +81,22 @@ public:
 	void ClearFixedCameraMouseLook();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Camera")
+	void SetFixedCameraBreathingSway(
+		bool bEnable,
+		float Speed,
+		FRotator RotationAmplitude,
+		FVector LocationAmplitude,
+		float BlendInTime);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Camera")
+	void PlayFixedCameraSteppedShake(
+		float HoldDuration,
+		float BlendOutTime,
+		FRotator RotationAmplitude,
+		FVector LocationAmplitude,
+		float StepInterval);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|Camera")
 	void SetFixedCameraComponentMouseLook(
 		USceneComponent* CameraComponent,
 		float Sensitivity,
@@ -124,6 +151,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input|Crosshair")
 	FLinearColor CenterCrosshairColor = FLinearColor(1.0f, 1.0f, 1.0f, 0.9f);
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input|Interactable Outline")
+	bool bEnableInteractableAimOutline = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input|Interactable Outline")
+	TObjectPtr<UMaterialInterface> InteractionOutlineMaterial;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input|Interactable Outline")
+	FLinearColor InteractableOutlineColor = FLinearColor(1.0f, 0.78f, 0.05f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input|Interactable Outline", meta = (ClampMin = "1.0", ClampMax = "8.0"))
+	float InteractableOutlineThickness = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input|Interactable Outline", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float InteractableOutlineOpacity = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Input|Interactable Outline", meta = (ClampMin = "1", ClampMax = "255"))
+	int32 InteractableOutlineStencilValue = 252;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
 	bool bEnablePawnCameraMouseLook = true;
 
@@ -144,6 +189,21 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
 	float MaxYaw = 45.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	bool bEnableFixedCameraBreathingSway = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing", meta = (ClampMin = "0.0"))
+	float BreathingSwaySpeed = 0.38f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	FRotator BreathingSwayRotationAmplitude = FRotator(0.12f, 0.05f, 0.08f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	FVector BreathingSwayLocationAmplitude = FVector(0.0f, 0.0f, 0.8f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing", meta = (ClampMin = "0.0"))
+	float BreathingSwayBlendInTime = 1.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ShowDown|Chat")
 	TSubclassOf<UShowDownChatWidget> ChatWidgetClass;
@@ -174,11 +234,19 @@ public:
 
 private:
 	void InitializeFromPossessedPawn();
+	void InitializeInteractableOutlinePostProcess();
 	void TraceCardUnderCursor();
 	bool TracePrimaryInteraction(FHitResult& OutHit) const;
 	bool TraceUnderCursor(FHitResult& OutHit) const;
 	bool TraceFromScreenCenter(FHitResult& OutHit) const;
 	ACard* ResolveCardFromHit(const FHitResult& Hit) const;
+	AActor* ResolveInteractableFromHit(const FHitResult& Hit) const;
+	AActor* FindFocusedInteractable() const;
+	void UpdateFocusedInteractable();
+	void SetFocusedInteractable(AActor* NewFocusedInteractable);
+	void ApplyInteractableOutline(AActor* Actor);
+	void ClearInteractableOutline();
+	void RefreshInteractableOutlineMaterialParameters();
 	ACard* FindSelectableCardNearCenterAim() const;
 	ACard* FindHoverPreviewCard() const;
 	void UpdateHoveredCard();
@@ -186,7 +254,12 @@ private:
 	void SelectCard(ACard* SelectedCard);
 	void SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
 	void ApplyPawnCameraInput(float YawInput, float PitchInput);
-	void UpdateFixedCameraMouseLook();
+	void UpdateFixedCameraMouseLook(float DeltaTime);
+	void RestoreFixedCameraBaseTransform();
+	FRotator GetBreathingSwayRotationOffset(float Strength) const;
+	FVector GetBreathingSwayLocationOffset(const FRotator& CameraRotation, float Strength) const;
+	FRotator GetCameraSteppedShakeRotationOffset() const;
+	FVector GetCameraSteppedShakeLocationOffset(const FRotator& CameraRotation) const;
 	void HandleBettingHotkeys();
 	void EnsureChatWidget();
 	void ApplyChatInputMode(bool bOpen);
@@ -206,19 +279,40 @@ private:
 	ACard* HoveredCard = nullptr;
 
 	UPROPERTY()
+	TObjectPtr<AActor> FocusedInteractable = nullptr;
+
+	UPROPERTY()
 	UShowDownChatWidget* ChatWidget = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "ShowDown|Input|Interactable Outline")
+	TObjectPtr<APostProcessVolume> InteractionOutlinePostProcessVolume;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> InteractionOutlineMID;
 
 	UPROPERTY()
 	TObjectPtr<USceneComponent> FixedCameraMouseLookTarget = nullptr;
 
 	TSharedPtr<SWidget> CenterCrosshairWidget;
+	TArray<FSDPrimitiveCustomDepthState> FocusedPrimitiveStates;
 
 	bool bChatOpen = false;
 	FRotator FixedCameraBaseRotation = FRotator::ZeroRotator;
+	FRotator FixedCameraLookRotation = FRotator::ZeroRotator;
+	FVector FixedCameraBaseLocation = FVector::ZeroVector;
 	float FixedCameraLookSensitivity = 0.2f;
 	float FixedCameraMinPitch = -35.0f;
 	float FixedCameraMaxPitch = 35.0f;
 	float FixedCameraMinYawOffset = -45.0f;
 	float FixedCameraMaxYawOffset = 45.0f;
+	float BreathingSwayElapsedTime = 0.0f;
+	float BreathingSwayBlendElapsedTime = 0.0f;
+	float CameraSteppedShakeHoldDuration = 0.0f;
+	float CameraSteppedShakeBlendOutTime = 0.0f;
+	float CameraSteppedShakeElapsedTime = 0.0f;
+	float CameraSteppedShakeStepInterval = 0.06f;
+	float CameraSteppedShakeSeed = 0.0f;
+	FRotator CameraSteppedShakeRotationAmplitude = FRotator::ZeroRotator;
+	FVector CameraSteppedShakeLocationAmplitude = FVector::ZeroVector;
 	bool bFixedCameraInvertMouseY = true;
 };
