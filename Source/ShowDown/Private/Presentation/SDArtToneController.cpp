@@ -31,6 +31,7 @@ namespace
 ASDArtToneController::ASDArtToneController()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	PostProcessComponent = CreateDefaultSubobject<UPostProcessComponent>(TEXT("PostProcessComponent"));
 	SetRootComponent(PostProcessComponent);
@@ -68,6 +69,7 @@ void ASDArtToneController::Tick(float DeltaSeconds)
 
 	if (!bIsBlending)
 	{
+		SetActorTickEnabled(false);
 		return;
 	}
 
@@ -82,6 +84,7 @@ void ASDArtToneController::Tick(float DeltaSeconds)
 		bIsBlending = false;
 		BlendElapsedTime = 0.0f;
 		BlendDuration = 0.0f;
+		SetActorTickEnabled(false);
 	}
 }
 
@@ -113,6 +116,8 @@ void ASDArtToneController::BlendToArtTone(const FSDArtToneSettings& NewSettings,
 	if (Duration <= 0.0f)
 	{
 		ApplyArtTone(NewSettings);
+		bIsBlending = false;
+		SetActorTickEnabled(false);
 		return;
 	}
 
@@ -121,6 +126,7 @@ void ASDArtToneController::BlendToArtTone(const FSDArtToneSettings& NewSettings,
 	BlendDuration = Duration;
 	BlendElapsedTime = 0.0f;
 	bIsBlending = true;
+	SetActorTickEnabled(true);
 }
 
 void ASDArtToneController::SetPixelCount(float NewPixelCount)

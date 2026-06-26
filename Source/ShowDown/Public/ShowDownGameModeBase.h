@@ -14,6 +14,8 @@ class ACard;
 class APlayerPawn;
 class ASDCardPlacementAnchor;
 class ASDPlayerSeat;
+class ASDMultiplayerTable;
+class ASDMultiplayerSeatAnchor;
 class UCardSystem;
 class ACollector;
 class UCollectorAISystem;
@@ -25,6 +27,7 @@ struct FSDLLMBossContext;
 class AShowDownGameStateBase;
 class AController;
 class APlayerController;
+class ASDPlayerState;
 class USceneComponent;
 
 //각 플레이어(콜렉터, 플레이어, 멀티플레이어) 에 대한 값(손패, 이마의 카드, 목숨, 베팅값) 구조체로 저장
@@ -142,6 +145,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Card")
 	void PlayerSelectedCard(ACard* SelectedCard);
 
+	void PlayerSelectedCardFromController(AController* SubmittingController, ACard* SelectedCard);
+
 	// 베팅 단계 시작
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void StartBettingPhase();
@@ -184,6 +189,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
 	void StartMultiplayerGame();
 
+	void RefreshMultiplayerLobbyPlayers();
+
+	void RequestMultiplayerRestartFromController(AController* RequestingController);
+
 	// 게임 종료 후 허브(메인메뉴)로 돌아갈 때 게임판을 정리합니다.
 	// 진행 중인 타이머/베팅 상태를 끄고 테이블의 카드를 모두 제거합니다.
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
@@ -193,6 +202,42 @@ public:
 	// 단, 레벨에 HubFlowManager가 있으면 자동 시작을 미루고 허브 흐름이 시작을 제어합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Flow")
 	bool bAutoStartOnBeginPlay = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera", meta = (ClampMin = "0.0"))
+	float GameplayCameraLookSensitivity = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera", meta = (ClampMin = "0.0"))
+	float GameplayFallbackCameraLookSensitivity = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	float GameplayCameraMinPitch = -35.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	float GameplayCameraMaxPitch = 35.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	float GameplayCameraMinYawOffset = -45.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	float GameplayCameraMaxYawOffset = 45.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	bool bInvertGameplayCameraMouseY = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	bool bEnableGameplayCameraBreathingSway = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing", meta = (ClampMin = "0.0"))
+	float GameplayCameraBreathingSwaySpeed = 0.38f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	FRotator GameplayCameraBreathingSwayRotationAmplitude = FRotator(0.12f, 0.05f, 0.08f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	FVector GameplayCameraBreathingSwayLocationAmplitude = FVector(0.0f, 0.0f, 0.8f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing", meta = (ClampMin = "0.0"))
+	float GameplayCameraBreathingSwayBlendInTime = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Presentation")
 	bool bAutoAdvanceRevealWithoutPresentation = true;
@@ -206,9 +251,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void RequestPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
 
+	void RequestPlayerBetActionFromController(AController* SubmittingController, EShowDownBetAction Action, int32 TargetBet);
+
 
 protected:
 	virtual void BeginPlay() override;
+	virtual UClass* GetDefaultPawnClassForController_Implementation(AController* InController) override;
 	virtual void PostLogin(APlayerController* NewPlayer) override;
 	virtual void Logout(AController* Exiting) override;
 
@@ -251,6 +299,52 @@ private:
 	bool bCurrentRoundSummaryRecorded = false;
 	bool bBossChatReplyInFlight = false;
 	float LastBossChatReplyRequestTime = -1000.0f;
+
+	UPROPERTY()
+	TArray<TObjectPtr<ASDPlayerState>> MultiplayerPlayers;
+
+	UPROPERTY()
+	TArray<TObjectPtr<ASDPlayerState>> MultiplayerEliminationOrder;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerDuelA = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerDuelB = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerCardGiver = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerCardReceiver = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerCurrentBetter = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerLastCheckedPlayer = nullptr;
+
+	// The player who lost the previous round leads the next multiplayer round.
+	// A draw keeps the current lead; an eliminated loser falls back to the next survivor.
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerNextFirstPlayer = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<ASDMultiplayerTable> MultiplayerTable = nullptr;
+
+	UPROPERTY()
+	TArray<TObjectPtr<ASDMultiplayerSeatAnchor>> MultiplayerSeatAnchors;
+
+	UPROPERTY()
+	TObjectPtr<ASDPlayerState> MultiplayerRoundLeader = nullptr;
+
+	TSet<TObjectPtr<ASDPlayerState>> MultiplayerFoldedPlayers;
+	TSet<TObjectPtr<ASDPlayerState>> MultiplayerPlayersActed;
+	TSet<TObjectPtr<ASDPlayerState>> MultiplayerRestartVotes;
+
+	FTimerHandle MultiplayerStartTimerHandle;
+	bool bMultiplayerMatchStarted = false;
+	bool bMultiplayerRoundResolving = false;
 	
 	//콜렉터 추적
 	UPROPERTY()
@@ -296,6 +390,37 @@ private:
 	void ReflowHandCards(EShowDownSide Side);
 	void RefreshNetworkPlayerSlots();
 	EShowDownPlayerSlot FindNextOpenPlayerSlot() const;
+	void TryStartMultiplayerMatch();
+	void StartMultiplayerMatch(const TArray<ASDPlayerState*>& Players);
+	TArray<ASDPlayerState*> GetConnectedShowDownPlayers() const;
+	ASDPlayerState* GetPlayerStateForController(AController* Controller) const;
+	void EnsureMultiplayerTable();
+	void EnsureMultiplayerSeatAnchors();
+	void EnsureMultiplayerPawns();
+	FTransform GetMultiplayerPawnSpawnTransform(AController* Controller, int32 PlayerIndex);
+	ASDPlayerState* FindNextAliveMultiplayerPlayer(ASDPlayerState* AfterPlayer) const;
+	ASDPlayerState* GetMultiplayerOpponent(ASDPlayerState* Player) const;
+	void DealMultiplayerHands();
+	void ClearMultiplayerHands();
+	void ClearMultiplayerForeheadCards();
+	void ClearLooseMultiplayerCards();
+	void StartMultiplayerDuel(ASDPlayerState* FirstPlayer, ASDPlayerState* SecondPlayer);
+	bool AreAllAliveMultiplayerPlayersReadyToReveal() const;
+	bool AreAllActiveMultiplayerPlayersDoneBetting(int32 CurrentBet) const;
+	void StartMultiplayerCardSelection(ASDPlayerState* Giver, ASDPlayerState* Receiver);
+	void HandleMultiplayerSelectedCard(ASDPlayerState* SubmittingPlayer, ACard* SelectedCard);
+	void StartMultiplayerBetting();
+	void HandleMultiplayerBetAction(ASDPlayerState* SubmittingPlayer, EShowDownBetAction Action, int32 TargetBet);
+	void FinishMultiplayerRoundByReveal();
+	void FinishMultiplayerRoundByFold(ASDPlayerState* FoldedPlayer);
+	void ApplyMultiplayerRoulette(ASDPlayerState* TargetPlayer, int32 BulletCount);
+	void EndMultiplayerRound();
+	void ShowMultiplayerFinalRanking(ASDPlayerState* Winner);
+	void SetMultiplayerSelectableHand(ASDPlayerState* Player);
+	void ReflowMultiplayerHand(ASDPlayerState* Player);
+	USceneComponent* GetHandSlotForPlayerState(ASDPlayerState* Player) const;
+	USceneComponent* GetHeadSlotForPlayerState(ASDPlayerState* Player) const;
+	void NotifyMultiplayerStatus(const FString& Message) const;
 	void StartStage(int32 StageIndex);
 	void AdvanceStage();
 	const FShowDownStageRule* GetCurrentStageRule() const;

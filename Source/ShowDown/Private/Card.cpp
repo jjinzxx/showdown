@@ -6,7 +6,9 @@
 #include "Components/TextRenderComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
+#include "SDPlayerState.h"
 #include "ShowDownPlayerController.h"
+#include "UObject/ConstructorHelpers.h"
 
 ACard::ACard()
 {
@@ -25,6 +27,15 @@ ACard::ACard()
 	CardMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	CardMesh->SetCollisionObjectType(ECC_WorldDynamic);
 	CardMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CardMeshAsset(TEXT("/Engine/BasicShapes/Cube.Cube"));
+	// A native fallback keeps multiplayer cards visible even without a BP_Card
+	// override. The cube is flattened into an upright playing-card shape.
+	if (CardMeshAsset.Succeeded())
+	{
+		CardMesh->SetStaticMesh(CardMeshAsset.Object);
+		CardMesh->SetRelativeScale3D(FVector(0.03f, 0.45f, 0.65f));
+	}
+
 
 	InteractionBounds = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBounds"));
 	InteractionBounds->SetupAttachment(RootComp);
@@ -97,6 +108,7 @@ void ACard::BeginPlay()
 		VisualRoot->SetRelativeScale3D(BaseVisualRootScale * CurrentVisualScaleMultiplier);
 	}
 	RefreshVisual();
+	SetActorTickEnabled(false);
 }
 
 void ACard::Tick(float DeltaTime)
@@ -121,6 +133,16 @@ void ACard::Tick(float DeltaTime)
 
 	if (!HasAuthority())
 	{
+		if (CurrentVisualWorldOffset.Equals(TargetVisualWorldOffset, 0.1f))
+		{
+			CurrentVisualWorldOffset = TargetVisualWorldOffset;
+			if (VisualRoot)
+			{
+				const FVector VisualRelativeOffset = GetActorTransform().InverseTransformVectorNoScale(CurrentVisualWorldOffset);
+				VisualRoot->SetRelativeLocation(VisualRelativeOffset);
+			}
+			SetActorTickEnabled(false);
+		}
 		return;
 	}
 
@@ -133,18 +155,51 @@ void ACard::Tick(float DeltaTime)
 	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaTime, MoveSpeed);
 	const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime, MoveSpeed);
 	SetActorLocationAndRotation(NewLocation, NewRotation);
+	ForceNetUpdate();
+
+	const bool bVisualAtTarget = CurrentVisualWorldOffset.Equals(TargetVisualWorldOffset, 0.1f);
+	const bool bActorAtTarget = GetActorLocation().Equals(TargetLocation, 0.1f)
+		&& GetActorRotation().Equals(TargetRotation, 0.1f);
+	if (bVisualAtTarget && bActorAtTarget)
+	{
+		CurrentVisualWorldOffset = TargetVisualWorldOffset;
+		if (VisualRoot)
+		{
+			const FVector VisualRelativeOffset = GetActorTransform().InverseTransformVectorNoScale(CurrentVisualWorldOffset);
+			VisualRoot->SetRelativeLocation(VisualRelativeOffset);
+		}
+		SetActorLocationAndRotation(TargetLocation, TargetRotation);
+		ForceNetUpdate();
+		SetActorTickEnabled(false);
+	}
 }
 
 void ACard::SetCard(int32 NewRank)
 {
 	Rank = FMath::Clamp(NewRank, 1, 7);
 	RefreshVisual();
+	ForceNetUpdate();
 }
 
 void ACard::SetFaceUp(bool bNewFaceUp)
 {
 	bFaceUp = bNewFaceUp;
 	RefreshVisual();
+	ForceNetUpdate();
+}
+
+void ACard::SetHiddenFromSlot(EShowDownPlayerSlot NewHiddenFromSlot)
+{
+	HiddenFromSlot = NewHiddenFromSlot;
+	RefreshVisual();
+	ForceNetUpdate();
+}
+
+void ACard::SetHandOwnerSlot(EShowDownPlayerSlot NewHandOwnerSlot)
+{
+	HandOwnerSlot = NewHandOwnerSlot;
+	RefreshVisual();
+	ForceNetUpdate();
 }
 
 void ACard::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -174,14 +229,39 @@ void ACard::RefreshVisual()
 		return;
 	}
 
-	CardText->SetVisibility(bFaceUp);
-	CardText->SetText(FText::AsNumber(Rank));
+	bool bVisibleToLocalPlayer = true;
+	const ASDPlayerState* LocalPlayerState = nullptr;
+	if (const APlayerController* LocalPlayerController = UGameplayStatics::GetPlayerController(this, 0))
+	{
+		LocalPlayerState = LocalPlayerController->GetPlayerState<ASDPlayerState>();
+	}
+
+	if (HiddenFromSlot != EShowDownPlayerSlot::None && LocalPlayerState)
+	{
+		bVisibleToLocalPlayer = bVisibleToLocalPlayer && LocalPlayerState->ShowDownSlot != HiddenFromSlot;
+	}
+
+	const bool bShouldShowText = bFaceUp && bVisibleToLocalPlayer;
+	if (!bHasCachedVisual || bCachedVisualVisible != bShouldShowText)
+	{
+		CardText->SetVisibility(bShouldShowText);
+		bCachedVisualVisible = bShouldShowText;
+	}
+
+	if (!bHasCachedVisual || CachedVisualRank != Rank)
+	{
+		CardText->SetText(FText::AsNumber(Rank));
+		CachedVisualRank = Rank;
+	}
+
+	bHasCachedVisual = true;
 }
 
 void ACard::SelectCard(bool bNewSelected)
 {
 	bSelected = bNewSelected;
 	UpdateTargetTransform();
+	EnableMotionTick();
 }
 
 bool ACard::IsSelected() const
@@ -193,6 +273,7 @@ void ACard::SetHovered(bool bNewHovered)
 {
 	bHovered = bNewHovered && bSelectable;
 	UpdateTargetTransform();
+	EnableMotionTick();
 }
 
 bool ACard::IsHovered() const
@@ -208,7 +289,9 @@ void ACard::SetSelectable(bool bNewSelectable)
 		bSelected = false;
 		bHovered = false;
 		UpdateTargetTransform();
+		EnableMotionTick();
 	}
+	ForceNetUpdate();
 }
 
 bool ACard::IsCardSelectable() const
@@ -229,6 +312,7 @@ void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
 	DefaultLocation = Slot->GetComponentLocation();
 	DefaultRotation = Slot->GetComponentRotation();
 	UpdateTargetTransform();
+	EnableMotionTick();
 	SetFaceUp(bNewFaceUp);
 	SetTargetVisualScaleMultiplier(SlotAttachTargetScale);
 
@@ -262,6 +346,13 @@ void ACard::MoveToHandTransform(const FTransform& NewTransform)
 	DefaultLocation = NewTransform.GetLocation();
 	DefaultRotation = NewTransform.GetRotation().Rotator();
 	UpdateTargetTransform();
+	EnableMotionTick();
+	ForceNetUpdate();
+}
+
+void ACard::EnableMotionTick()
+{
+	SetActorTickEnabled(true);
 }
 
 void ACard::UpdateTargetTransform()

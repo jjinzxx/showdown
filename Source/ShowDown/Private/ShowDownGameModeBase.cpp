@@ -7,21 +7,76 @@
 #include "Collector.h"
 #include "CollectorAISystem.h"
 #include "BettingSystem.h"
+#include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
 #include "RoundResolver.h"
 #include "RouletteSystem.h"
 #include "SDCardPlacementAnchor.h"
 #include "SDLLMSubsystem.h"
+#include "SDMultiplayerTable.h"
+#include "SDMultiplayerSeatAnchor.h"
 #include "ShowDownTypes.h"
 #include "Components/SceneComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
 #include "SDPlayerSeat.h"
 #include "SDPlayerState.h"
+#include "ShowDownEosSubsystem.h"
 #include "ShowDownGameStateBase.h"
 #include "ShowDownHubFlowManager.h"
 #include "ShowDownPlayerController.h"
 #include "Engine/Engine.h"
+#include "EngineUtils.h"
+#include "Engine/GameInstance.h"
 #include "GameFramework/PlayerState.h"
+
+namespace
+{
+	ACameraActor* FindMultiplayerSeatCamera(UWorld* World, int32 SeatIndex)
+	{
+		if (!World)
+		{
+			return nullptr;
+		}
+
+		const FName SeatTag(*FString::Printf(TEXT("MP_SeatCamera_%d"), SeatIndex + 1));
+		for (TActorIterator<ACameraActor> It(World); It; ++It)
+		{
+			if (ACameraActor* Camera = *It; Camera && Camera->ActorHasTag(SeatTag))
+			{
+				return Camera;
+			}
+		}
+
+		return nullptr;
+	}
+
+	int32 GetSeatIndexFromPlayerSlot(EShowDownPlayerSlot Slot)
+	{
+		switch (Slot)
+		{
+		case EShowDownPlayerSlot::Player1: return 0;
+		case EShowDownPlayerSlot::Player2: return 1;
+		case EShowDownPlayerSlot::Player3: return 2;
+		case EShowDownPlayerSlot::Player4: return 3;
+		case EShowDownPlayerSlot::None:
+		default: return INDEX_NONE;
+		}
+	}
+
+	int32 GetCardSeatIndexFromPlayerSlot(EShowDownPlayerSlot Slot)
+	{
+		switch (Slot)
+		{
+		case EShowDownPlayerSlot::Player1: return 1;
+		case EShowDownPlayerSlot::Player2: return 0;
+		case EShowDownPlayerSlot::Player3: return 3;
+		case EShowDownPlayerSlot::Player4: return 2;
+		case EShowDownPlayerSlot::None:
+		default: return INDEX_NONE;
+		}
+	}
+}
 
 AShowDownGameModeBase::AShowDownGameModeBase()
 {
@@ -32,6 +87,8 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 	PlayerStateClass = ASDPlayerState::StaticClass();
 	PlayerControllerClass = AShowDownPlayerController::StaticClass();
 	DefaultPawnClass = nullptr;
+	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+	bUseSeamlessTravel = true;
 	CardClass = ACard::StaticClass();
 
 	CardSystem = CreateDefaultSubobject<UCardSystem>(TEXT("CardSystem"));
@@ -64,17 +121,40 @@ AShowDownGameModeBase::AShowDownGameModeBase()
 	StageRules = { Stage1, Stage2, Stage3 };
 }
 
+UClass* AShowDownGameModeBase::GetDefaultPawnClassForController_Implementation(AController* InController)
+{
+	// Maps can keep their authored single-player pawn, but every network player
+	// must receive a replicated pawn when joining a listen-server match.
+	if (GetWorld() && GetWorld()->GetNetMode() != NM_Standalone)
+	{
+		return APlayerPawn::StaticClass();
+	}
+
+	return Super::GetDefaultPawnClassForController_Implementation(InController);
+}
+
 void AShowDownGameModeBase::BeginPlay()
 {
 	Super::BeginPlay();
 
+	bool bInMultiplayerLobby = false;
+	if (const UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (const UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			bInMultiplayerLobby = EosSubsystem->IsInMultiplayerLobby();
+		}
+	}
+
+	const bool bNetworkedMatch = GetNetMode() != NM_Standalone;
+
 	// 레벨에 HubFlowManager가 있으면 싱글플레이 버튼을 누를 때까지 시작을 미룹니다.
 	// 허브가 없는 테스트 레벨(ShowDown_Test 등)에서는 기존처럼 곧장 시작합니다.
 	const bool bHubControlsStart =
-		UGameplayStatics::GetActorOfClass(GetWorld(), AShowDownHubFlowManager::StaticClass()) != nullptr;
+		UGameplayStatics::GetActorOfClass(GetWorld(), AShowDownHubFlowManager::StaticClass()) != nullptr
+		&& (!bNetworkedMatch || bInMultiplayerLobby);
 
-	const bool bNetworkedMatch = GetNetMode() != NM_Standalone;
-	if (bNetworkedMatch)
+	if (bNetworkedMatch && !bInMultiplayerLobby)
 	{
 		StartMultiplayerGame();
 		return;
@@ -106,15 +186,69 @@ void AShowDownGameModeBase::StartMultiplayerGame()
 
 	FindCollector();
 	RefreshNetworkPlayerSlots();
+	GetWorldTimerManager().ClearTimer(MultiplayerStartTimerHandle);
+	GetWorldTimerManager().SetTimer(
+		MultiplayerStartTimerHandle,
+		this,
+		&AShowDownGameModeBase::TryStartMultiplayerMatch,
+		0.5f,
+		false);
 
-	// Gameplay rules for real PvP can be layered on this entry point.
-	// For now this keeps multiplayer from falling back into the single-player AI flow.
 	UE_LOG(LogTemp, Log, TEXT("Multiplayer game structure initialized."));
+}
+
+void AShowDownGameModeBase::RefreshMultiplayerLobbyPlayers()
+{
+	if (HasAuthority())
+	{
+		RefreshNetworkPlayerSlots();
+	}
 }
 
 void AShowDownGameModeBase::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
+
+	if (bMultiplayerMatchStarted)
+	{
+		int32 ExpectedPlayerCount = 4;
+		if (const UGameInstance* GameInstance = GetGameInstance())
+		{
+			if (const UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+			{
+				ExpectedPlayerCount = FMath::Clamp(EosSubsystem->GetExpectedLobbyPlayerCount(), 2, 4);
+			}
+		}
+
+		if (ASDPlayerState* ShowDownPlayerState = NewPlayer ? NewPlayer->GetPlayerState<ASDPlayerState>() : nullptr)
+		{
+			if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
+			{
+				ShowDownPlayerState->SetShowDownSlot(FindNextOpenPlayerSlot());
+			}
+
+			RefreshNetworkPlayerSlots();
+			TArray<ASDPlayerState*> ConnectedPlayers = GetConnectedShowDownPlayers();
+			if (ShowDownPlayerState->ShowDownSlot != EShowDownPlayerSlot::None
+				&& ConnectedPlayers.Num() <= ExpectedPlayerCount
+				&& MultiplayerPlayers.Num() < ExpectedPlayerCount)
+			{
+				NotifyMultiplayerStatus(FString::Printf(
+					TEXT("늦게 도착한 참가자 포함. 멀티플레이어 동기화 중... %d/%d"),
+					ConnectedPlayers.Num(),
+					ExpectedPlayerCount));
+				StartMultiplayerMatch(ConnectedPlayers);
+				return;
+			}
+		}
+
+		if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(NewPlayer))
+		{
+			ShowDownController->ClientShowStatusMessage(TEXT("게임이 이미 시작되어 입장할 수 없습니다."));
+		}
+		NewPlayer->ClientTravel(TEXT("/Game/Maps/L_Hub"), TRAVEL_Absolute);
+		return;
+	}
 
 	if (GetNetMode() != NM_Standalone)
 	{
@@ -129,6 +263,15 @@ void AShowDownGameModeBase::PostLogin(APlayerController* NewPlayer)
 		if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
 		{
 			ShowDownPlayerState->SetShowDownSlot(FindNextOpenPlayerSlot());
+		}
+		if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
+		{
+			if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(NewPlayer))
+			{
+				ShowDownController->ClientShowStatusMessage(TEXT("방이 가득 찼습니다. 최대 4명까지 입장할 수 있습니다."));
+			}
+			NewPlayer->ClientTravel(TEXT("/Game/Maps/L_Hub"), TRAVEL_Absolute);
+			return;
 		}
 		ShowDownPlayerState->SetHostPlayer(GameState && GameState->PlayerArray.Num() <= 1);
 	}
@@ -172,6 +315,17 @@ void AShowDownGameModeBase::ResetForHubReturn()
 
 void AShowDownGameModeBase::PlayerSelectedCard(ACard* SelectedCard)
 {
+	PlayerSelectedCardFromController(nullptr, SelectedCard);
+}
+
+void AShowDownGameModeBase::PlayerSelectedCardFromController(AController* SubmittingController, ACard* SelectedCard)
+{
+	if (GetNetMode() != NM_Standalone && bMultiplayerMatchStarted)
+	{
+		HandleMultiplayerSelectedCard(GetPlayerStateForController(SubmittingController), SelectedCard);
+		return;
+	}
+
 	if (bCollectorActionPresentationInProgress)
 	{
 		return;
@@ -660,6 +814,20 @@ void AShowDownGameModeBase::PlayerFold()
 
 void AShowDownGameModeBase::RequestPlayerBetAction(EShowDownBetAction Action, int32 TargetBet)
 {
+	RequestPlayerBetActionFromController(nullptr, Action, TargetBet);
+}
+
+void AShowDownGameModeBase::RequestPlayerBetActionFromController(
+	AController* SubmittingController,
+	EShowDownBetAction Action,
+	int32 TargetBet)
+{
+	if (GetNetMode() != NM_Standalone && bMultiplayerMatchStarted)
+	{
+		HandleMultiplayerBetAction(GetPlayerStateForController(SubmittingController), Action, TargetBet);
+		return;
+	}
+
 	switch (Action)
 	{
 	case EShowDownBetAction::Check:
@@ -1744,31 +1912,59 @@ void AShowDownGameModeBase::RefreshNetworkPlayerSlots()
 		: EShowDownMatchMode::Multiplayer);
 
 	TSet<EShowDownPlayerSlot> SeenSlots;
+	TArray<ASDPlayerState*> NetworkPlayers;
 	if (GameState)
 	{
 		for (APlayerState* BasePlayerState : GameState->PlayerArray)
 		{
 			ASDPlayerState* ShowDownPlayerState = Cast<ASDPlayerState>(BasePlayerState);
-			if (!ShowDownPlayerState)
+			if (ShowDownPlayerState)
 			{
-				continue;
+				NetworkPlayers.AddUnique(ShowDownPlayerState);
 			}
-
-			if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
-			{
-				ShowDownPlayerState->SetShowDownSlot(FindNextOpenPlayerSlot());
-			}
-
-			FShowDownNetworkPlayerSlot SlotState;
-			SlotState.Slot = ShowDownPlayerState->ShowDownSlot;
-			SlotState.PlayerId = FString::FromInt(ShowDownPlayerState->GetPlayerId());
-			SlotState.DisplayName = ShowDownPlayerState->GetPlayerName();
-			SlotState.bConnected = true;
-			SlotState.bReady = ShowDownPlayerState->bReady;
-
-			ShowDownGameState->SetPlayerSlot(SlotState);
-			SeenSlots.Add(SlotState.Slot);
 		}
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+		{
+			if (APlayerController* PlayerController = Iterator->Get())
+			{
+				if (ASDPlayerState* ShowDownPlayerState = PlayerController->GetPlayerState<ASDPlayerState>())
+				{
+					NetworkPlayers.AddUnique(ShowDownPlayerState);
+				}
+			}
+		}
+	}
+
+	for (ASDPlayerState* ShowDownPlayerState : NetworkPlayers)
+	{
+		if (!ShowDownPlayerState)
+		{
+			continue;
+		}
+
+		if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
+		{
+			ShowDownPlayerState->SetShowDownSlot(FindNextOpenPlayerSlot());
+		}
+
+		if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
+		{
+			continue;
+		}
+
+		FShowDownNetworkPlayerSlot SlotState;
+		SlotState.Slot = ShowDownPlayerState->ShowDownSlot;
+		SlotState.PlayerId = FString::FromInt(ShowDownPlayerState->GetPlayerId());
+		SlotState.DisplayName = ShowDownPlayerState->GetPlayerName();
+		SlotState.bConnected = true;
+		SlotState.bReady = ShowDownPlayerState->bReady;
+
+		ShowDownGameState->SetPlayerSlot(SlotState);
+		SeenSlots.Add(SlotState.Slot);
 	}
 
 	const EShowDownPlayerSlot AllSlots[] = {
@@ -1817,6 +2013,1313 @@ EShowDownPlayerSlot AShowDownGameModeBase::FindNextOpenPlayerSlot() const
 	}
 
 	return EShowDownPlayerSlot::None;
+}
+
+void AShowDownGameModeBase::TryStartMultiplayerMatch()
+{
+	if (bMultiplayerMatchStarted)
+	{
+		return;
+	}
+
+	RefreshNetworkPlayerSlots();
+
+	TArray<ASDPlayerState*> Players = GetConnectedShowDownPlayers();
+	int32 RequiredPlayerCount = 2;
+	if (const UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (const UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			RequiredPlayerCount = FMath::Clamp(EosSubsystem->GetExpectedLobbyPlayerCount(), 2, 4);
+		}
+	}
+	if (Players.Num() < RequiredPlayerCount)
+	{
+		int32 ControllerCount = 0;
+		if (UWorld* World = GetWorld())
+		{
+			for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+			{
+				++ControllerCount;
+			}
+		}
+
+		const int32 PlayerArrayCount = GameState ? GameState->PlayerArray.Num() : 0;
+		NotifyMultiplayerStatus(FString::Printf(
+			TEXT("로비 참가자 도착 대기 중... %d/%d (플레이어 상태=%d, 컨트롤러=%d)"),
+			Players.Num(),
+			RequiredPlayerCount,
+			PlayerArrayCount,
+			ControllerCount));
+		GetWorldTimerManager().SetTimer(
+			MultiplayerStartTimerHandle,
+			this,
+			&AShowDownGameModeBase::TryStartMultiplayerMatch,
+			1.0f,
+			false);
+		return;
+	}
+
+	StartMultiplayerMatch(Players);
+}
+
+void AShowDownGameModeBase::StartMultiplayerMatch(const TArray<ASDPlayerState*>& Players)
+{
+	ClearMultiplayerForeheadCards();
+	ClearMultiplayerHands();
+	ClearLooseMultiplayerCards();
+
+	bMultiplayerMatchStarted = true;
+	bMultiplayerRoundResolving = false;
+	MultiplayerPlayers.Reset();
+	MultiplayerEliminationOrder.Reset();
+	MultiplayerRestartVotes.Reset();
+	MultiplayerNextFirstPlayer = nullptr;
+
+	for (ASDPlayerState* Player : Players)
+	{
+		if (!Player || MultiplayerPlayers.Num() >= 4)
+		{
+			continue;
+		}
+
+		Player->Lives = StageRules.Num() > 0 ? StageRules[0].StartingLives : 3;
+		Player->CurrentBet = 0;
+		Player->ForeheadCard = nullptr;
+		Player->ClearHand();
+		MultiplayerPlayers.Add(Player);
+	}
+
+	EnsureMultiplayerTable();
+	EnsureMultiplayerSeatAnchors();
+
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetMatchMode(EShowDownMatchMode::Multiplayer);
+		ShowDownGameState->CurrentStage = 1;
+		ShowDownGameState->CurrentRound = 1;
+		ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
+	}
+
+	// The lobby leaves its controller in UI-only mode. This client RPC runs on
+	// every local player after travel so mouse-look, card clicks, and hotkeys are
+	// held in a loading state until the authoritative seat camera is applied.
+	if (UWorld* World = GetWorld())
+	{
+		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+		{
+			if (AShowDownPlayerController* PlayerController = Cast<AShowDownPlayerController>(Iterator->Get()))
+			{
+				PlayerController->ClientEnterMultiplayerGameplay();
+			}
+		}
+	}
+
+	EnsureMultiplayerPawns();
+	DealMultiplayerHands();
+
+	if (MultiplayerPlayers.Num() >= 2)
+	{
+		ASDPlayerState* InitialFirstPlayer = MultiplayerPlayers[0];
+		for (ASDPlayerState* Player : MultiplayerPlayers)
+		{
+			if (Player && Player->bHostPlayer)
+			{
+				InitialFirstPlayer = Player;
+				break;
+			}
+		}
+
+		StartMultiplayerDuel(InitialFirstPlayer, FindNextAliveMultiplayerPlayer(InitialFirstPlayer));
+	}
+}
+
+TArray<ASDPlayerState*> AShowDownGameModeBase::GetConnectedShowDownPlayers() const
+{
+	TArray<ASDPlayerState*> Players;
+	if (GameState)
+	{
+		for (APlayerState* BasePlayerState : GameState->PlayerArray)
+		{
+			ASDPlayerState* Player = Cast<ASDPlayerState>(BasePlayerState);
+			if (Player && Player->ShowDownSlot != EShowDownPlayerSlot::None)
+			{
+				Players.AddUnique(Player);
+			}
+		}
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+		{
+			const APlayerController* PlayerController = Iterator->Get();
+			ASDPlayerState* Player = PlayerController ? PlayerController->GetPlayerState<ASDPlayerState>() : nullptr;
+			if (Player && Player->ShowDownSlot != EShowDownPlayerSlot::None)
+			{
+				Players.AddUnique(Player);
+			}
+		}
+	}
+
+	Players.Sort([](const ASDPlayerState& Left, const ASDPlayerState& Right)
+	{
+		return static_cast<uint8>(Left.ShowDownSlot) < static_cast<uint8>(Right.ShowDownSlot);
+	});
+
+	return Players;
+}
+
+ASDPlayerState* AShowDownGameModeBase::GetPlayerStateForController(AController* Controller) const
+{
+	return Controller ? Controller->GetPlayerState<ASDPlayerState>() : nullptr;
+}
+
+void AShowDownGameModeBase::EnsureMultiplayerPawns()
+{
+	UWorld* World = GetWorld();
+	if (!World || !HasAuthority())
+	{
+		return;
+	}
+
+	for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+	{
+		APlayerController* PlayerController = Iterator->Get();
+		ASDPlayerState* Player = PlayerController ? PlayerController->GetPlayerState<ASDPlayerState>() : nullptr;
+		if (!Player || !MultiplayerPlayers.Contains(Player))
+		{
+			continue;
+		}
+
+		// A controller iterator is not guaranteed to keep the lobby join order.
+		// The replicated PlayerState slot is the authoritative seat assignment and
+		// must drive both the pawn spawn and the local seat camera.
+		const int32 SeatIndex = GetSeatIndexFromPlayerSlot(Player->ShowDownSlot);
+		if (SeatIndex == INDEX_NONE)
+		{
+			continue;
+		}
+
+		UE_LOG(
+			LogTemp,
+			Log,
+			TEXT("멀티플레이 좌석 배정: Player=%s Slot=%d SeatIndex=%d Controller=%s"),
+			*Player->GetPlayerName(),
+			static_cast<int32>(Player->ShowDownSlot),
+			SeatIndex,
+			PlayerController ? *PlayerController->GetName() : TEXT("None"));
+
+		const FTransform SpawnTransform = GetMultiplayerPawnSpawnTransform(PlayerController, SeatIndex);
+		const FRotator GameplayViewRotation(-12.0f, SpawnTransform.Rotator().Yaw, 0.0f);
+		if (APlayerPawn* ExistingPawn = Cast<APlayerPawn>(PlayerController->GetPawn()))
+		{
+			ExistingPawn->SetOwner(PlayerController);
+			ExistingPawn->SetActorTransform(SpawnTransform);
+			PlayerController->SetControlRotation(GameplayViewRotation);
+			if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+			{
+				ShowDownController->ClientUseMultiplayerSeatCamera(
+					SeatIndex,
+					GameplayCameraLookSensitivity,
+					GameplayFallbackCameraLookSensitivity,
+					GameplayCameraMinPitch,
+					GameplayCameraMaxPitch,
+					GameplayCameraMinYawOffset,
+					GameplayCameraMaxYawOffset,
+					bInvertGameplayCameraMouseY,
+					bEnableGameplayCameraBreathingSway,
+					GameplayCameraBreathingSwaySpeed,
+					GameplayCameraBreathingSwayRotationAmplitude,
+					GameplayCameraBreathingSwayLocationAmplitude,
+					GameplayCameraBreathingSwayBlendInTime);
+			}
+			continue;
+		}
+
+		if (APawn* ExistingPawn = PlayerController->GetPawn())
+		{
+			ExistingPawn->Destroy();
+		}
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = PlayerController;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+
+		APlayerPawn* SpawnedPawn = World->SpawnActor<APlayerPawn>(
+			APlayerPawn::StaticClass(),
+			SpawnTransform,
+			SpawnParams);
+
+		if (SpawnedPawn)
+		{
+			PlayerController->Possess(SpawnedPawn);
+			PlayerController->SetControlRotation(GameplayViewRotation);
+			if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
+			{
+				ShowDownController->ClientUseMultiplayerSeatCamera(
+					SeatIndex,
+					GameplayCameraLookSensitivity,
+					GameplayFallbackCameraLookSensitivity,
+					GameplayCameraMinPitch,
+					GameplayCameraMaxPitch,
+					GameplayCameraMinYawOffset,
+					GameplayCameraMaxYawOffset,
+					bInvertGameplayCameraMouseY,
+					bEnableGameplayCameraBreathingSway,
+					GameplayCameraBreathingSwaySpeed,
+					GameplayCameraBreathingSwayRotationAmplitude,
+					GameplayCameraBreathingSwayLocationAmplitude,
+					GameplayCameraBreathingSwayBlendInTime);
+			}
+			UE_LOG(LogTemp, Log, TEXT("멀티플레이 Pawn 생성: %s / 플레이어: %s"), *SpawnedPawn->GetName(), *Player->GetPlayerName());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("멀티플레이 Pawn 생성 실패: %s"), *Player->GetPlayerName());
+		}
+
+	}
+}
+
+void AShowDownGameModeBase::EnsureMultiplayerTable()
+{
+	if (MultiplayerTable || !HasAuthority())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	MultiplayerTable = World->SpawnActor<ASDMultiplayerTable>(
+		ASDMultiplayerTable::StaticClass(),
+		FVector(0.0f, 0.0f, 25.0f),
+		FRotator::ZeroRotator,
+		SpawnParams);
+}
+
+void AShowDownGameModeBase::EnsureMultiplayerSeatAnchors()
+{
+	if (!HasAuthority() || MultiplayerSeatAnchors.Num() == MultiplayerPlayers.Num())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (ASDMultiplayerSeatAnchor* SeatAnchor : MultiplayerSeatAnchors)
+	{
+		if (SeatAnchor)
+		{
+			SeatAnchor->Destroy();
+		}
+	}
+	MultiplayerSeatAnchors.Reset();
+
+	for (int32 PlayerIndex = 0; PlayerIndex < MultiplayerPlayers.Num(); ++PlayerIndex)
+	{
+		const ASDPlayerState* Player = MultiplayerPlayers[PlayerIndex];
+		const int32 SeatIndexFromSlot = Player ? GetCardSeatIndexFromPlayerSlot(Player->ShowDownSlot) : INDEX_NONE;
+		const int32 SeatIndex = SeatIndexFromSlot == INDEX_NONE ? PlayerIndex : SeatIndexFromSlot;
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ASDMultiplayerSeatAnchor* SeatAnchor = World->SpawnActor<ASDMultiplayerSeatAnchor>(
+			ASDMultiplayerSeatAnchor::StaticClass(), FTransform::Identity, SpawnParams);
+		if (!SeatAnchor)
+		{
+			MultiplayerSeatAnchors.Add(nullptr);
+			continue;
+		}
+
+		if (ACameraActor* SeatCamera = FindMultiplayerSeatCamera(World, SeatIndex))
+		{
+			SeatAnchor->ConfigureFromCameraTransform(SeatCamera->GetCameraComponent()->GetComponentTransform());
+		}
+		else
+		{
+			SeatAnchor->ConfigureFromCameraTransform(GetMultiplayerPawnSpawnTransform(nullptr, SeatIndex));
+			UE_LOG(LogTemp, Warning, TEXT("%d번 좌석 카메라를 찾지 못해 기본 좌석 위치를 사용합니다."), SeatIndex + 1);
+		}
+
+		MultiplayerSeatAnchors.Add(SeatAnchor);
+	}
+}
+
+FTransform AShowDownGameModeBase::GetMultiplayerPawnSpawnTransform(AController* Controller, int32 PlayerIndex)
+{
+	static const FVector SeatOffsets[] = {
+		FVector(0.0f, -850.0f, 0.0f),
+		FVector(0.0f, 850.0f, 0.0f),
+		FVector(-1200.0f, 0.0f, 0.0f),
+		FVector(1200.0f, 0.0f, 0.0f)
+	};
+	static const float SeatYaws[] = { 90.0f, -90.0f, 0.0f, 180.0f };
+
+	const int32 SeatIndex = FMath::Clamp(PlayerIndex, 0, UE_ARRAY_COUNT(SeatOffsets) - 1);
+	const FVector TableCenter = MultiplayerTable ? MultiplayerTable->GetActorLocation() : FVector::ZeroVector;
+	return FTransform(FRotator(0.0f, SeatYaws[SeatIndex], 0.0f), TableCenter + SeatOffsets[SeatIndex]);
+}
+
+ASDPlayerState* AShowDownGameModeBase::FindNextAliveMultiplayerPlayer(ASDPlayerState* AfterPlayer) const
+{
+	if (MultiplayerPlayers.Num() <= 0)
+	{
+		return nullptr;
+	}
+
+	int32 StartIndex = 0;
+	if (AfterPlayer)
+	{
+		const int32 FoundIndex = MultiplayerPlayers.IndexOfByKey(AfterPlayer);
+		StartIndex = FoundIndex == INDEX_NONE ? 0 : FoundIndex + 1;
+	}
+
+	for (int32 Offset = 0; Offset < MultiplayerPlayers.Num(); ++Offset)
+	{
+		const int32 Index = (StartIndex + Offset) % MultiplayerPlayers.Num();
+		ASDPlayerState* Candidate = MultiplayerPlayers[Index];
+		if (Candidate && Candidate->Lives > 0)
+		{
+			return Candidate;
+		}
+	}
+
+	return nullptr;
+}
+
+ASDPlayerState* AShowDownGameModeBase::GetMultiplayerOpponent(ASDPlayerState* Player) const
+{
+	if (Player == MultiplayerDuelA)
+	{
+		return MultiplayerDuelB;
+	}
+
+	if (Player == MultiplayerDuelB)
+	{
+		return MultiplayerDuelA;
+	}
+
+	return nullptr;
+}
+
+void AShowDownGameModeBase::DealMultiplayerHands()
+{
+	if (!CardSystem || !CardClass)
+	{
+		NotifyMultiplayerStatus(TEXT("카드를 나눌 수 없습니다. 카드 시스템이 없습니다."));
+		return;
+	}
+
+	ClearMultiplayerHands();
+	ClearMultiplayerForeheadCards();
+
+	CardSystem->ResetDeck();
+	CardSystem->ShuffleDeck();
+
+	for (ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (!Player || Player->Lives <= 0)
+		{
+			continue;
+		}
+
+		Player->CurrentBet = 0;
+		TArray<int32> Ranks;
+		if (!CardSystem->DealCards(HandCount, Ranks))
+		{
+			NotifyMultiplayerStatus(TEXT("덱에 카드가 부족하여 모든 손패를 나눌 수 없습니다."));
+			return;
+		}
+
+		USceneComponent* HandSlot = GetHandSlotForPlayerState(Player);
+		if (!HandSlot)
+		{
+			NotifyMultiplayerStatus(FString::Printf(TEXT("%s의 손패 위치가 없습니다."), *Player->GetPlayerName()));
+			continue;
+		}
+
+		const int32 PlayerIndex = MultiplayerPlayers.IndexOfByKey(Player);
+		FSDCardHandLayoutSettings HandLayout = GetDefaultHandLayoutSettings();
+		if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
+		{
+			// The seat anchor is already placed in front of the camera.
+			HandLayout.CardSpacing = 32.0f;
+			HandLayout.ForwardOffset = 0.0f;
+			HandLayout.HeightOffset = 0.0f;
+			HandLayout.LeanAngle = 0.0f;
+			HandLayout.LayerStep = 0.5f;
+		}
+
+		CardSystem->SpawnHandCards(
+			this,
+			CardClass,
+			HandSlot,
+			Ranks,
+			HandLayout,
+			true,
+			false,
+			Player->HandCards);
+
+		for (ACard* Card : Player->HandCards)
+		{
+			if (Card)
+			{
+				Card->SetHandOwnerSlot(Player->ShowDownSlot);
+			}
+		}
+	}
+}
+
+void AShowDownGameModeBase::ClearMultiplayerHands()
+{
+	for (ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (!Player)
+		{
+			continue;
+		}
+
+		for (ACard* Card : Player->HandCards)
+		{
+			if (Card)
+			{
+				Card->Destroy();
+			}
+		}
+		Player->ClearHand();
+	}
+}
+
+void AShowDownGameModeBase::ClearMultiplayerForeheadCards()
+{
+	TArray<int32> DiscardRanks;
+	for (ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (!Player || !Player->ForeheadCard)
+		{
+			continue;
+		}
+
+		DiscardRanks.Add(Player->ForeheadCard->Rank);
+		Player->ForeheadCard->Destroy();
+		Player->ForeheadCard = nullptr;
+	}
+
+	if (CardSystem && DiscardRanks.Num() > 0)
+	{
+		CardSystem->DiscardCards(DiscardRanks);
+	}
+}
+
+void AShowDownGameModeBase::ClearLooseMultiplayerCards()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACard> It(World); It; ++It)
+	{
+		ACard* Card = *It;
+		if (!IsValid(Card))
+		{
+			continue;
+		}
+
+		const bool bLooksLikeMultiplayerCard =
+			Card->HandOwnerSlot != EShowDownPlayerSlot::None
+			|| Card->HiddenFromSlot != EShowDownPlayerSlot::None;
+		if (bLooksLikeMultiplayerCard)
+		{
+			Card->Destroy();
+		}
+	}
+}
+
+void AShowDownGameModeBase::StartMultiplayerDuel(ASDPlayerState* FirstPlayer, ASDPlayerState* SecondPlayer)
+{
+	if (!FirstPlayer || !SecondPlayer || FirstPlayer == SecondPlayer)
+	{
+		return;
+	}
+
+	MultiplayerRoundLeader = FirstPlayer;
+	MultiplayerDuelA = FirstPlayer;
+	MultiplayerDuelB = SecondPlayer;
+	MultiplayerLastCheckedPlayer = nullptr;
+	MultiplayerFoldedPlayers.Reset();
+	MultiplayerPlayersActed.Reset();
+	bMultiplayerRoundResolving = false;
+
+	if (!AreAllAliveMultiplayerPlayersReadyToReveal())
+	{
+		StartMultiplayerCardSelection(FirstPlayer, FindNextAliveMultiplayerPlayer(FirstPlayer));
+	}
+
+	NotifyMultiplayerStatus(FString::Printf(
+		TEXT("%d 라운드 시작. 선행: %s, 참가자: %d명"),
+		GetShowDownGameState() ? GetShowDownGameState()->CurrentRound : 1,
+		*FirstPlayer->GetPlayerName(),
+		MultiplayerPlayers.Num()));
+}
+
+bool AShowDownGameModeBase::AreAllAliveMultiplayerPlayersReadyToReveal() const
+{
+	for (const ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (Player && Player->Lives > 0 && !MultiplayerFoldedPlayers.Contains(const_cast<ASDPlayerState*>(Player)) && !Player->ForeheadCard)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool AShowDownGameModeBase::AreAllActiveMultiplayerPlayersDoneBetting(int32 CurrentBet) const
+{
+	for (const ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (!Player || Player->Lives <= 0 || MultiplayerFoldedPlayers.Contains(const_cast<ASDPlayerState*>(Player)))
+		{
+			continue;
+		}
+
+		if (Player->CurrentBet < CurrentBet || !MultiplayerPlayersActed.Contains(const_cast<ASDPlayerState*>(Player)))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+void AShowDownGameModeBase::StartMultiplayerCardSelection(ASDPlayerState* Giver, ASDPlayerState* Receiver)
+{
+	MultiplayerCardGiver = Giver;
+	MultiplayerCardReceiver = Receiver;
+	SetMultiplayerSelectableHand(Giver);
+
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetPhase(EShowDownPhase::SelectCard);
+	}
+
+	NotifyMultiplayerStatus(FString::Printf(
+		TEXT("%s: %s에게 줄 카드를 선택하세요."),
+		Giver ? *Giver->GetPlayerName() : TEXT("플레이어"),
+		Receiver ? *Receiver->GetPlayerName() : TEXT("상대")));
+}
+
+void AShowDownGameModeBase::HandleMultiplayerSelectedCard(ASDPlayerState* SubmittingPlayer, ACard* SelectedCard)
+{
+	if (!SubmittingPlayer || !SelectedCard || SubmittingPlayer != MultiplayerCardGiver || !CardSystem)
+	{
+		return;
+	}
+
+	if (!MultiplayerCardReceiver || !SubmittingPlayer->HandCards.Contains(SelectedCard))
+	{
+		return;
+	}
+
+	if (MultiplayerCardReceiver->ForeheadCard)
+	{
+		return;
+	}
+
+	CardSystem->RemoveCardFromHand(SubmittingPlayer->HandCards, SelectedCard);
+	ReflowMultiplayerHand(SubmittingPlayer);
+	SubmittingPlayer->ForceNetUpdate();
+
+	MultiplayerCardReceiver->ForeheadCard = SelectedCard;
+	MultiplayerCardReceiver->ForceNetUpdate();
+	SelectedCard->SetHandOwnerSlot(EShowDownPlayerSlot::None);
+	SelectedCard->SetHiddenFromSlot(EShowDownPlayerSlot::None);
+	SelectedCard->SetFaceUp(true);
+	SelectedCard->SetSelectable(false);
+	if (USceneComponent* HeadSlot = GetHeadSlotForPlayerState(MultiplayerCardReceiver))
+	{
+		SelectedCard->MoveToSlot(HeadSlot, true);
+	}
+
+	if (AreAllAliveMultiplayerPlayersReadyToReveal())
+	{
+		StartMultiplayerBetting();
+		return;
+	}
+
+	ASDPlayerState* NextGiver = FindNextAliveMultiplayerPlayer(SubmittingPlayer);
+	StartMultiplayerCardSelection(NextGiver, FindNextAliveMultiplayerPlayer(NextGiver));
+}
+
+void AShowDownGameModeBase::StartMultiplayerBetting()
+{
+	const int32 MinimumBet = StageRules.Num() > 0 ? StageRules[0].MinimumBet : 1;
+	if (BettingSystem)
+	{
+		BettingSystem->ResetBetting(MinimumBet);
+	}
+
+	for (ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (Player && Player->Lives > 0 && !MultiplayerFoldedPlayers.Contains(Player))
+		{
+			Player->CurrentBet = MinimumBet;
+		}
+	}
+
+	BettingRaisesLeft = 6;
+	MultiplayerCurrentBetter = MultiplayerRoundLeader;
+	MultiplayerLastCheckedPlayer = nullptr;
+	MultiplayerPlayersActed.Reset();
+	SetMultiplayerSelectableHand(nullptr);
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetPhase(EShowDownPhase::Betting);
+	}
+
+	NotifyMultiplayerStatus(FString::Printf(
+		TEXT("베팅 시작. %s부터 행동합니다. Q=체크/콜, E=레이즈, R=폴드"),
+		MultiplayerCurrentBetter ? *MultiplayerCurrentBetter->GetPlayerName() : TEXT("플레이어")));
+}
+
+void AShowDownGameModeBase::HandleMultiplayerBetAction(
+	ASDPlayerState* SubmittingPlayer,
+	EShowDownBetAction Action,
+	int32 TargetBet)
+{
+	if (!SubmittingPlayer || SubmittingPlayer != MultiplayerCurrentBetter || bMultiplayerRoundResolving)
+	{
+		return;
+	}
+
+	const int32 CurrentBet = BettingSystem
+		? BettingSystem->GetCurrentBet()
+		: SubmittingPlayer->CurrentBet;
+
+	auto FindNextActivePlayer = [this](ASDPlayerState* AfterPlayer)
+	{
+		ASDPlayerState* Candidate = FindNextAliveMultiplayerPlayer(AfterPlayer);
+		for (int32 Attempt = 0; Candidate && Attempt < MultiplayerPlayers.Num(); ++Attempt)
+		{
+			if (!MultiplayerFoldedPlayers.Contains(Candidate))
+			{
+				return Candidate;
+			}
+			Candidate = FindNextAliveMultiplayerPlayer(Candidate);
+		}
+		return static_cast<ASDPlayerState*>(nullptr);
+	};
+
+	switch (Action)
+	{
+	case EShowDownBetAction::Check:
+	case EShowDownBetAction::Call:
+		if (SubmittingPlayer->CurrentBet < CurrentBet)
+		{
+			SubmittingPlayer->CurrentBet = CurrentBet;
+			NotifyMultiplayerStatus(FString::Printf(TEXT("%s: %d 콜"), *SubmittingPlayer->GetPlayerName(), CurrentBet));
+		}
+		else
+		{
+			NotifyMultiplayerStatus(FString::Printf(TEXT("%s 체크."), *SubmittingPlayer->GetPlayerName()));
+		}
+
+		MultiplayerPlayersActed.Add(SubmittingPlayer);
+		if (AreAllActiveMultiplayerPlayersDoneBetting(CurrentBet))
+		{
+			FinishMultiplayerRoundByReveal();
+			return;
+		}
+
+		MultiplayerCurrentBetter = FindNextActivePlayer(SubmittingPlayer);
+		NotifyMultiplayerStatus(FString::Printf(TEXT("다음 차례: %s"),
+			MultiplayerCurrentBetter ? *MultiplayerCurrentBetter->GetPlayerName() : TEXT("없음")));
+		return;
+
+	case EShowDownBetAction::Raise:
+	{
+		const int32 RequestedBet = TargetBet > 0 ? TargetBet : CurrentBet + 1;
+		const int32 NewBet = FMath::Clamp(RequestedBet, 1, 6);
+		if (NewBet <= CurrentBet || BettingRaisesLeft <= 0 || !BettingSystem || !BettingSystem->RaiseTo(EShowDownSide::Player, NewBet))
+		{
+			NotifyMultiplayerStatus(TEXT("레이즈할 수 없습니다."));
+			return;
+		}
+
+		SubmittingPlayer->CurrentBet = NewBet;
+		BettingRaisesLeft = FMath::Max(0, BettingRaisesLeft - 1);
+		MultiplayerPlayersActed.Reset();
+		MultiplayerPlayersActed.Add(SubmittingPlayer);
+		MultiplayerCurrentBetter = FindNextActivePlayer(SubmittingPlayer);
+		NotifyMultiplayerStatus(FString::Printf(
+			TEXT("%s: %d 레이즈. 다음 차례: %s"),
+			*SubmittingPlayer->GetPlayerName(),
+			NewBet,
+			MultiplayerCurrentBetter ? *MultiplayerCurrentBetter->GetPlayerName() : TEXT("없음")));
+		return;
+	}
+
+	case EShowDownBetAction::Fold:
+		NotifyMultiplayerStatus(FString::Printf(TEXT("%s 폴드."), *SubmittingPlayer->GetPlayerName()));
+		MultiplayerFoldedPlayers.Add(SubmittingPlayer);
+		ApplyMultiplayerRoulette(SubmittingPlayer, SubmittingPlayer->CurrentBet);
+		MultiplayerNextFirstPlayer = SubmittingPlayer;
+		MultiplayerPlayersActed.Add(SubmittingPlayer);
+		MultiplayerCurrentBetter = FindNextActivePlayer(SubmittingPlayer);
+		if (!MultiplayerCurrentBetter || AreAllActiveMultiplayerPlayersDoneBetting(CurrentBet))
+		{
+			FinishMultiplayerRoundByReveal();
+		}
+		return;
+
+	default:
+		return;
+	}
+}
+
+void AShowDownGameModeBase::FinishMultiplayerRoundByReveal()
+{
+	bMultiplayerRoundResolving = true;
+	int32 HighestRank = 0;
+	int32 LowestRank = TNumericLimits<int32>::Max();
+	TArray<ASDPlayerState*> Winners;
+	TArray<ASDPlayerState*> RevealedPlayers;
+
+	for (ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (!Player || Player->Lives <= 0 || MultiplayerFoldedPlayers.Contains(Player) || !Player->ForeheadCard)
+		{
+			continue;
+		}
+
+		Player->ForeheadCard->SetHiddenFromSlot(EShowDownPlayerSlot::None);
+		Player->ForeheadCard->SetFaceUp(true);
+		RevealedPlayers.Add(Player);
+		const int32 Rank = Player->ForeheadCard->Rank;
+		if (Rank > HighestRank)
+		{
+			HighestRank = Rank;
+			Winners.Reset();
+			Winners.Add(Player);
+		}
+		else if (Rank == HighestRank)
+		{
+			Winners.Add(Player);
+		}
+
+		if (Rank < LowestRank)
+		{
+			LowestRank = Rank;
+		}
+	}
+
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->SetPhase(EShowDownPhase::Reveal);
+		ShowDownGameState->OnCardsRevealed.Broadcast(HighestRank, LowestRank == TNumericLimits<int32>::Max() ? 0 : LowestRank);
+	}
+
+	if (Winners.Num() <= 0)
+	{
+		NotifyMultiplayerStatus(TEXT("공개할 카드가 없습니다. 라운드를 종료합니다."));
+	}
+	else
+	{
+		FString WinnerNames;
+		for (ASDPlayerState* Winner : Winners)
+		{
+			if (!WinnerNames.IsEmpty())
+			{
+				WinnerNames += TEXT(", ");
+			}
+			WinnerNames += Winner->GetPlayerName();
+		}
+
+		const bool bAllRevealedPlayersTied = RevealedPlayers.Num() > 0 && Winners.Num() == RevealedPlayers.Num();
+		TArray<ASDPlayerState*> RouletteTargets;
+		if (bAllRevealedPlayersTied)
+		{
+			RouletteTargets = RevealedPlayers;
+			NotifyMultiplayerStatus(TEXT("공개 결과: 전원 동점. 모두 룰렛을 돌립니다."));
+		}
+		else
+		{
+			NotifyMultiplayerStatus(FString::Printf(TEXT("공개 결과: %s 승리."), *WinnerNames));
+			for (ASDPlayerState* Player : RevealedPlayers)
+			{
+				if (Player && !Winners.Contains(Player))
+				{
+					RouletteTargets.Add(Player);
+				}
+			}
+		}
+
+		ASDPlayerState* NextFirstCandidate = nullptr;
+		int32 NextFirstRank = TNumericLimits<int32>::Min();
+		for (ASDPlayerState* Player : RouletteTargets)
+		{
+			if (!Player || !Player->ForeheadCard)
+			{
+				continue;
+			}
+
+			const int32 Rank = Player->ForeheadCard->Rank;
+			if (!NextFirstCandidate || Rank > NextFirstRank)
+			{
+				NextFirstCandidate = Player;
+				NextFirstRank = Rank;
+			}
+
+			ApplyMultiplayerRoulette(Player, Player->CurrentBet);
+		}
+
+		if (NextFirstCandidate)
+		{
+			MultiplayerNextFirstPlayer = NextFirstCandidate;
+		}
+	}
+
+	EndMultiplayerRound();
+}
+
+void AShowDownGameModeBase::FinishMultiplayerRoundByFold(ASDPlayerState* FoldedPlayer)
+{
+	if (!FoldedPlayer)
+	{
+		return;
+	}
+
+	bMultiplayerRoundResolving = true;
+	MultiplayerNextFirstPlayer = FoldedPlayer;
+	if (MultiplayerDuelA && MultiplayerDuelA->ForeheadCard)
+	{
+		MultiplayerDuelA->ForeheadCard->SetHiddenFromSlot(EShowDownPlayerSlot::None);
+		MultiplayerDuelA->ForeheadCard->SetFaceUp(true);
+	}
+	if (MultiplayerDuelB && MultiplayerDuelB->ForeheadCard)
+	{
+		MultiplayerDuelB->ForeheadCard->SetHiddenFromSlot(EShowDownPlayerSlot::None);
+		MultiplayerDuelB->ForeheadCard->SetFaceUp(true);
+	}
+
+	const bool bSevenFoldLoadsSix = StageRules.Num() > 0 ? StageRules[0].bSevenFoldLoadsSix : true;
+	const int32 FoldedRank = FoldedPlayer->ForeheadCard ? FoldedPlayer->ForeheadCard->Rank : 1;
+	const int32 LoadCount = RoundResolver
+		? RoundResolver->GetFoldLoadCount(FoldedRank, FoldedPlayer->CurrentBet, bSevenFoldLoadsSix)
+		: FoldedPlayer->CurrentBet;
+
+	ApplyMultiplayerRoulette(FoldedPlayer, LoadCount);
+	EndMultiplayerRound();
+}
+
+void AShowDownGameModeBase::ApplyMultiplayerRoulette(ASDPlayerState* TargetPlayer, int32 BulletCount)
+{
+	if (!TargetPlayer || !RouletteSystem)
+	{
+		return;
+	}
+
+	const int32 ClampedBulletCount = FMath::Clamp(BulletCount, 1, 6);
+	const int32 PreviousLives = TargetPlayer->Lives;
+	const FString TargetName = TargetPlayer->GetPlayerName();
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->BroadcastMultiplayerRouletteStarted(TargetPlayer->ShowDownSlot, TargetName, ClampedBulletCount);
+	}
+
+	const bool bHit = RouletteSystem->RollRoulette(ClampedBulletCount);
+	NotifyMultiplayerStatus(FString::Printf(
+		TEXT("%s 룰렛 %d/6: %s"),
+		*TargetName,
+		ClampedBulletCount,
+		bHit ? TEXT("명중") : TEXT("빗나감")));
+
+	if (bHit)
+	{
+		TargetPlayer->Lives = FMath::Max(0, TargetPlayer->Lives - 1);
+		if (PreviousLives > 0 && TargetPlayer->Lives <= 0)
+		{
+			MultiplayerEliminationOrder.AddUnique(TargetPlayer);
+		}
+		NotifyMultiplayerStatus(FString::Printf(
+			TEXT("%s 남은 목숨: %d"),
+			*TargetName,
+			TargetPlayer->Lives));
+	}
+
+	TargetPlayer->ForceNetUpdate();
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->BroadcastMultiplayerRouletteResult(
+			TargetPlayer->ShowDownSlot,
+			TargetName,
+			ClampedBulletCount,
+			bHit,
+			TargetPlayer->Lives);
+	}
+}
+
+void AShowDownGameModeBase::EndMultiplayerRound()
+{
+	SetMultiplayerSelectableHand(nullptr);
+	ClearMultiplayerForeheadCards();
+
+	int32 AliveCount = 0;
+	ASDPlayerState* Winner = nullptr;
+	for (ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (Player && Player->Lives > 0)
+		{
+			++AliveCount;
+			Winner = Player;
+		}
+	}
+
+	if (AliveCount <= 1)
+	{
+		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+		{
+			ShowDownGameState->SetPhase(EShowDownPhase::GameOver);
+			ShowDownGameState->OnGameOver.Broadcast(EShowDownSide::Player);
+		}
+		NotifyMultiplayerStatus(FString::Printf(
+			TEXT("게임 종료. 승자: %s"),
+			Winner ? *Winner->GetPlayerName() : TEXT("없음")));
+		ShowMultiplayerFinalRanking(Winner);
+		return;
+	}
+
+	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+	{
+		ShowDownGameState->CurrentRound++;
+		ShowDownGameState->SetPhase(EShowDownPhase::RoundEnd);
+	}
+
+	bool bNeedRedeal = false;
+	for (ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (Player && Player->Lives > 0 && Player->HandCards.Num() <= 0)
+		{
+			bNeedRedeal = true;
+			break;
+		}
+	}
+
+	if (bNeedRedeal)
+	{
+		DealMultiplayerHands();
+	}
+
+	ASDPlayerState* NextFirst = MultiplayerNextFirstPlayer;
+	MultiplayerNextFirstPlayer = nullptr;
+	if (!NextFirst || NextFirst->Lives <= 0)
+	{
+		// The losing player can be eliminated by roulette; then the next living
+		// participant takes the lead so the match can continue.
+		NextFirst = FindNextAliveMultiplayerPlayer(MultiplayerDuelA);
+	}
+
+	ASDPlayerState* NextSecond = FindNextAliveMultiplayerPlayer(NextFirst);
+	StartMultiplayerDuel(NextFirst, NextSecond);
+}
+
+void AShowDownGameModeBase::ShowMultiplayerFinalRanking(ASDPlayerState* Winner)
+{
+	MultiplayerRestartVotes.Reset();
+
+	TArray<ASDPlayerState*> FinalRanking;
+	if (Winner)
+	{
+		FinalRanking.Add(Winner);
+	}
+
+	for (int32 Index = MultiplayerEliminationOrder.Num() - 1; Index >= 0; --Index)
+	{
+		ASDPlayerState* EliminatedPlayer = MultiplayerEliminationOrder[Index];
+		if (EliminatedPlayer)
+		{
+			FinalRanking.AddUnique(EliminatedPlayer);
+		}
+	}
+
+	for (ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (Player)
+		{
+			FinalRanking.AddUnique(Player);
+		}
+	}
+
+	TArray<FString> RankNames;
+	for (ASDPlayerState* Player : FinalRanking)
+	{
+		RankNames.Add(Player ? Player->GetPlayerName() : TEXT("Unknown"));
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+		{
+			if (AShowDownPlayerController* PlayerController = Cast<AShowDownPlayerController>(Iterator->Get()))
+			{
+				PlayerController->ClientShowMultiplayerRank(RankNames);
+			}
+		}
+	}
+}
+
+void AShowDownGameModeBase::RequestMultiplayerRestartFromController(AController* RequestingController)
+{
+	ASDPlayerState* RequestingPlayer = GetPlayerStateForController(RequestingController);
+	if (!RequestingPlayer)
+	{
+		return;
+	}
+
+	AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState();
+	if (!ShowDownGameState || ShowDownGameState->CurrentPhase != EShowDownPhase::GameOver)
+	{
+		if (AShowDownPlayerController* PlayerController = Cast<AShowDownPlayerController>(RequestingController))
+		{
+			PlayerController->ClientShowStatusMessage(TEXT("게임 종료 화면에서만 재시작할 수 있습니다."));
+		}
+		return;
+	}
+
+	TArray<ASDPlayerState*> ConnectedPlayers = GetConnectedShowDownPlayers();
+	if (ConnectedPlayers.Num() <= 0)
+	{
+		return;
+	}
+
+	MultiplayerRestartVotes.Add(RequestingPlayer);
+	TSet<TObjectPtr<ASDPlayerState>> ConnectedPlayerSet;
+	for (ASDPlayerState* ConnectedPlayer : ConnectedPlayers)
+	{
+		ConnectedPlayerSet.Add(ConnectedPlayer);
+	}
+
+	for (auto VoteIterator = MultiplayerRestartVotes.CreateIterator(); VoteIterator; ++VoteIterator)
+	{
+		if (!ConnectedPlayerSet.Contains(*VoteIterator))
+		{
+			VoteIterator.RemoveCurrent();
+		}
+	}
+
+	const int32 RequiredVotes = ConnectedPlayers.Num();
+	const int32 CurrentVotes = MultiplayerRestartVotes.Num();
+	const FString VoteMessage = FString::Printf(TEXT("재시작 동의 %d/%d"), CurrentVotes, RequiredVotes);
+	NotifyMultiplayerStatus(VoteMessage);
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+	{
+		if (AShowDownPlayerController* PlayerController = Cast<AShowDownPlayerController>(Iterator->Get()))
+		{
+			PlayerController->ClientShowStatusMessage(VoteMessage);
+		}
+	}
+
+	if (CurrentVotes < RequiredVotes)
+	{
+		return;
+	}
+
+	NotifyMultiplayerStatus(TEXT("전원 동의. 게임을 재시작합니다."));
+	StartMultiplayerMatch(ConnectedPlayers);
+}
+
+void AShowDownGameModeBase::SetMultiplayerSelectableHand(ASDPlayerState* Player)
+{
+	for (ASDPlayerState* CurrentPlayer : MultiplayerPlayers)
+	{
+		if (!CurrentPlayer)
+		{
+			continue;
+		}
+
+		for (ACard* Card : CurrentPlayer->HandCards)
+		{
+			if (Card)
+			{
+				Card->SetSelectable(CurrentPlayer == Player);
+			}
+		}
+	}
+}
+
+void AShowDownGameModeBase::ReflowMultiplayerHand(ASDPlayerState* Player)
+{
+	if (!CardSystem || !Player)
+	{
+		return;
+	}
+
+	if (USceneComponent* HandSlot = GetHandSlotForPlayerState(Player))
+	{
+		const int32 PlayerIndex = MultiplayerPlayers.IndexOfByKey(Player);
+		FSDCardHandLayoutSettings HandLayout = GetDefaultHandLayoutSettings();
+		if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
+		{
+			HandLayout.CardSpacing = 32.0f;
+			HandLayout.ForwardOffset = 0.0f;
+			HandLayout.HeightOffset = 0.0f;
+			HandLayout.LeanAngle = 0.0f;
+			HandLayout.LayerStep = 0.5f;
+		}
+		CardSystem->LayoutHandCards(this, HandSlot, HandLayout, Player->HandCards);
+	}
+}
+
+USceneComponent* AShowDownGameModeBase::GetHandSlotForPlayerState(ASDPlayerState* Player) const
+{
+	if (!Player || !GetWorld())
+	{
+		return nullptr;
+	}
+
+	const int32 PlayerIndex = MultiplayerPlayers.IndexOfByKey(Player);
+	if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
+	{
+		return MultiplayerSeatAnchors[PlayerIndex]->GetHandSlot();
+	}
+
+	// Legacy map anchors are used only until runtime seat anchors are available.
+	const EShowDownSide AnchorSide = PlayerIndex == 0
+		? EShowDownSide::Player
+		: PlayerIndex == 1 ? EShowDownSide::Collector : EShowDownSide::Player;
+	if (PlayerIndex >= 0 && PlayerIndex < 2)
+	{
+		if (const ASDCardPlacementAnchor* HandAnchor = GetHandAnchorForSide(AnchorSide))
+		{
+			if (USceneComponent* HandSlot = HandAnchor->GetSlotComponent())
+			{
+				return HandSlot;
+			}
+		}
+	}
+
+	for (FConstPlayerControllerIterator Iterator = GetWorld()->GetPlayerControllerIterator(); Iterator; ++Iterator)
+	{
+		const APlayerController* PlayerController = Iterator->Get();
+		if (!PlayerController || PlayerController->PlayerState != Player)
+		{
+			continue;
+		}
+
+		if (const APlayerPawn* PlayerPawn = Cast<APlayerPawn>(PlayerController->GetPawn()))
+		{
+			return PlayerPawn->PlayerHandCard ? PlayerPawn->PlayerHandCard : PlayerPawn->GetRootComponent();
+		}
+	}
+
+	if (PlayerIndex == 0)
+	{
+		return GetHandSlotForSide(EShowDownSide::Player);
+	}
+	if (PlayerIndex == 1)
+	{
+		return GetHandSlotForSide(EShowDownSide::Collector);
+	}
+
+	return nullptr;
+}
+
+USceneComponent* AShowDownGameModeBase::GetHeadSlotForPlayerState(ASDPlayerState* Player) const
+{
+	if (!Player || !GetWorld())
+	{
+		return nullptr;
+	}
+
+	const int32 PlayerIndex = MultiplayerPlayers.IndexOfByKey(Player);
+	if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
+	{
+		return MultiplayerSeatAnchors[PlayerIndex]->GetForeheadSlot();
+	}
+
+	const EShowDownSide AnchorSide = PlayerIndex == 0
+		? EShowDownSide::Player
+		: PlayerIndex == 1 ? EShowDownSide::Collector : EShowDownSide::Player;
+	if (PlayerIndex >= 0 && PlayerIndex < 2)
+	{
+		if (const ASDCardPlacementAnchor* HeadAnchor = GetForeheadAnchorForSide(AnchorSide))
+		{
+			if (USceneComponent* HeadSlot = HeadAnchor->GetSlotComponent())
+			{
+				return HeadSlot;
+			}
+		}
+	}
+
+	for (FConstPlayerControllerIterator Iterator = GetWorld()->GetPlayerControllerIterator(); Iterator; ++Iterator)
+	{
+		const APlayerController* PlayerController = Iterator->Get();
+		if (!PlayerController || PlayerController->PlayerState != Player)
+		{
+			continue;
+		}
+
+		if (const APlayerPawn* PlayerPawn = Cast<APlayerPawn>(PlayerController->GetPawn()))
+		{
+			return PlayerPawn->PlayerHeadCard ? PlayerPawn->PlayerHeadCard : PlayerPawn->GetRootComponent();
+		}
+	}
+
+	if (PlayerIndex == 0)
+	{
+		return GetHeadSlotForSide(EShowDownSide::Player);
+	}
+	if (PlayerIndex == 1)
+	{
+		return GetHeadSlotForSide(EShowDownSide::Collector);
+	}
+
+	return nullptr;
+}
+
+void AShowDownGameModeBase::NotifyMultiplayerStatus(const FString& Message) const
+{
+	UE_LOG(LogTemp, Log, TEXT("Multiplayer: %s"), *Message);
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Green, Message);
+	}
+
+	if (!GetWorld())
+	{
+		return;
+	}
+
+	for (FConstPlayerControllerIterator Iterator = GetWorld()->GetPlayerControllerIterator(); Iterator; ++Iterator)
+	{
+		if (AShowDownPlayerController* PlayerController = Cast<AShowDownPlayerController>(Iterator->Get()))
+		{
+			PlayerController->ClientShowStatusMessage(Message);
+		}
+	}
 }
 
 void AShowDownGameModeBase::StartStage(int32 StageIndex)

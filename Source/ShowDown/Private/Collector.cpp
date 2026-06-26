@@ -6,6 +6,7 @@
 ACollector::ACollector()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	rootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(rootComp);
@@ -36,6 +37,7 @@ void ACollector::Tick(float DeltaTime)
 	{
 		bActionSpinActive = false;
 		QueuedActionSpinCount = 0;
+		SetActorTickEnabled(false);
 		return;
 	}
 
@@ -64,7 +66,10 @@ void ACollector::Tick(float DeltaTime)
 	{
 		--QueuedActionSpinCount;
 		StartActionSpin();
+		return;
 	}
+
+	SetActorTickEnabled(false);
 }
 
 void ACollector::PlayActionSpin()
@@ -136,4 +141,5 @@ void ACollector::StartActionSpin()
 	ActionSpinStartRotation = Target->GetRelativeRotation().Quaternion();
 	ActionSpinElapsed = 0.0f;
 	bActionSpinActive = true;
+	SetActorTickEnabled(true);
 }

@@ -213,6 +213,36 @@ void AShowDownGameStateBase::BroadcastChatMessage(const FString& SenderName, con
 	OnChatMessageReceived.Broadcast(SenderName, Message);
 }
 
+void AShowDownGameStateBase::BroadcastMultiplayerRouletteStarted(
+	EShowDownPlayerSlot TargetSlot,
+	const FString& TargetName,
+	int32 BulletCount)
+{
+	if (HasAuthority())
+	{
+		MulticastMultiplayerRouletteStarted(TargetSlot, TargetName, BulletCount);
+		return;
+	}
+
+	OnMultiplayerRouletteStarted.Broadcast(TargetSlot, TargetName, BulletCount);
+}
+
+void AShowDownGameStateBase::BroadcastMultiplayerRouletteResult(
+	EShowDownPlayerSlot TargetSlot,
+	const FString& TargetName,
+	int32 BulletCount,
+	bool bHit,
+	int32 RemainingLives)
+{
+	if (HasAuthority())
+	{
+		MulticastMultiplayerRouletteResult(TargetSlot, TargetName, BulletCount, bHit, RemainingLives);
+		return;
+	}
+
+	OnMultiplayerRouletteResult.Broadcast(TargetSlot, TargetName, BulletCount, bHit, RemainingLives);
+}
+
 void AShowDownGameStateBase::MulticastCollectorLLMDecision_Implementation(const FString& Dialogue, const FString& Intent, EShowDownBetAction Action, int32 TargetBet)
 {
 	OnCollectorDialogue.Broadcast(Dialogue, Intent);
@@ -228,6 +258,24 @@ void AShowDownGameStateBase::MulticastCollectorLLMStatus_Implementation(bool bSu
 void AShowDownGameStateBase::MulticastChatMessage_Implementation(const FString& SenderName, const FString& Message)
 {
 	OnChatMessageReceived.Broadcast(SenderName, Message);
+}
+
+void AShowDownGameStateBase::MulticastMultiplayerRouletteStarted_Implementation(
+	EShowDownPlayerSlot TargetSlot,
+	const FString& TargetName,
+	int32 BulletCount)
+{
+	OnMultiplayerRouletteStarted.Broadcast(TargetSlot, TargetName, BulletCount);
+}
+
+void AShowDownGameStateBase::MulticastMultiplayerRouletteResult_Implementation(
+	EShowDownPlayerSlot TargetSlot,
+	const FString& TargetName,
+	int32 BulletCount,
+	bool bHit,
+	int32 RemainingLives)
+{
+	OnMultiplayerRouletteResult.Broadcast(TargetSlot, TargetName, BulletCount, bHit, RemainingLives);
 }
 
 void AShowDownGameStateBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

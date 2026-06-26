@@ -17,8 +17,14 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "PlayerPawn.h"
+#include "SDPlayerState.h"
+#include "SDMultiplayerTable.h"
 #include "ShowDownChatWidget.h"
+#include "ShowDownEosSubsystem.h"
 #include "ShowDownGameModeBase.h"
+#include "ShowDownLeaveConfirmWidget.h"
+#include "ShowDownMultiRankWidget.h"
+#include "UObject/ConstructorHelpers.h"
 #include "SlateOptMacros.h"
 #include "Styling/CoreStyle.h"
 #include "SupabaseSubsystem.h"
@@ -111,11 +117,64 @@ private:
 	FLinearColor CrosshairColor = FLinearColor::White;
 };
 
+namespace
+{
+	bool IsMultiplayerGameMap(const UWorld* World)
+	{
+		return World && World->GetMapName().Contains(TEXT("L_MultiplayerGame"));
+	}
+
+	bool TryGetMultiplayerTableLocation(UWorld* World, FVector& OutLocation)
+	{
+		if (!World)
+		{
+			return false;
+		}
+
+		for (TActorIterator<ASDMultiplayerTable> It(World); It; ++It)
+		{
+			if (const ASDMultiplayerTable* Table = *It)
+			{
+				OutLocation = Table->GetActorLocation();
+				return true;
+			}
+		}
+
+		return false;
+	}
+}
+
 AShowDownPlayerController::AShowDownPlayerController()
 {
 	bShowMouseCursor = false;
 	bEnableClickEvents = false;
 	bEnableMouseOverEvents = false;
+
+	// Keep multiplayer chat functional even when the level pawn Blueprint has
+	// not supplied an override. This also makes the widget available early so it
+	// can subscribe to replicated GameState chat broadcasts before the user
+	// presses the chat key.
+	static ConstructorHelpers::FClassFinder<UShowDownChatWidget> ChatWidgetBlueprint(
+		TEXT("/Game/UI/WBP_Chat"));
+	if (ChatWidgetBlueprint.Succeeded())
+	{
+		ChatWidgetClass = ChatWidgetBlueprint.Class;
+	}
+	else
+	{
+		ChatWidgetClass = UShowDownChatWidget::StaticClass();
+	}
+
+	static ConstructorHelpers::FClassFinder<UShowDownMultiRankWidget> MultiRankWidgetBlueprint(
+		TEXT("/Game/UI/WBP_MultiRank"));
+	if (MultiRankWidgetBlueprint.Succeeded())
+	{
+		MultiplayerRankWidgetClass = MultiRankWidgetBlueprint.Class;
+	}
+	else
+	{
+		MultiplayerRankWidgetClass = UShowDownMultiRankWidget::StaticClass();
+	}
 }
 
 void AShowDownPlayerController::BeginPlay()
@@ -148,11 +207,274 @@ void AShowDownPlayerController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 	InitializeFromPossessedPawn();
+	SubmitLocalMultiplayerDisplayName();
+}
+
+void AShowDownPlayerController::ClientEnterMultiplayerGameplay_Implementation()
+{
+	if (UShowDownEosSubsystem* EosSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownEosSubsystem>()
+		: nullptr)
+	{
+		EosSubsystem->MarkEnteredMultiplayerGame();
+	}
+
+	RemoveCenterCrosshairWidget();
+	if (GEngine && GEngine->GameViewport)
+	{
+		GEngine->GameViewport->RemoveAllViewportWidgets();
+	}
+	ChatWidget = nullptr;
+	LeaveConfirmWidget = nullptr;
+	MultiplayerRankWidget = nullptr;
+	bChatOpen = false;
+
+	bHandleShowDownGameplayInput = false;
+	// Multiplayer follows the same first-person interaction model as single
+	// player: raw mouse movement controls the view and the centre reticle is
+	// used for card/interactable tracing. UI temporarily reveals the cursor.
+	bShowCenterCrosshair = false;
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
+
+	EnsureChatWidget();
+	PawnCameraBaseRotation = GetControlRotation();
+	bHasPawnCameraBaseRotation = true;
+	UpdateCenterCrosshairVisibility();
+	ClientShowStatusMessage(TEXT("로딩 중... 멀티플레이 좌석과 카메라를 확인하는 중입니다."));
+}
+
+void AShowDownPlayerController::ClientUseMultiplayerSeatCamera_Implementation(
+	int32 SeatIndex,
+	float SeatCameraLookSensitivity,
+	float FallbackSeatCameraLookSensitivity,
+	float MinPitchDegrees,
+	float MaxPitchDegrees,
+	float MinYawOffsetDegrees,
+	float MaxYawOffsetDegrees,
+	bool bInvertY,
+	bool bEnableBreathingSway,
+	float InBreathingSwaySpeed,
+	FRotator InBreathingSwayRotationAmplitude,
+	FVector InBreathingSwayLocationAmplitude,
+	float InBreathingSwayBlendInTime)
+{
+	const ASDPlayerState* ShowDownPlayerState = GetPlayerState<ASDPlayerState>();
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("멀티플레이 좌석 카메라 요청 수신: SeatIndex=%d LocalSlot=%d Player=%s"),
+		SeatIndex,
+		ShowDownPlayerState ? static_cast<int32>(ShowDownPlayerState->ShowDownSlot) : -1,
+		ShowDownPlayerState ? *ShowDownPlayerState->GetPlayerName() : TEXT("None"));
+
+	// A client can receive this RPC while its seamless level transition is still
+	// loading. Keep the seat number and retry from PlayerTick once the target
+	// map's CameraActors actually exist locally.
+	PendingMultiplayerSeatIndex = SeatIndex;
+	PendingMultiplayerSeatCameraLookSensitivity = SeatCameraLookSensitivity;
+	PendingMultiplayerFallbackSeatCameraLookSensitivity = FallbackSeatCameraLookSensitivity;
+	PendingMultiplayerCameraMinPitch = MinPitchDegrees;
+	PendingMultiplayerCameraMaxPitch = MaxPitchDegrees;
+	PendingMultiplayerCameraMinYawOffset = MinYawOffsetDegrees;
+	PendingMultiplayerCameraMaxYawOffset = MaxYawOffsetDegrees;
+	bPendingMultiplayerCameraInvertMouseY = bInvertY;
+	bPendingMultiplayerCameraBreathingSway = bEnableBreathingSway;
+	PendingMultiplayerCameraBreathingSwaySpeed = InBreathingSwaySpeed;
+	PendingMultiplayerCameraBreathingSwayRotationAmplitude = InBreathingSwayRotationAmplitude;
+	PendingMultiplayerCameraBreathingSwayLocationAmplitude = InBreathingSwayLocationAmplitude;
+	PendingMultiplayerCameraBreathingSwayBlendInTime = InBreathingSwayBlendInTime;
+	bPendingMultiplayerSeatCamera = true;
+	bHandleShowDownGameplayInput = false;
+	bShowCenterCrosshair = false;
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
+
+	if (TryApplyPendingMultiplayerSeatCamera())
+	{
+		return;
+	}
+
+	// Until the game map finishes loading, retain a safe local pawn view.
+	ClearFixedCameraMouseLook();
+	if (APawn* ControlledPawn = GetPawn())
+	{
+		SetViewTarget(ControlledPawn);
+	}
+	UpdateCenterCrosshairVisibility();
+	ClientShowStatusMessage(TEXT("로딩 중... 멀티플레이 좌석 카메라를 기다리는 중입니다."));
+}
+
+void AShowDownPlayerController::ClientLeaveMultiplayerRoomToHub_Implementation()
+{
+	if (UShowDownEosSubsystem* EosSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownEosSubsystem>()
+		: nullptr)
+	{
+		EosSubsystem->LeaveLobby(FName(TEXT("L_Hub")));
+		return;
+	}
+
+	ClientTravel(TEXT("/Game/Maps/L_Hub"), TRAVEL_Absolute);
+}
+
+bool AShowDownPlayerController::TryApplyPendingMultiplayerSeatCamera()
+{
+	if (!bPendingMultiplayerSeatCamera || PendingMultiplayerSeatIndex == INDEX_NONE || !GetWorld())
+	{
+		return false;
+	}
+
+	FVector TableLocation = FVector::ZeroVector;
+	if (!TryGetMultiplayerTableLocation(GetWorld(), TableLocation))
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("멀티플레이 테이블 대기 중: SeatIndex=%d"), PendingMultiplayerSeatIndex);
+		return false;
+	}
+
+	const FName SeatCameraTag(*FString::Printf(TEXT("MP_SeatCamera_%d"), PendingMultiplayerSeatIndex + 1));
+	for (TActorIterator<ACameraActor> It(GetWorld()); It; ++It)
+	{
+		ACameraActor* SeatCamera = *It;
+		if (!SeatCamera || !SeatCamera->ActorHasTag(SeatCameraTag))
+		{
+			continue;
+		}
+
+		const float DistanceFromTable = FVector::Dist2D(SeatCamera->GetActorLocation(), TableLocation);
+		UE_LOG(
+			LogTemp,
+			Log,
+			TEXT("멀티플레이 좌석 카메라 후보: Tag=%s Actor=%s Location=%s Rotation=%s TableDistance2D=%.1f"),
+			*SeatCameraTag.ToString(),
+			*SeatCamera->GetName(),
+			*SeatCamera->GetActorLocation().ToCompactString(),
+			*SeatCamera->GetActorRotation().ToCompactString(),
+			DistanceFromTable);
+		if (DistanceFromTable > 2500.0f)
+		{
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("%s 카메라가 테이블에서 너무 멀어 무시합니다. Actor=%s Distance=%.1f"),
+				*SeatCameraTag.ToString(),
+				*SeatCamera->GetName(),
+				DistanceFromTable);
+			continue;
+		}
+
+		SetViewTarget(SeatCamera);
+		SetFixedCameraMouseLook(
+			SeatCamera,
+			PendingMultiplayerSeatCameraLookSensitivity,
+			PendingMultiplayerCameraMinPitch,
+			PendingMultiplayerCameraMaxPitch,
+			PendingMultiplayerCameraMinYawOffset,
+			PendingMultiplayerCameraMaxYawOffset,
+			bPendingMultiplayerCameraInvertMouseY);
+		SetFixedCameraBreathingSway(
+			bPendingMultiplayerCameraBreathingSway,
+			PendingMultiplayerCameraBreathingSwaySpeed,
+			PendingMultiplayerCameraBreathingSwayRotationAmplitude,
+			PendingMultiplayerCameraBreathingSwayLocationAmplitude,
+			PendingMultiplayerCameraBreathingSwayBlendInTime);
+		EnsureChatWidget();
+		bPendingMultiplayerSeatCamera = false;
+		bHandleShowDownGameplayInput = true;
+		bShowCenterCrosshair = true;
+		RestoreMultiplayerGameplayInput();
+		CreateCenterCrosshairWidget();
+		UpdateCenterCrosshairVisibility();
+		UE_LOG(LogTemp, Log, TEXT("멀티플레이 좌석 카메라 적용: %s"), *SeatCameraTag.ToString());
+		return true;
+	}
+
+	// Some older copies of the level do not contain the named CameraActors (or
+	// do not preserve their actor tags after a map migration). Do not leave the
+	// player at a PlayerStart in that case: create the same four table views
+	// locally from the authoritative replicated table position.
+	return IsMultiplayerGameMap(GetWorld())
+		&& UseFallbackMultiplayerSeatCamera(PendingMultiplayerSeatIndex);
+}
+
+bool AShowDownPlayerController::UseFallbackMultiplayerSeatCamera(int32 SeatIndex)
+{
+	if (!IsLocalController() || !GetWorld() || SeatIndex < 0 || SeatIndex > 3)
+	{
+		return false;
+	}
+
+	static const FVector SeatOffsets[] = {
+		FVector(0.0f, -850.0f, 220.0f),
+		FVector(0.0f, 850.0f, 220.0f),
+		FVector(-1200.0f, 0.0f, 220.0f),
+		FVector(1200.0f, 0.0f, 220.0f)
+	};
+	static const float SeatYaws[] = { 90.0f, -90.0f, 0.0f, 180.0f };
+
+	FVector TableCenter = FVector::ZeroVector;
+	if (!TryGetMultiplayerTableLocation(GetWorld(), TableCenter))
+	{
+		return false;
+	}
+
+	const FTransform CameraTransform(
+		FRotator(-12.0f, SeatYaws[SeatIndex], 0.0f),
+		TableCenter + SeatOffsets[SeatIndex]);
+	if (!IsValid(LocalFallbackSeatCamera))
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		LocalFallbackSeatCamera = GetWorld()->SpawnActor<ACameraActor>(
+			ACameraActor::StaticClass(), CameraTransform, SpawnParams);
+	}
+	else
+	{
+		LocalFallbackSeatCamera->SetActorTransform(CameraTransform);
+	}
+
+	if (!IsValid(LocalFallbackSeatCamera))
+	{
+		return false;
+	}
+
+	SetViewTarget(LocalFallbackSeatCamera);
+	SetFixedCameraMouseLook(
+		LocalFallbackSeatCamera,
+		PendingMultiplayerFallbackSeatCameraLookSensitivity,
+		PendingMultiplayerCameraMinPitch,
+		PendingMultiplayerCameraMaxPitch,
+		PendingMultiplayerCameraMinYawOffset,
+		PendingMultiplayerCameraMaxYawOffset,
+		bPendingMultiplayerCameraInvertMouseY);
+	SetFixedCameraBreathingSway(
+		bPendingMultiplayerCameraBreathingSway,
+		PendingMultiplayerCameraBreathingSwaySpeed,
+		PendingMultiplayerCameraBreathingSwayRotationAmplitude,
+		PendingMultiplayerCameraBreathingSwayLocationAmplitude,
+		PendingMultiplayerCameraBreathingSwayBlendInTime);
+	EnsureChatWidget();
+	bPendingMultiplayerSeatCamera = false;
+	bHandleShowDownGameplayInput = true;
+	bShowCenterCrosshair = true;
+	RestoreMultiplayerGameplayInput();
+	CreateCenterCrosshairWidget();
+	UpdateCenterCrosshairVisibility();
+	UE_LOG(LogTemp, Warning, TEXT("Authored seat camera missing; using fallback multiplayer seat camera %d."), SeatIndex + 1);
+	return true;
 }
 
 void AShowDownPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
+
+	if (bPendingMultiplayerSeatCamera)
+	{
+		TryApplyPendingMultiplayerSeatCamera();
+	}
 
 	const bool bHasFixedCameraLook = FixedCameraMouseLookTarget != nullptr;
 	if (bHasFixedCameraLook)
@@ -165,6 +487,16 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 		SetFocusedInteractable(nullptr);
 		SetHoveredCard(nullptr);
 		UpdateCenterCrosshairVisibility();
+		return;
+	}
+
+	if (LeaveConfirmWidget && LeaveConfirmWidget->GetVisibility() == ESlateVisibility::Visible)
+	{
+		if (WasInputKeyJustPressed(LeaveMatchKey))
+		{
+			CancelLeaveMultiplayerMatch();
+		}
+		SetHoveredCard(nullptr);
 		return;
 	}
 
@@ -183,6 +515,12 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 	if (WasInputKeyJustPressed(ToggleChatKey))
 	{
 		OpenChat();
+		return;
+	}
+
+	if (WasInputKeyJustPressed(LeaveMatchKey))
+	{
+		RequestLeaveMultiplayerMatch();
 		return;
 	}
 
@@ -237,6 +575,11 @@ void AShowDownPlayerController::InitializeFromPossessedPawn()
 	bEnableLegacyKeyboardBetHotkeys = ShowDownPawn->bEnableLegacyKeyboardBetHotkeys;
 	ToggleChatKey = ShowDownPawn->ToggleChatKey;
 	CloseChatKey = ShowDownPawn->CloseChatKey;
+
+	// Every multiplayer pawn starts facing the shared table. Keep camera limits
+	// relative to that seat direction instead of clamping to world-space yaw.
+	PawnCameraBaseRotation = GetControlRotation();
+	bHasPawnCameraBaseRotation = true;
 }
 
 void AShowDownPlayerController::InitializeInteractableOutlinePostProcess()
@@ -370,6 +713,11 @@ void AShowDownPlayerController::TraceCardUnderCursor()
 
 bool AShowDownPlayerController::TracePrimaryInteraction(FHitResult& OutHit) const
 {
+	if (bShowMouseCursor && TraceUnderCursor(OutHit))
+	{
+		return true;
+	}
+
 	if (bHandleShowDownGameplayInput && !bChatOpen)
 	{
 		return bUseCenterScreenTraceWhenCursorHidden && TraceFromScreenCenter(OutHit);
@@ -717,7 +1065,7 @@ void AShowDownPlayerController::SubmitSelectedCard(ACard* SelectedCard)
 	{
 		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			GameMode->PlayerSelectedCard(SelectedCard);
+			GameMode->PlayerSelectedCardFromController(this, SelectedCard);
 		}
 		return;
 	}
@@ -809,6 +1157,55 @@ void AShowDownPlayerController::RequestPlayerRaiseTo(int32 BulletCount)
 void AShowDownPlayerController::RequestPlayerFold()
 {
 	SubmitPlayerBetAction(EShowDownBetAction::Fold, 0);
+}
+
+void AShowDownPlayerController::RequestLeaveMultiplayerMatch()
+{
+	EnsureLeaveConfirmWidget();
+	if (!LeaveConfirmWidget)
+	{
+		return;
+	}
+
+	if (LeaveConfirmWidget->GetVisibility() == ESlateVisibility::Visible)
+	{
+		CancelLeaveMultiplayerMatch();
+		return;
+	}
+
+	LeaveConfirmWidget->SetVisibility(ESlateVisibility::Visible);
+	bShowMouseCursor = true;
+	SetHoveredCard(nullptr);
+	SetIgnoreLookInput(true);
+	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(LeaveConfirmWidget->TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(InputMode);
+}
+
+void AShowDownPlayerController::ConfirmLeaveMultiplayerMatch()
+{
+	if (UShowDownEosSubsystem* EosSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownEosSubsystem>()
+		: nullptr)
+	{
+		if (LeaveConfirmWidget)
+		{
+			LeaveConfirmWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		bHandleShowDownGameplayInput = false;
+		SetHoveredCard(nullptr);
+		EosSubsystem->LeaveLobby(FName(TEXT("L_Hub")));
+	}
+}
+
+void AShowDownPlayerController::CancelLeaveMultiplayerMatch()
+{
+	if (LeaveConfirmWidget)
+	{
+		LeaveConfirmWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	RestoreMultiplayerGameplayInput();
 }
 
 void AShowDownPlayerController::SetFixedCameraMouseLook(
@@ -909,7 +1306,7 @@ void AShowDownPlayerController::SubmitPlayerBetAction(EShowDownBetAction Action,
 	{
 		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			GameMode->RequestPlayerBetAction(Action, TargetBet);
+			GameMode->RequestPlayerBetActionFromController(this, Action, TargetBet);
 		}
 		return;
 	}
@@ -944,11 +1341,21 @@ void AShowDownPlayerController::SubmitPlayerBetAction(EShowDownBetAction Action,
 void AShowDownPlayerController::ApplyPawnCameraInput(float YawInput, float PitchInput)
 {
 	const FRotator CurrentControlRotation = GetControlRotation();
-	const float CurrentPitch = FRotator::NormalizeAxis(CurrentControlRotation.Pitch);
-	const float CurrentYaw = FRotator::NormalizeAxis(CurrentControlRotation.Yaw);
+	if (!bHasPawnCameraBaseRotation)
+	{
+		PawnCameraBaseRotation = CurrentControlRotation;
+		bHasPawnCameraBaseRotation = true;
+	}
 
-	const float NewPitch = FMath::Clamp(CurrentPitch + PitchInput * LookSensitivity, MinPitch, MaxPitch);
-	const float NewYaw = FMath::Clamp(CurrentYaw + YawInput * LookSensitivity, MinYaw, MaxYaw);
+	const float CurrentPitch = FRotator::NormalizeAxis(CurrentControlRotation.Pitch);
+	const float CurrentYawOffset = FRotator::NormalizeAxis(CurrentControlRotation.Yaw - PawnCameraBaseRotation.Yaw);
+
+	const float NewPitch = FMath::Clamp(
+		CurrentPitch + PitchInput * LookSensitivity,
+		PawnCameraBaseRotation.Pitch + MinPitch,
+		PawnCameraBaseRotation.Pitch + MaxPitch);
+	const float NewYawOffset = FMath::Clamp(CurrentYawOffset + YawInput * LookSensitivity, MinYaw, MaxYaw);
+	const float NewYaw = PawnCameraBaseRotation.Yaw + NewYawOffset;
 
 	SetControlRotation(FRotator(NewPitch, NewYaw, 0.0f));
 }
@@ -1166,6 +1573,37 @@ void AShowDownPlayerController::EnsureChatWidget()
 	ChatWidget->SetVisibility(ESlateVisibility::Collapsed);
 }
 
+void AShowDownPlayerController::EnsureLeaveConfirmWidget()
+{
+	if (LeaveConfirmWidget)
+	{
+		return;
+	}
+
+	LeaveConfirmWidget = CreateWidget<UShowDownLeaveConfirmWidget>(this, UShowDownLeaveConfirmWidget::StaticClass());
+	if (!LeaveConfirmWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("멀티플레이 퇴장 확인창을 만들지 못했습니다."));
+		return;
+	}
+
+	LeaveConfirmWidget->SetOwningShowDownController(this);
+	LeaveConfirmWidget->AddToViewport(100);
+	LeaveConfirmWidget->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void AShowDownPlayerController::RestoreMultiplayerGameplayInput()
+{
+	bShowMouseCursor = false;
+	bEnableClickEvents = false;
+	bEnableMouseOverEvents = false;
+	SetIgnoreLookInput(false);
+
+	FInputModeGameOnly InputMode;
+	InputMode.SetConsumeCaptureMouseDown(false);
+	SetInputMode(InputMode);
+}
+
 void AShowDownPlayerController::ApplyChatInputMode(bool bOpen)
 {
 	if (bOpen && ChatWidget)
@@ -1264,6 +1702,28 @@ FString AShowDownPlayerController::GetChatSenderName() const
 	return SenderName.Left(32);
 }
 
+void AShowDownPlayerController::SubmitLocalMultiplayerDisplayName()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	const USupabaseSubsystem* SupabaseSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<USupabaseSubsystem>()
+		: nullptr;
+	if (!SupabaseSubsystem)
+	{
+		return;
+	}
+
+	const FString Nickname = SupabaseSubsystem->GetNickname().TrimStartAndEnd();
+	if (!Nickname.IsEmpty())
+	{
+		ServerSetMultiplayerDisplayName(Nickname);
+	}
+}
+
 AShowDownGameModeBase* AShowDownPlayerController::ResolveGameMode() const
 {
 	return GetWorld() ? GetWorld()->GetAuthGameMode<AShowDownGameModeBase>() : nullptr;
@@ -1275,7 +1735,7 @@ void AShowDownPlayerController::ServerSubmitSelectedCard_Implementation(ACard* S
 	{
 		if (AShowDownGameModeBase* GameMode = ResolveGameMode())
 		{
-			GameMode->PlayerSelectedCard(SelectedCard);
+			GameMode->PlayerSelectedCardFromController(this, SelectedCard);
 		}
 	}
 }
@@ -1310,4 +1770,104 @@ void AShowDownPlayerController::ServerPlayerRaiseTo_Implementation(int32 BulletC
 void AShowDownPlayerController::ServerPlayerFold_Implementation()
 {
 	SubmitPlayerBetAction(EShowDownBetAction::Fold, 0);
+}
+
+void AShowDownPlayerController::ServerSetMultiplayerDisplayName_Implementation(const FString& DisplayName)
+{
+	const FString SanitizedName = DisplayName.TrimStartAndEnd().Left(32);
+	if (SanitizedName.IsEmpty())
+	{
+		return;
+	}
+
+	if (APlayerState* CurrentPlayerState = PlayerState)
+	{
+		CurrentPlayerState->SetPlayerName(SanitizedName);
+		if (AShowDownGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AShowDownGameModeBase>() : nullptr)
+		{
+			GameMode->RefreshMultiplayerLobbyPlayers();
+		}
+	}
+}
+
+void AShowDownPlayerController::ClientShowStatusMessage_Implementation(const FString& Message)
+{
+	UE_LOG(LogTemp, Log, TEXT("ShowDown status: %s"), *Message);
+	if (MultiplayerRankWidget)
+	{
+		MultiplayerRankWidget->SetRestartStatus(Message);
+	}
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 4.0f, FColor::Green, Message);
+	}
+}
+
+void AShowDownPlayerController::ServerRequestMultiplayerRestart_Implementation()
+{
+	if (AShowDownGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AShowDownGameModeBase>() : nullptr)
+	{
+		GameMode->RequestMultiplayerRestartFromController(this);
+	}
+}
+
+void AShowDownPlayerController::ClientShowMultiplayerRank_Implementation(const TArray<FString>& PlayerNames)
+{
+	RemoveCenterCrosshairWidget();
+	if (ChatWidget)
+	{
+		ChatWidget->RemoveFromParent();
+		ChatWidget = nullptr;
+	}
+	if (LeaveConfirmWidget)
+	{
+		LeaveConfirmWidget->RemoveFromParent();
+		LeaveConfirmWidget = nullptr;
+	}
+
+	if (MultiplayerRankWidget)
+	{
+		MultiplayerRankWidget->RemoveFromParent();
+		MultiplayerRankWidget = nullptr;
+	}
+
+	if (!MultiplayerRankWidgetClass)
+	{
+		MultiplayerRankWidgetClass = UShowDownMultiRankWidget::StaticClass();
+	}
+
+	MultiplayerRankWidget = CreateWidget<UShowDownMultiRankWidget>(this, MultiplayerRankWidgetClass);
+	if (!MultiplayerRankWidget)
+	{
+		return;
+	}
+
+	MultiplayerRankWidget->OnRestartRequested.AddDynamic(this, &AShowDownPlayerController::HandleMultiRankRestartRequested);
+	MultiplayerRankWidget->OnMainMenuRequested.AddDynamic(this, &AShowDownPlayerController::HandleMultiRankMainMenuRequested);
+	MultiplayerRankWidget->SetRanking(PlayerNames);
+	MultiplayerRankWidget->AddToViewport(100);
+
+	FInputModeUIOnly InputMode;
+	InputMode.SetWidgetToFocus(MultiplayerRankWidget->TakeWidget());
+	SetInputMode(InputMode);
+	bShowMouseCursor = true;
+	bEnableClickEvents = true;
+	bEnableMouseOverEvents = true;
+	bHandleShowDownGameplayInput = false;
+	UpdateCenterCrosshairVisibility();
+}
+
+void AShowDownPlayerController::HandleMultiRankRestartRequested()
+{
+	if (MultiplayerRankWidget)
+	{
+		MultiplayerRankWidget->SetRestartStatus(TEXT("재시작 동의 완료. 다른 참가자를 기다리는 중..."));
+	}
+
+	ServerRequestMultiplayerRestart();
+}
+
+void AShowDownPlayerController::HandleMultiRankMainMenuRequested()
+{
+	ConfirmLeaveMultiplayerMatch();
 }
