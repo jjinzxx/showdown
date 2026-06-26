@@ -203,6 +203,42 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Flow")
 	bool bAutoStartOnBeginPlay = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera", meta = (ClampMin = "0.0"))
+	float GameplayCameraLookSensitivity = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera", meta = (ClampMin = "0.0"))
+	float GameplayFallbackCameraLookSensitivity = 0.08f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	float GameplayCameraMinPitch = -35.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	float GameplayCameraMaxPitch = 35.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	float GameplayCameraMinYawOffset = -45.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	float GameplayCameraMaxYawOffset = 45.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
+	bool bInvertGameplayCameraMouseY = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	bool bEnableGameplayCameraBreathingSway = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing", meta = (ClampMin = "0.0"))
+	float GameplayCameraBreathingSwaySpeed = 0.38f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	FRotator GameplayCameraBreathingSwayRotationAmplitude = FRotator(0.12f, 0.05f, 0.08f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing")
+	FVector GameplayCameraBreathingSwayLocationAmplitude = FVector(0.0f, 0.0f, 0.8f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera|Breathing", meta = (ClampMin = "0.0"))
+	float GameplayCameraBreathingSwayBlendInTime = 1.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Presentation")
 	bool bAutoAdvanceRevealWithoutPresentation = true;
 

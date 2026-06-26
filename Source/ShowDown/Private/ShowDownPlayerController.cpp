@@ -245,7 +245,20 @@ void AShowDownPlayerController::ClientEnterMultiplayerGameplay_Implementation()
 	ClientShowStatusMessage(TEXT("로딩 중... 멀티플레이 좌석과 카메라를 확인하는 중입니다."));
 }
 
-void AShowDownPlayerController::ClientUseMultiplayerSeatCamera_Implementation(int32 SeatIndex)
+void AShowDownPlayerController::ClientUseMultiplayerSeatCamera_Implementation(
+	int32 SeatIndex,
+	float SeatCameraLookSensitivity,
+	float FallbackSeatCameraLookSensitivity,
+	float MinPitchDegrees,
+	float MaxPitchDegrees,
+	float MinYawOffsetDegrees,
+	float MaxYawOffsetDegrees,
+	bool bInvertY,
+	bool bEnableBreathingSway,
+	float InBreathingSwaySpeed,
+	FRotator InBreathingSwayRotationAmplitude,
+	FVector InBreathingSwayLocationAmplitude,
+	float InBreathingSwayBlendInTime)
 {
 	const ASDPlayerState* ShowDownPlayerState = GetPlayerState<ASDPlayerState>();
 	UE_LOG(
@@ -260,6 +273,18 @@ void AShowDownPlayerController::ClientUseMultiplayerSeatCamera_Implementation(in
 	// loading. Keep the seat number and retry from PlayerTick once the target
 	// map's CameraActors actually exist locally.
 	PendingMultiplayerSeatIndex = SeatIndex;
+	PendingMultiplayerSeatCameraLookSensitivity = SeatCameraLookSensitivity;
+	PendingMultiplayerFallbackSeatCameraLookSensitivity = FallbackSeatCameraLookSensitivity;
+	PendingMultiplayerCameraMinPitch = MinPitchDegrees;
+	PendingMultiplayerCameraMaxPitch = MaxPitchDegrees;
+	PendingMultiplayerCameraMinYawOffset = MinYawOffsetDegrees;
+	PendingMultiplayerCameraMaxYawOffset = MaxYawOffsetDegrees;
+	bPendingMultiplayerCameraInvertMouseY = bInvertY;
+	bPendingMultiplayerCameraBreathingSway = bEnableBreathingSway;
+	PendingMultiplayerCameraBreathingSwaySpeed = InBreathingSwaySpeed;
+	PendingMultiplayerCameraBreathingSwayRotationAmplitude = InBreathingSwayRotationAmplitude;
+	PendingMultiplayerCameraBreathingSwayLocationAmplitude = InBreathingSwayLocationAmplitude;
+	PendingMultiplayerCameraBreathingSwayBlendInTime = InBreathingSwayBlendInTime;
 	bPendingMultiplayerSeatCamera = true;
 	bHandleShowDownGameplayInput = false;
 	bShowCenterCrosshair = false;
@@ -341,7 +366,20 @@ bool AShowDownPlayerController::TryApplyPendingMultiplayerSeatCamera()
 		}
 
 		SetViewTarget(SeatCamera);
-		SetFixedCameraMouseLook(SeatCamera, 0.08f, -35.0f, 35.0f, -45.0f, 45.0f, true);
+		SetFixedCameraMouseLook(
+			SeatCamera,
+			PendingMultiplayerSeatCameraLookSensitivity,
+			PendingMultiplayerCameraMinPitch,
+			PendingMultiplayerCameraMaxPitch,
+			PendingMultiplayerCameraMinYawOffset,
+			PendingMultiplayerCameraMaxYawOffset,
+			bPendingMultiplayerCameraInvertMouseY);
+		SetFixedCameraBreathingSway(
+			bPendingMultiplayerCameraBreathingSway,
+			PendingMultiplayerCameraBreathingSwaySpeed,
+			PendingMultiplayerCameraBreathingSwayRotationAmplitude,
+			PendingMultiplayerCameraBreathingSwayLocationAmplitude,
+			PendingMultiplayerCameraBreathingSwayBlendInTime);
 		EnsureChatWidget();
 		bPendingMultiplayerSeatCamera = false;
 		bHandleShowDownGameplayInput = true;
@@ -404,7 +442,20 @@ bool AShowDownPlayerController::UseFallbackMultiplayerSeatCamera(int32 SeatIndex
 	}
 
 	SetViewTarget(LocalFallbackSeatCamera);
-	SetFixedCameraMouseLook(LocalFallbackSeatCamera, 0.12f, -30.0f, 25.0f, -55.0f, 55.0f, true);
+	SetFixedCameraMouseLook(
+		LocalFallbackSeatCamera,
+		PendingMultiplayerFallbackSeatCameraLookSensitivity,
+		PendingMultiplayerCameraMinPitch,
+		PendingMultiplayerCameraMaxPitch,
+		PendingMultiplayerCameraMinYawOffset,
+		PendingMultiplayerCameraMaxYawOffset,
+		bPendingMultiplayerCameraInvertMouseY);
+	SetFixedCameraBreathingSway(
+		bPendingMultiplayerCameraBreathingSway,
+		PendingMultiplayerCameraBreathingSwaySpeed,
+		PendingMultiplayerCameraBreathingSwayRotationAmplitude,
+		PendingMultiplayerCameraBreathingSwayLocationAmplitude,
+		PendingMultiplayerCameraBreathingSwayBlendInTime);
 	EnsureChatWidget();
 	bPendingMultiplayerSeatCamera = false;
 	bHandleShowDownGameplayInput = true;
@@ -419,6 +470,11 @@ bool AShowDownPlayerController::UseFallbackMultiplayerSeatCamera(int32 SeatIndex
 void AShowDownPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
+
+	if (bPendingMultiplayerSeatCamera)
+	{
+		TryApplyPendingMultiplayerSeatCamera();
+	}
 
 	const bool bHasFixedCameraLook = FixedCameraMouseLookTarget != nullptr;
 	if (bHasFixedCameraLook)

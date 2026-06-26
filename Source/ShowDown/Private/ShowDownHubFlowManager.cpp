@@ -361,20 +361,50 @@ void AShowDownHubFlowManager::ShowSinglePlayPreviewInternal(bool bAllowOnlineRew
 		{
 			if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
 			{
+				float LookSensitivity = GameCameraLookSensitivity;
+				float MinPitch = GameCameraMinPitch;
+				float MaxPitch = GameCameraMaxPitch;
+				float MinYawOffset = GameCameraMinYawOffset;
+				float MaxYawOffset = GameCameraMaxYawOffset;
+				bool bInvertMouseY = bInvertGameCameraMouseY;
+				bool bEnableBreathingSway = bEnableGameCameraBreathingSway;
+				float BreathingSwaySpeed = GameCameraBreathingSwaySpeed;
+				FRotator BreathingSwayRotationAmplitude = GameCameraBreathingSwayRotationAmplitude;
+				FVector BreathingSwayLocationAmplitude = GameCameraBreathingSwayLocationAmplitude;
+				float BreathingSwayBlendInTime = GameCameraBreathingSwayBlendInTime;
+
+				if (UWorld* World = GetWorld())
+				{
+					if (const AShowDownGameModeBase* GameMode = World->GetAuthGameMode<AShowDownGameModeBase>())
+					{
+						LookSensitivity = GameMode->GameplayCameraLookSensitivity;
+						MinPitch = GameMode->GameplayCameraMinPitch;
+						MaxPitch = GameMode->GameplayCameraMaxPitch;
+						MinYawOffset = GameMode->GameplayCameraMinYawOffset;
+						MaxYawOffset = GameMode->GameplayCameraMaxYawOffset;
+						bInvertMouseY = GameMode->bInvertGameplayCameraMouseY;
+						bEnableBreathingSway = GameMode->bEnableGameplayCameraBreathingSway;
+						BreathingSwaySpeed = GameMode->GameplayCameraBreathingSwaySpeed;
+						BreathingSwayRotationAmplitude = GameMode->GameplayCameraBreathingSwayRotationAmplitude;
+						BreathingSwayLocationAmplitude = GameMode->GameplayCameraBreathingSwayLocationAmplitude;
+						BreathingSwayBlendInTime = GameMode->GameplayCameraBreathingSwayBlendInTime;
+					}
+				}
+
 				ShowDownController->SetFixedCameraMouseLook(
 					GameCamera,
-					GameCameraLookSensitivity,
-					GameCameraMinPitch,
-					GameCameraMaxPitch,
-					GameCameraMinYawOffset,
-					GameCameraMaxYawOffset,
-					bInvertGameCameraMouseY);
+					LookSensitivity,
+					MinPitch,
+					MaxPitch,
+					MinYawOffset,
+					MaxYawOffset,
+					bInvertMouseY);
 				ShowDownController->SetFixedCameraBreathingSway(
-					bEnableGameCameraBreathingSway,
-					GameCameraBreathingSwaySpeed,
-					GameCameraBreathingSwayRotationAmplitude,
-					GameCameraBreathingSwayLocationAmplitude,
-					GameCameraBreathingSwayBlendInTime);
+					bEnableBreathingSway,
+					BreathingSwaySpeed,
+					BreathingSwayRotationAmplitude,
+					BreathingSwayLocationAmplitude,
+					BreathingSwayBlendInTime);
 			}
 
 		}

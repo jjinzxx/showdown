@@ -264,7 +264,20 @@ public:
 
 	// Selects one of the level-placed multiplayer seat cameras by its zero-based index.
 	UFUNCTION(Client, Reliable)
-	void ClientUseMultiplayerSeatCamera(int32 SeatIndex);
+	void ClientUseMultiplayerSeatCamera(
+		int32 SeatIndex,
+		float SeatCameraLookSensitivity,
+		float FallbackSeatCameraLookSensitivity,
+		float MinPitchDegrees,
+		float MaxPitchDegrees,
+		float MinYawOffsetDegrees,
+		float MaxYawOffsetDegrees,
+		bool bInvertY,
+		bool bEnableBreathingSway,
+		float InBreathingSwaySpeed,
+		FRotator InBreathingSwayRotationAmplitude,
+		FVector InBreathingSwayLocationAmplitude,
+		float InBreathingSwayBlendInTime);
 
 	UFUNCTION(Client, Reliable)
 	void ClientLeaveMultiplayerRoomToHub();
@@ -356,6 +369,18 @@ private:
 	bool bChatOpen = false;
 	bool bPendingMultiplayerSeatCamera = false;
 	int32 PendingMultiplayerSeatIndex = INDEX_NONE;
+	float PendingMultiplayerSeatCameraLookSensitivity = 0.08f;
+	float PendingMultiplayerFallbackSeatCameraLookSensitivity = 0.08f;
+	float PendingMultiplayerCameraMinPitch = -35.0f;
+	float PendingMultiplayerCameraMaxPitch = 35.0f;
+	float PendingMultiplayerCameraMinYawOffset = -45.0f;
+	float PendingMultiplayerCameraMaxYawOffset = 45.0f;
+	bool bPendingMultiplayerCameraInvertMouseY = true;
+	bool bPendingMultiplayerCameraBreathingSway = true;
+	float PendingMultiplayerCameraBreathingSwaySpeed = 0.38f;
+	FRotator PendingMultiplayerCameraBreathingSwayRotationAmplitude = FRotator(0.12f, 0.05f, 0.08f);
+	FVector PendingMultiplayerCameraBreathingSwayLocationAmplitude = FVector(0.0f, 0.0f, 0.8f);
+	float PendingMultiplayerCameraBreathingSwayBlendInTime = 1.0f;
 	FRotator PawnCameraBaseRotation = FRotator::ZeroRotator;
 	bool bHasPawnCameraBaseRotation = false;
 	FRotator FixedCameraBaseRotation = FRotator::ZeroRotator;

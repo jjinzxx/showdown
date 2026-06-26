@@ -2219,7 +2219,20 @@ void AShowDownGameModeBase::EnsureMultiplayerPawns()
 			PlayerController->SetControlRotation(GameplayViewRotation);
 			if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
 			{
-				ShowDownController->ClientUseMultiplayerSeatCamera(SeatIndex);
+				ShowDownController->ClientUseMultiplayerSeatCamera(
+					SeatIndex,
+					GameplayCameraLookSensitivity,
+					GameplayFallbackCameraLookSensitivity,
+					GameplayCameraMinPitch,
+					GameplayCameraMaxPitch,
+					GameplayCameraMinYawOffset,
+					GameplayCameraMaxYawOffset,
+					bInvertGameplayCameraMouseY,
+					bEnableGameplayCameraBreathingSway,
+					GameplayCameraBreathingSwaySpeed,
+					GameplayCameraBreathingSwayRotationAmplitude,
+					GameplayCameraBreathingSwayLocationAmplitude,
+					GameplayCameraBreathingSwayBlendInTime);
 			}
 			continue;
 		}
@@ -2244,7 +2257,20 @@ void AShowDownGameModeBase::EnsureMultiplayerPawns()
 			PlayerController->SetControlRotation(GameplayViewRotation);
 			if (AShowDownPlayerController* ShowDownController = Cast<AShowDownPlayerController>(PlayerController))
 			{
-				ShowDownController->ClientUseMultiplayerSeatCamera(SeatIndex);
+				ShowDownController->ClientUseMultiplayerSeatCamera(
+					SeatIndex,
+					GameplayCameraLookSensitivity,
+					GameplayFallbackCameraLookSensitivity,
+					GameplayCameraMinPitch,
+					GameplayCameraMaxPitch,
+					GameplayCameraMinYawOffset,
+					GameplayCameraMaxYawOffset,
+					bInvertGameplayCameraMouseY,
+					bEnableGameplayCameraBreathingSway,
+					GameplayCameraBreathingSwaySpeed,
+					GameplayCameraBreathingSwayRotationAmplitude,
+					GameplayCameraBreathingSwayLocationAmplitude,
+					GameplayCameraBreathingSwayBlendInTime);
 			}
 			UE_LOG(LogTemp, Log, TEXT("멀티플레이 Pawn 생성: %s / 플레이어: %s"), *SpawnedPawn->GetName(), *Player->GetPlayerName());
 		}
