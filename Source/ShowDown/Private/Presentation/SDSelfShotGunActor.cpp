@@ -305,6 +305,104 @@ void ASDSelfShotGunActor::Tick(float DeltaSeconds)
 
 void ASDSelfShotGunActor::UseGun()
 {
+	ForcedShotTargetActor = nullptr;
+	ForcedShotCamera = nullptr;
+	bHasForcedShotSourceLocation = false;
+	bHasForcedShotAimLocation = false;
+	bCurrentShotTargetsLocalPlayer = true;
+	StartGunUse();
+}
+
+void ASDSelfShotGunActor::UseGunWithForcedResult(bool bLiveRound)
+{
+	ShotResultMode = bLiveRound
+		? ESDSelfShotRoundMode::AlwaysLive
+		: ESDSelfShotRoundMode::AlwaysEmpty;
+	ForcedShotTargetActor = nullptr;
+	ForcedShotCamera = nullptr;
+	bHasForcedShotSourceLocation = false;
+	bHasForcedShotAimLocation = false;
+	bCurrentShotTargetsLocalPlayer = true;
+	StartGunUse();
+}
+
+void ASDSelfShotGunActor::UseGunWithForcedResultAtTarget(bool bLiveRound, AActor* TargetActor)
+{
+	ShotResultMode = bLiveRound
+		? ESDSelfShotRoundMode::AlwaysLive
+		: ESDSelfShotRoundMode::AlwaysEmpty;
+	ForcedShotTargetActor = TargetActor;
+	ForcedShotCamera = nullptr;
+	bHasForcedShotSourceLocation = false;
+	bHasForcedShotAimLocation = false;
+	bCurrentShotTargetsLocalPlayer = !IsValid(TargetActor);
+	StartGunUse();
+}
+
+void ASDSelfShotGunActor::UseGunWithForcedResultAtTargetFromLocation(bool bLiveRound, AActor* TargetActor, FVector SourceLocation)
+{
+	ShotResultMode = bLiveRound
+		? ESDSelfShotRoundMode::AlwaysLive
+		: ESDSelfShotRoundMode::AlwaysEmpty;
+	ForcedShotTargetActor = TargetActor;
+	ForcedShotSourceLocation = SourceLocation;
+	ForcedShotCamera = nullptr;
+	bHasForcedShotSourceLocation = true;
+	bHasForcedShotAimLocation = false;
+	bCurrentShotTargetsLocalPlayer = !IsValid(TargetActor);
+	StartGunUse();
+}
+
+void ASDSelfShotGunActor::UseGunWithForcedResultAtTargetFromLocationAndCamera(
+	bool bLiveRound,
+	AActor* TargetActor,
+	FVector SourceLocation,
+	ACameraActor* ShotCamera)
+{
+	ShotResultMode = bLiveRound
+		? ESDSelfShotRoundMode::AlwaysLive
+		: ESDSelfShotRoundMode::AlwaysEmpty;
+	ForcedShotTargetActor = TargetActor;
+	ForcedShotSourceLocation = SourceLocation;
+	ForcedShotCamera = ShotCamera;
+	bHasForcedShotSourceLocation = true;
+	bHasForcedShotAimLocation = false;
+	bCurrentShotTargetsLocalPlayer = !IsValid(TargetActor);
+	StartGunUse();
+}
+
+void ASDSelfShotGunActor::UseGunWithForcedResultAtTargetFromLocationAimAndCamera(
+	bool bLiveRound,
+	AActor* TargetActor,
+	FVector SourceLocation,
+	FVector AimLocation,
+	ACameraActor* ShotCamera)
+{
+	ShotResultMode = bLiveRound
+		? ESDSelfShotRoundMode::AlwaysLive
+		: ESDSelfShotRoundMode::AlwaysEmpty;
+	ForcedShotTargetActor = TargetActor;
+	ForcedShotSourceLocation = SourceLocation;
+	ForcedShotAimLocation = AimLocation;
+	ForcedShotCamera = ShotCamera;
+	bHasForcedShotSourceLocation = true;
+	bHasForcedShotAimLocation = true;
+	bCurrentShotTargetsLocalPlayer = !IsValid(TargetActor);
+	StartGunUse();
+}
+
+ACameraActor* ASDSelfShotGunActor::GetEnemyShotCinematicCamera() const
+{
+	return EnemyShotCinematicCamera;
+}
+
+float ASDSelfShotGunActor::GetTargetShotSourcePullDistance() const
+{
+	return TargetShotSourcePullDistance;
+}
+
+void ASDSelfShotGunActor::StartGunUse()
+{
 	if (!CanInteract_Implementation(nullptr))
 	{
 		return;
@@ -318,6 +416,7 @@ void ASDSelfShotGunActor::UseGun()
 	CaptureFirstPersonPoseCamera();
 	StartSelfShotCinematicCamera();
 	AnimState = EGunAnimState::Raising;
+	bPresentationFinishPending = true;
 
 	if (bDisableCollisionWhileUsing)
 	{
@@ -380,7 +479,7 @@ void ASDSelfShotGunActor::FireLiveRound()
 
 	PlayConfiguredSound(GunshotSound, bPlayGunshotSound2D, GetActorLocation());
 
-	if (bEnableHitSequence)
+	if (bEnableHitSequence && bCurrentShotTargetsLocalPlayer)
 	{
 		StartHitSequence();
 	}
@@ -396,7 +495,7 @@ void ASDSelfShotGunActor::FireEmptyRound()
 	PlayConfiguredSound(EmptyShotSound, bPlayEmptyShotSound2D, HammerPivot->GetComponentLocation());
 	if (bEnableEmptyShotShake)
 	{
-		if (bSelfShotCinematicCameraActive && SelfShotCinematicCamera)
+		if (bSelfShotCinematicCameraActive && ActiveSelfShotCinematicCamera)
 		{
 			PlayCinematicCameraSteppedShake(
 				EmptyShotShakeHoldTime,
@@ -435,6 +534,7 @@ void ASDSelfShotGunActor::FinishSequence()
 	bHasCachedFirstPersonPoseCamera = false;
 	AnimState = EGunAnimState::Idle;
 	OnGunSequenceFinished.Broadcast();
+	BroadcastPresentationFinishedIfIdle();
 }
 
 void ASDSelfShotGunActor::StartMechanismAnimation()
@@ -567,6 +667,9 @@ void ASDSelfShotGunActor::StartSelfShotCinematicCamera()
 	CinematicCameraStartElapsedTime = 0.0f;
 	CinematicCameraElapsedTime = 0.0f;
 	PreviousViewTarget = nullptr;
+	ActiveSelfShotCinematicCamera = ForcedShotCamera.IsValid()
+		? ForcedShotCamera.Get()
+		: (bCurrentShotTargetsLocalPlayer ? SelfShotCinematicCamera.Get() : nullptr);
 
 	if (!bUseSelfShotCinematicCamera)
 	{
@@ -574,7 +677,7 @@ void ASDSelfShotGunActor::StartSelfShotCinematicCamera()
 	}
 
 	APlayerController* PlayerController = UGameplayStatics::GetPlayerController(this, 0);
-	if (PlayerController && SelfShotCinematicCamera)
+	if (PlayerController && ActiveSelfShotCinematicCamera)
 	{
 		bSelfShotCinematicCameraStartPending = true;
 		if (CinematicCameraStartDelay <= KINDA_SMALL_NUMBER)
@@ -592,7 +695,7 @@ void ASDSelfShotGunActor::ActivateSelfShotCinematicCamera()
 	}
 
 	APlayerController* PlayerController = UGameplayStatics::GetPlayerController(this, 0);
-	if (PlayerController && SelfShotCinematicCamera)
+	if (PlayerController && ActiveSelfShotCinematicCamera)
 	{
 		if (!bHasCachedFirstPersonPoseCamera)
 		{
@@ -600,7 +703,7 @@ void ASDSelfShotGunActor::ActivateSelfShotCinematicCamera()
 		}
 		PreviousViewTarget = PlayerController->GetViewTarget();
 		PlayerController->SetViewTargetWithBlend(
-			SelfShotCinematicCamera,
+			ActiveSelfShotCinematicCamera,
 			CinematicCameraBlendInTime,
 			VTBlend_EaseInOut,
 			CinematicCameraBlendExponent);
@@ -654,6 +757,8 @@ void ASDSelfShotGunActor::UpdateSelfShotCinematicCamera(float DeltaSeconds)
 	bSelfShotCinematicCameraActive = false;
 	bSelfShotCinematicCameraStartPending = false;
 	bSelfShotCinematicCameraHoldStarted = false;
+	ActiveSelfShotCinematicCamera = nullptr;
+	BroadcastPresentationFinishedIfIdle();
 }
 
 void ASDSelfShotGunActor::CaptureFirstPersonPoseCamera()
@@ -703,12 +808,12 @@ void ASDSelfShotGunActor::PlayCinematicCameraSteppedShake(
 	FVector LocationAmplitude,
 	float StepInterval)
 {
-	if (!bSelfShotCinematicCameraActive || !SelfShotCinematicCamera)
+	if (!bSelfShotCinematicCameraActive || !ActiveSelfShotCinematicCamera)
 	{
 		return;
 	}
 
-	CinematicCameraShakeBaseTransform = SelfShotCinematicCamera->GetActorTransform();
+	CinematicCameraShakeBaseTransform = ActiveSelfShotCinematicCamera->GetActorTransform();
 	CinematicCameraShakeElapsedTime = 0.0f;
 	CinematicCameraShakeHoldDuration = FMath::Max(0.0f, HoldDuration);
 	CinematicCameraShakeBlendOutTime = FMath::Max(0.0f, BlendOutTime);
@@ -726,7 +831,7 @@ void ASDSelfShotGunActor::UpdateCinematicCameraSteppedShake(float DeltaSeconds)
 		return;
 	}
 
-	if (!SelfShotCinematicCamera)
+	if (!ActiveSelfShotCinematicCamera)
 	{
 		bCinematicCameraShakeActive = false;
 		return;
@@ -736,7 +841,7 @@ void ASDSelfShotGunActor::UpdateCinematicCameraSteppedShake(float DeltaSeconds)
 	CinematicCameraShakeElapsedTime += DeltaSeconds;
 	if (TotalTime <= KINDA_SMALL_NUMBER || CinematicCameraShakeElapsedTime >= TotalTime)
 	{
-		SelfShotCinematicCamera->SetActorTransform(CinematicCameraShakeBaseTransform);
+		ActiveSelfShotCinematicCamera->SetActorTransform(CinematicCameraShakeBaseTransform);
 		bCinematicCameraShakeActive = false;
 		return;
 	}
@@ -760,7 +865,7 @@ void ASDSelfShotGunActor::UpdateCinematicCameraSteppedShake(float DeltaSeconds)
 		BaseMatrix.GetScaledAxis(EAxis::Y) * FMath::PerlinNoise1D(Step * 2.29f + CinematicCameraShakeSeed + 151.0f) * CinematicCameraShakeLocationAmplitude.Y +
 		BaseMatrix.GetScaledAxis(EAxis::Z) * FMath::PerlinNoise1D(Step * 2.83f + CinematicCameraShakeSeed + 211.0f) * CinematicCameraShakeLocationAmplitude.Z;
 
-	SelfShotCinematicCamera->SetActorTransform(FTransform(
+	ActiveSelfShotCinematicCamera->SetActorTransform(FTransform(
 		CinematicCameraShakeBaseTransform.Rotator() + RotationOffset * Strength,
 		CinematicCameraShakeBaseTransform.GetLocation() + LocationOffset * Strength,
 		CinematicCameraShakeBaseTransform.GetScale3D()));
@@ -780,7 +885,7 @@ void ASDSelfShotGunActor::StartHitSequence()
 		Controller->ApplyArtTone(InitialHitEffectSettings);
 	}
 
-	if (bSelfShotCinematicCameraActive && SelfShotCinematicCamera)
+	if (bSelfShotCinematicCameraActive && ActiveSelfShotCinematicCamera)
 	{
 		PlayCinematicCameraSteppedShake(
 			InitialHitEffectDuration,
@@ -882,7 +987,7 @@ void ASDSelfShotGunActor::EnterHitSequenceRecovery()
 
 	SetBlackoutInstant(0.0f, false);
 	StartTinnitusSound();
-	if (bSelfShotCinematicCameraActive && SelfShotCinematicCamera)
+	if (bSelfShotCinematicCameraActive && ActiveSelfShotCinematicCamera)
 	{
 		PlayCinematicCameraSteppedShake(
 			RecoveryHitShakeHoldTime,
@@ -917,6 +1022,26 @@ void ASDSelfShotGunActor::FinishHitSequence()
 	SetBlackoutInstant(0.0f, false);
 	HitSequenceState = EHitSequenceState::Idle;
 	HitSequenceElapsedTime = 0.0f;
+	BroadcastPresentationFinishedIfIdle();
+}
+
+void ASDSelfShotGunActor::BroadcastPresentationFinishedIfIdle()
+{
+	if (!bPresentationFinishPending)
+	{
+		return;
+	}
+
+	if (AnimState != EGunAnimState::Idle
+		|| HitSequenceState != EHitSequenceState::Idle
+		|| bSelfShotCinematicCameraActive
+		|| bSelfShotCinematicCameraStartPending)
+	{
+		return;
+	}
+
+	bPresentationFinishPending = false;
+	OnGunPresentationFinished.Broadcast();
 }
 
 void ASDSelfShotGunActor::StartTinnitusSound()
@@ -1127,10 +1252,23 @@ FTransform ASDSelfShotGunActor::GetFirstPersonGunTransform() const
 	if (bHasCachedFirstPersonPoseCamera)
 	{
 		const FRotationMatrix CameraMatrix(CachedFirstPersonCameraRotation);
-		const FVector TargetLocation = CachedFirstPersonCameraLocation
-			+ CameraMatrix.GetScaledAxis(EAxis::X) * FirstPersonCameraOffset.X
-			+ CameraMatrix.GetScaledAxis(EAxis::Y) * FirstPersonCameraOffset.Y
-			+ CameraMatrix.GetScaledAxis(EAxis::Z) * FirstPersonCameraOffset.Z;
+		const FVector TargetLocation = bHasForcedShotSourceLocation
+			? ForcedShotSourceLocation
+			: CachedFirstPersonCameraLocation
+				+ CameraMatrix.GetScaledAxis(EAxis::X) * FirstPersonCameraOffset.X
+				+ CameraMatrix.GetScaledAxis(EAxis::Y) * FirstPersonCameraOffset.Y
+				+ CameraMatrix.GetScaledAxis(EAxis::Z) * FirstPersonCameraOffset.Z;
+
+		if (AActor* ForcedTarget = ForcedShotTargetActor.Get())
+		{
+			const FVector AimLocation = bHasForcedShotAimLocation
+				? ForcedShotAimLocation
+				: ForcedTarget->GetActorLocation() + TargetShotAimOffset;
+			return FTransform(
+				(AimLocation - TargetLocation).Rotation() + TargetShotRotationOffset,
+				TargetLocation,
+				RestActorTransform.GetScale3D());
+		}
 
 		return FTransform(
 			CachedFirstPersonCameraRotation + FirstPersonRotationOffset,
@@ -1145,10 +1283,23 @@ FTransform ASDSelfShotGunActor::GetFirstPersonGunTransform() const
 			const FRotator CameraRotation = CameraManager->GetCameraRotation();
 			const FRotationMatrix CameraMatrix(CameraRotation);
 			const FVector CameraLocation = CameraManager->GetCameraLocation();
-			const FVector TargetLocation = CameraLocation
-				+ CameraMatrix.GetScaledAxis(EAxis::X) * FirstPersonCameraOffset.X
-				+ CameraMatrix.GetScaledAxis(EAxis::Y) * FirstPersonCameraOffset.Y
-				+ CameraMatrix.GetScaledAxis(EAxis::Z) * FirstPersonCameraOffset.Z;
+			const FVector TargetLocation = bHasForcedShotSourceLocation
+				? ForcedShotSourceLocation
+				: CameraLocation
+					+ CameraMatrix.GetScaledAxis(EAxis::X) * FirstPersonCameraOffset.X
+					+ CameraMatrix.GetScaledAxis(EAxis::Y) * FirstPersonCameraOffset.Y
+					+ CameraMatrix.GetScaledAxis(EAxis::Z) * FirstPersonCameraOffset.Z;
+
+			if (AActor* ForcedTarget = ForcedShotTargetActor.Get())
+			{
+				const FVector AimLocation = bHasForcedShotAimLocation
+					? ForcedShotAimLocation
+					: ForcedTarget->GetActorLocation() + TargetShotAimOffset;
+				return FTransform(
+					(AimLocation - TargetLocation).Rotation() + TargetShotRotationOffset,
+					TargetLocation,
+					RestActorTransform.GetScale3D());
+			}
 
 			return FTransform(CameraRotation + FirstPersonRotationOffset, TargetLocation, RestActorTransform.GetScale3D());
 		}

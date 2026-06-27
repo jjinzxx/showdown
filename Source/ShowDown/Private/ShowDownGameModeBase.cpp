@@ -19,6 +19,7 @@
 #include "Components/SceneComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "PlayerPawn.h"
+#include "Presentation/SDSelfShotGunActor.h"
 #include "SDPlayerSeat.h"
 #include "SDPlayerState.h"
 #include "ShowDownEosSubsystem.h"
@@ -75,6 +76,11 @@ namespace
 		case EShowDownPlayerSlot::None:
 		default: return INDEX_NONE;
 		}
+	}
+
+	FRotator GetHiddenForeheadCardRotationOffset()
+	{
+		return FRotator(0.0f, 180.0f, 0.0f);
 	}
 }
 
@@ -298,14 +304,26 @@ void AShowDownGameModeBase::ResetForHubReturn()
 	GetWorldTimerManager().ClearTimer(CardPlacementDelayHandle);
 	GetWorldTimerManager().ClearTimer(RevealDelayHandle);
 	GetWorldTimerManager().ClearTimer(CollectorActionPresentationTimerHandle);
+	if (ActiveSelfShotGunActor)
+	{
+		ActiveSelfShotGunActor->OnGunPresentationFinished.RemoveDynamic(
+			this,
+			&AShowDownGameModeBase::HandleSelfShotGunPresentationFinished);
+	}
 
 	bBettingPhase = false;
 	bHasPendingRoundReveal = false;
 	bHasPendingFoldReveal = false;
 	bCollectorActionPresentationInProgress = false;
+	bSelfShotGunPresentationInProgress = false;
+	bPlayerHasActedInBetting = false;
+	bCollectorHasActedInBetting = false;
+	bCollectorBetDecisionInProgress = false;
 	CardPlacementDelayContinuation = TFunction<void()>();
 	CollectorActionPresentationContinuation = TFunction<void()>();
+	SelfShotGunPresentationContinuation = TFunction<void()>();
 	QueuedCollectorActionPresentationContinuations.Reset();
+	ActiveSelfShotGunActor = nullptr;
 
 	ClearForeheadCards();
 	ClearHandCards();
@@ -326,7 +344,7 @@ void AShowDownGameModeBase::PlayerSelectedCardFromController(AController* Submit
 		return;
 	}
 
-	if (bCollectorActionPresentationInProgress)
+	if (bCollectorActionPresentationInProgress || bCollectorBetDecisionInProgress)
 	{
 		return;
 	}
@@ -527,7 +545,7 @@ void AShowDownGameModeBase::FinishCardPlacementWait()
 
 void AShowDownGameModeBase::PlayCollectorActionPresentationThen(TFunction<void()>&& Continuation)
 {
-	if (bCollectorActionPresentationInProgress)
+	if (bCollectorActionPresentationInProgress || bCollectorBetDecisionInProgress)
 	{
 		QueuedCollectorActionPresentationContinuations.Add(MoveTemp(Continuation));
 		return;
@@ -588,6 +606,143 @@ void AShowDownGameModeBase::FinishCollectorActionPresentation()
 	}
 }
 
+void AShowDownGameModeBase::PlaySelfShotGunPresentationThen(
+	EShowDownSide TargetSide,
+	bool bLiveRound,
+	TFunction<void()>&& Continuation)
+{
+	if (GetNetMode() != NM_Standalone)
+	{
+		PlayCollectorActionPresentationThen(MoveTemp(Continuation));
+		return;
+	}
+
+	if (bSelfShotGunPresentationInProgress)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Self shot gun presentation is already running. Falling back to collector presentation."));
+		PlayCollectorActionPresentationThen(MoveTemp(Continuation));
+		return;
+	}
+
+	ASDSelfShotGunActor* GunActor = FindSelfShotGunActor();
+	if (!GunActor || !GunActor->CanInteract_Implementation(nullptr))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Self shot gun actor is missing or busy. Falling back to collector presentation."));
+		PlayCollectorActionPresentationThen(MoveTemp(Continuation));
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Playing self shot gun presentation. Target=%s Result=%s"),
+		TargetSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
+		bLiveRound ? TEXT("Live") : TEXT("Empty"));
+
+	bSelfShotGunPresentationInProgress = true;
+	ActiveSelfShotGunActor = GunActor;
+	SelfShotGunPresentationContinuation = MoveTemp(Continuation);
+	GunActor->OnGunPresentationFinished.AddUniqueDynamic(
+		this,
+		&AShowDownGameModeBase::HandleSelfShotGunPresentationFinished);
+	AActor* ShotTargetActor = nullptr;
+	ACameraActor* EnemyShotCamera = nullptr;
+	bool bHasShotSourceLocation = false;
+	bool bHasShotAimLocation = false;
+	FVector ShotSourceLocation = FVector::ZeroVector;
+	FVector ShotAimLocation = FVector::ZeroVector;
+	if (TargetSide == EShowDownSide::Collector)
+	{
+		ShotTargetActor = Collector
+			? Collector
+			: UGameplayStatics::GetActorOfClass(this, ACollector::StaticClass());
+		EnemyShotCamera = GunActor->GetEnemyShotCinematicCamera();
+
+		USceneComponent* CollectorHeadSlot = GetHeadSlotForSide(EShowDownSide::Collector);
+		if (IsValid(CollectorState.ForeheadCard))
+		{
+			ShotSourceLocation = CollectorState.ForeheadCard->GetActorLocation();
+			bHasShotSourceLocation = true;
+		}
+		else if (CollectorHeadSlot)
+		{
+			ShotSourceLocation = CollectorHeadSlot->GetComponentLocation();
+			bHasShotSourceLocation = true;
+		}
+
+		if (bHasShotSourceLocation)
+		{
+			ShotAimLocation = ShotSourceLocation;
+			bHasShotAimLocation = true;
+
+			FVector SourcePullDirection = FVector::ZeroVector;
+			if (EnemyShotCamera)
+			{
+				SourcePullDirection = (ShotSourceLocation - EnemyShotCamera->GetActorLocation()).GetSafeNormal();
+			}
+			if (SourcePullDirection.IsNearlyZero() && CollectorHeadSlot)
+			{
+				SourcePullDirection = CollectorHeadSlot->GetForwardVector().GetSafeNormal();
+			}
+			if (SourcePullDirection.IsNearlyZero())
+			{
+				SourcePullDirection = FVector::ForwardVector;
+			}
+
+			ShotSourceLocation -= SourcePullDirection * GunActor->GetTargetShotSourcePullDistance();
+		}
+	}
+
+	if (bHasShotSourceLocation && bHasShotAimLocation)
+	{
+		GunActor->UseGunWithForcedResultAtTargetFromLocationAimAndCamera(
+			bLiveRound,
+			ShotTargetActor,
+			ShotSourceLocation,
+			ShotAimLocation,
+			EnemyShotCamera);
+	}
+	else if (bHasShotSourceLocation)
+	{
+		GunActor->UseGunWithForcedResultAtTargetFromLocationAndCamera(
+			bLiveRound,
+			ShotTargetActor,
+			ShotSourceLocation,
+			EnemyShotCamera);
+	}
+	else
+	{
+		GunActor->UseGunWithForcedResultAtTarget(bLiveRound, ShotTargetActor);
+	}
+}
+
+void AShowDownGameModeBase::HandleSelfShotGunPresentationFinished()
+{
+	FinishSelfShotGunPresentation();
+}
+
+void AShowDownGameModeBase::FinishSelfShotGunPresentation()
+{
+	if (ActiveSelfShotGunActor)
+	{
+		ActiveSelfShotGunActor->OnGunPresentationFinished.RemoveDynamic(
+			this,
+			&AShowDownGameModeBase::HandleSelfShotGunPresentationFinished);
+	}
+
+	bSelfShotGunPresentationInProgress = false;
+	ActiveSelfShotGunActor = nullptr;
+
+	TFunction<void()> Continuation = MoveTemp(SelfShotGunPresentationContinuation);
+	SelfShotGunPresentationContinuation = TFunction<void()>();
+	if (Continuation)
+	{
+		Continuation();
+	}
+}
+
+ASDSelfShotGunActor* AShowDownGameModeBase::FindSelfShotGunActor() const
+{
+	return Cast<ASDSelfShotGunActor>(UGameplayStatics::GetActorOfClass(this, ASDSelfShotGunActor::StaticClass()));
+}
+
 void AShowDownGameModeBase::CollectorGiveCardToPlayer()
 {
 	if (!CardSystem){
@@ -631,7 +786,7 @@ void AShowDownGameModeBase::CollectorGiveCardToPlayer()
 	RecordCurrentRoundAction(FString::Printf(TEXT("Collector gave Player forehead card rank %d."), CurrentRoundCollectorGaveRank));
 
 	// 플레이어는 자기 이마 카드를 보면 안 되므로 false
-	CardSystem->MoveCardToSlot(ChosenCard, PlayerHeadSlot, false);
+	CardSystem->MoveCardToSlotWithRotationOffset(ChosenCard, PlayerHeadSlot, false, GetHiddenForeheadCardRotationOffset());
 
 	UE_LOG(LogTemp, Log, TEXT("Collector gave card to player: %s, Rank: %d"), *ChosenCard->GetName(), ChosenCard->Rank);
 
@@ -669,6 +824,9 @@ void AShowDownGameModeBase::StartBettingPhase()
 	CollectorState.CurrentBet = StageRule->MinimumBet;
 	BettingRaisesLeft = 6;
 	bHasLastRaiser = false;
+	bPlayerHasActedInBetting = false;
+	bCollectorHasActedInBetting = false;
+	bCollectorBetDecisionInProgress = false;
 	SetPlayerHandSelectable(false);
 
 	BettingSystem->ResetBetting(StageRule->MinimumBet);
@@ -683,11 +841,16 @@ void AShowDownGameModeBase::StartBettingPhase()
 	UE_LOG(LogTemp, Log, TEXT("Betting phase started. Stage %d, MinimumBet %d. Q=Check/Call, 1~5=Raise extra bullets, R=Fold"),
 		CurrentStageIndex + 1,
 		StageRule->MinimumBet);
+
+	if (CurrentRoundFirstSide == EShowDownSide::Collector)
+	{
+		ResolveCollectorBetResponse();
+	}
 }
 
 void AShowDownGameModeBase::PlayerCheck()
 {
-	if (bCollectorActionPresentationInProgress)
+	if (bCollectorActionPresentationInProgress || bCollectorBetDecisionInProgress)
 	{
 		return;
 	}
@@ -702,6 +865,7 @@ void AShowDownGameModeBase::PlayerCheck()
 	{
 		BettingSystem->Call(EShowDownSide::Player);
 		PlayerState.CurrentBet = CurrentBet;
+		bPlayerHasActedInBetting = true;
 		bBettingPhase = false;
 		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 		{
@@ -719,6 +883,7 @@ void AShowDownGameModeBase::PlayerCheck()
 
 	BettingSystem->Check(EShowDownSide::Player);
 	PlayerState.CurrentBet = CurrentBet;
+	bPlayerHasActedInBetting = true;
 	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 	{
 		ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Player, PlayerState.CurrentBet);
@@ -726,6 +891,16 @@ void AShowDownGameModeBase::PlayerCheck()
 	RecordCurrentRoundAction(FString::Printf(TEXT("Player checked at %d."), PlayerState.CurrentBet));
 	ShowEventDebugMessage(FString::Printf(TEXT("플레이어 체크: %d발"), PlayerState.CurrentBet));
 	UE_LOG(LogTemp, Log, TEXT("Player Check"));
+
+	if (bCollectorHasActedInBetting)
+	{
+		bBettingPhase = false;
+		PlayCollectorActionPresentationThen([this]()
+		{
+			FinishBettingAndResolveRound();
+		});
+		return;
+	}
 
 	PlayCollectorActionPresentationThen([this]()
 	{
@@ -746,7 +921,7 @@ void AShowDownGameModeBase::PlayerRaise()
 
 void AShowDownGameModeBase::PlayerRaiseTo(int32 BulletCount)
 {
-	if (bCollectorActionPresentationInProgress)
+	if (bCollectorActionPresentationInProgress || bCollectorBetDecisionInProgress)
 	{
 		return;
 	}
@@ -761,6 +936,7 @@ void AShowDownGameModeBase::PlayerRaiseTo(int32 BulletCount)
 	if (BettingSystem->RaiseTo(EShowDownSide::Player, NewBet))
 	{
 		PlayerState.CurrentBet = NewBet;
+		bPlayerHasActedInBetting = true;
 		BettingRaisesLeft = FMath::Max(0, BettingRaisesLeft - 1);
 		bHasLastRaiser = true;
 		LastRaiser = EShowDownSide::Player;
@@ -786,7 +962,7 @@ void AShowDownGameModeBase::PlayerRaiseTo(int32 BulletCount)
 
 void AShowDownGameModeBase::PlayerFold()
 {
-	if (bCollectorActionPresentationInProgress)
+	if (bCollectorActionPresentationInProgress || bCollectorBetDecisionInProgress)
 	{
 		return;
 	}
@@ -797,6 +973,7 @@ void AShowDownGameModeBase::PlayerFold()
 	}
 
 	BettingSystem->Fold(EShowDownSide::Player);
+	bPlayerHasActedInBetting = true;
 
 	bBettingPhase = false;
 	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
@@ -992,6 +1169,12 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		return;
 	}
 
+	if (bCollectorBetDecisionInProgress)
+	{
+		return;
+	}
+	bCollectorBetDecisionInProgress = true;
+
 	const int32 CurrentBet = BettingSystem->GetCurrentBet();
 	const int32 GivenCardRank = PlayerState.ForeheadCard ? PlayerState.ForeheadCard->Rank : 0;
 	UE_LOG(LogTemp, Log, TEXT("Collector model: given card rank %d, current bet %d, committed %d, raises left %d"),
@@ -1017,6 +1200,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 						this,
 						[this, GivenCardRank](bool bSuccess, const FSDLLMBossResponse& LLMResponse)
 						{
+							bCollectorBetDecisionInProgress = false;
 							if (!bBettingPhase || !BettingSystem || !CollectorAISystem)
 							{
 								return;
@@ -1079,6 +1263,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 		BettingRaisesLeft,
 		bHasLastRaiser && LastRaiser == EShowDownSide::Collector);
 
+	bCollectorBetDecisionInProgress = false;
 	ExecuteCollectorBetDecision(CollectorDecision, GivenCardRank);
 }
 
@@ -1098,6 +1283,10 @@ FCollectorBetDecision AShowDownGameModeBase::SanitizeCollectorDecision(const FCo
 		SanitizedDecision.Action = EShowDownBetAction::Call;
 	}
 	else if (SanitizedDecision.Action == EShowDownBetAction::Call && !bMustRespond)
+	{
+		SanitizedDecision.Action = EShowDownBetAction::Check;
+	}
+	else if (SanitizedDecision.Action == EShowDownBetAction::Fold && !bMustRespond)
 	{
 		SanitizedDecision.Action = EShowDownBetAction::Check;
 	}
@@ -1127,13 +1316,13 @@ void AShowDownGameModeBase::ExecuteCollectorBetDecision(const FCollectorBetDecis
 
 	const int32 CurrentBet = BettingSystem->GetCurrentBet();
 	const EShowDownBetAction CollectorAction = CollectorDecision.Action;
+	bCollectorHasActedInBetting = true;
 
 	switch (CollectorAction)
 	{
 	case EShowDownBetAction::Check:
 		BettingSystem->Check(EShowDownSide::Collector);
 		CollectorState.CurrentBet = CurrentBet;
-		bBettingPhase = false;
 		if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 		{
 			ShowDownGameState->OnBetChanged.Broadcast(EShowDownSide::Collector, CollectorState.CurrentBet);
@@ -1141,10 +1330,19 @@ void AShowDownGameModeBase::ExecuteCollectorBetDecision(const FCollectorBetDecis
 		RecordCurrentRoundAction(FString::Printf(TEXT("Collector checked at %d."), CollectorState.CurrentBet));
 		ShowEventDebugMessage(FString::Printf(TEXT("콜렉터 체크: %d발"), CollectorState.CurrentBet));
 		UE_LOG(LogTemp, Log, TEXT("Collector Check"));
-		PlayCollectorActionPresentationThen([this]()
+		if (bPlayerHasActedInBetting)
 		{
-			FinishBettingAndResolveRound();
-		});
+			bBettingPhase = false;
+			PlayCollectorActionPresentationThen([this]()
+			{
+				FinishBettingAndResolveRound();
+			});
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("Player needs to respond."));
+			PlayCollectorActionPresentation();
+		}
 		break;
 
 	case EShowDownBetAction::Call:
@@ -1682,7 +1880,7 @@ void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 
 		ShowEventDebugMessage(FString::Printf(TEXT("룰렛: %s %d발 / 안 맞음"),
 			*GetSideDisplayText(TargetSide),
 			ClampedBulletCount));
-		PlayCollectorActionPresentationThen(MoveTemp(Continuation));
+		PlaySelfShotGunPresentationThen(TargetSide, false, MoveTemp(Continuation));
 		return;
 	}
 
@@ -1696,7 +1894,7 @@ void AShowDownGameModeBase::ApplyRouletteResult(EShowDownSide TargetSide, int32 
 		*GetSideDisplayText(TargetSide),
 		ClampedBulletCount,
 		TargetState.Lives));
-	PlayCollectorActionPresentationThen(MoveTemp(Continuation));
+	PlaySelfShotGunPresentationThen(TargetSide, true, MoveTemp(Continuation));
 
 	UE_LOG(LogTemp, Log, TEXT("%s lives: %d"),
 		TargetSide == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
@@ -2649,12 +2847,12 @@ void AShowDownGameModeBase::HandleMultiplayerSelectedCard(ASDPlayerState* Submit
 	MultiplayerCardReceiver->ForeheadCard = SelectedCard;
 	MultiplayerCardReceiver->ForceNetUpdate();
 	SelectedCard->SetHandOwnerSlot(EShowDownPlayerSlot::None);
-	SelectedCard->SetHiddenFromSlot(EShowDownPlayerSlot::None);
+	SelectedCard->SetHiddenFromSlot(MultiplayerCardReceiver->ShowDownSlot);
 	SelectedCard->SetFaceUp(true);
 	SelectedCard->SetSelectable(false);
 	if (USceneComponent* HeadSlot = GetHeadSlotForPlayerState(MultiplayerCardReceiver))
 	{
-		SelectedCard->MoveToSlot(HeadSlot, true);
+		CardSystem->MoveCardToSlotWithRotationOffset(SelectedCard, HeadSlot, true, GetHiddenForeheadCardRotationOffset());
 	}
 
 	if (AreAllAliveMultiplayerPlayersReadyToReveal())

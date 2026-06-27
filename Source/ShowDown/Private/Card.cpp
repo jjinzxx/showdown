@@ -209,6 +209,8 @@ void ACard::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimePro
 	DOREPLIFETIME(ACard, Rank);
 	DOREPLIFETIME(ACard, bSelectable);
 	DOREPLIFETIME(ACard, bFaceUp);
+	DOREPLIFETIME(ACard, HiddenFromSlot);
+	DOREPLIFETIME(ACard, HandOwnerSlot);
 	DOREPLIFETIME(ACard, TargetVisualScaleMultiplier);
 }
 
@@ -306,11 +308,28 @@ void ACard::MoveToSlot(USceneComponent* Slot, bool bNewFaceUp)
 		return;
 	}
 
+	MoveToSlotTransform(Slot->GetComponentTransform(), bNewFaceUp);
+}
+
+void ACard::MoveToSlotWithRotationOffset(USceneComponent* Slot, bool bNewFaceUp, FRotator RotationOffset)
+{
+	if (!Slot)
+	{
+		return;
+	}
+
+	FTransform SlotTransform = Slot->GetComponentTransform();
+	SlotTransform.SetRotation((SlotTransform.GetRotation() * RotationOffset.Quaternion()).GetNormalized());
+	MoveToSlotTransform(SlotTransform, bNewFaceUp);
+}
+
+void ACard::MoveToSlotTransform(const FTransform& SlotTransform, bool bNewFaceUp)
+{
 	bSelected = false;
 	bHovered = false;
 	SetSelectable(false);
-	DefaultLocation = Slot->GetComponentLocation();
-	DefaultRotation = Slot->GetComponentRotation();
+	DefaultLocation = SlotTransform.GetLocation();
+	DefaultRotation = SlotTransform.GetRotation().Rotator();
 	UpdateTargetTransform();
 	EnableMotionTick();
 	SetFaceUp(bNewFaceUp);

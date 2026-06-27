@@ -156,6 +156,17 @@ bool UCardSystem::MoveCardToSlot(ACard* Card, USceneComponent* Slot, bool bFaceU
 	return true;
 }
 
+bool UCardSystem::MoveCardToSlotWithRotationOffset(ACard* Card, USceneComponent* Slot, bool bFaceUp, FRotator RotationOffset)
+{
+	if (!Card || !Slot)
+	{
+		return false;
+	}
+
+	Card->MoveToSlotWithRotationOffset(Slot, bFaceUp, RotationOffset);
+	return true;
+}
+
 void UCardSystem::BuildDeck()
 {
 	for (int32 Rank = 1; Rank <= 7; ++Rank)

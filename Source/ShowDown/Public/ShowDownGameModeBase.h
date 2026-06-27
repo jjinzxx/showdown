@@ -16,6 +16,7 @@ class ASDCardPlacementAnchor;
 class ASDPlayerSeat;
 class ASDMultiplayerTable;
 class ASDMultiplayerSeatAnchor;
+class ASDSelfShotGunActor;
 class UCardSystem;
 class ACollector;
 class UCollectorAISystem;
@@ -276,6 +277,9 @@ private:
 	EShowDownSide LastRaiser = EShowDownSide::Player;
 	EShowDownSide CurrentRoundFirstSide = EShowDownSide::Player;
 	EShowDownSide NextRoundFirstSide = EShowDownSide::Player;
+	bool bPlayerHasActedInBetting = false;
+	bool bCollectorHasActedInBetting = false;
+	bool bCollectorBetDecisionInProgress = false;
 	bool bHasPendingRoundReveal = false;
 	bool bHasPendingFoldReveal = false;
 	bool bCollectorActionPresentationInProgress = false;
@@ -286,6 +290,7 @@ private:
 	FTimerHandle CollectorActionPresentationTimerHandle;
 	TFunction<void()> CardPlacementDelayContinuation;
 	TFunction<void()> CollectorActionPresentationContinuation;
+	TFunction<void()> SelfShotGunPresentationContinuation;
 	TArray<TFunction<void()>> QueuedCollectorActionPresentationContinuations;
 	FString LatestPlayerDialogueInput;
 	FString RecentDialogueHistory;
@@ -350,6 +355,14 @@ private:
 	UPROPERTY()
 	ACollector* Collector = nullptr;
 
+	UPROPERTY()
+	TObjectPtr<ASDSelfShotGunActor> ActiveSelfShotGunActor = nullptr;
+
+	bool bSelfShotGunPresentationInProgress = false;
+
+	UFUNCTION()
+	void HandleSelfShotGunPresentationFinished();
+
 	// 덱을 만들고 섞은 뒤에 플레이어와 콜렉터에게 5장 스폰
 	void DealInitialHand();
 	void FindCollector();
@@ -384,6 +397,9 @@ private:
 	void PlayCollectorActionPresentation();
 	void PlayCollectorActionPresentationThen(TFunction<void()>&& Continuation);
 	void FinishCollectorActionPresentation();
+	void PlaySelfShotGunPresentationThen(EShowDownSide TargetSide, bool bLiveRound, TFunction<void()>&& Continuation);
+	void FinishSelfShotGunPresentation();
+	ASDSelfShotGunActor* FindSelfShotGunActor() const;
 	FSDCardHandLayoutSettings GetDefaultHandLayoutSettings() const;
 	FSDCardHandLayoutSettings ResolveHandLayoutSettings(EShowDownSide Side) const;
 	void ApplyCardMotionForSide(EShowDownSide Side, const TArray<ACard*>& Cards) const;
