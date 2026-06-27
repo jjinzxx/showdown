@@ -12,7 +12,6 @@ namespace
 {
 	const TCHAR* DefaultDarknessMaterialPath = TEXT("/Game/ArtTone/M_PP_TableVisionWorldRange.M_PP_TableVisionWorldRange");
 	const TCHAR* DeprecatedDarknessMaterialPath = TEXT("/Game/ArtTone/M_PP_TableVisionDarkness.M_PP_TableVisionDarkness");
-	const TCHAR* DeprecatedWorldMaskMaterialPath = TEXT("/Game/ArtTone/M_PP_TableVisionWorldMask.M_PP_TableVisionWorldMask");
 	const FName DarknessStrengthParameterName(TEXT("DarknessStrength"));
 	const FName VisionCenterParameterName(TEXT("VisionCenter"));
 	const FName VisionRadiusParameterName(TEXT("VisionRadius"));
@@ -192,9 +191,7 @@ void ASDTableVisionDirector::StopRevealPulse(bool bSnapToCollapsed)
 
 void ASDTableVisionDirector::EnsureDarknessMaterialInstance()
 {
-	if (DarknessPostProcessMaterial &&
-		(DarknessPostProcessMaterial->GetPathName() == DeprecatedDarknessMaterialPath ||
-			DarknessPostProcessMaterial->GetPathName() == DeprecatedWorldMaskMaterialPath))
+	if (DarknessPostProcessMaterial && DarknessPostProcessMaterial->GetPathName() == DeprecatedDarknessMaterialPath)
 	{
 		DarknessPostProcessMaterial = nullptr;
 		DarknessMID = nullptr;

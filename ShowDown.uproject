@@ -23,13 +23,6 @@
 			]
 		},
 		{
-			"Name": "PythonScriptPlugin",
-			"Enabled": true,
-			"TargetAllowList": [
-				"Editor"
-			]
-		},
-		{
 			"Name": "OnlineSubsystemEOS",
 			"Enabled": true
 		},
