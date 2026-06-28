@@ -526,6 +526,7 @@ private:
 	bool bSelfShotCinematicCameraHoldStarted = false;
 	bool bPresentationFinishPending = false;
 	bool bCurrentShotTargetsLocalPlayer = true;
+	bool bCurrentShotWasEmpty = false;
 	bool bHasForcedShotSourceLocation = false;
 	bool bHasForcedShotAimLocation = false;
 	bool bHasCachedFirstPersonPoseCamera = false;

@@ -226,14 +226,13 @@ void ASDSelfShotGunActor::Tick(float DeltaSeconds)
 	}
 
 	StateElapsedTime += DeltaSeconds;
-	if (AnimState == EGunAnimState::Fired || AnimState == EGunAnimState::Returning)
+	if (AnimState == EGunAnimState::Returning || (AnimState == EGunAnimState::Fired && !bCurrentShotWasEmpty))
 	{
 		MechanismResetElapsedTime += DeltaSeconds;
 	}
 	if (AnimState == EGunAnimState::Aiming
 		|| AnimState == EGunAnimState::Cocking
-		|| AnimState == EGunAnimState::HammerReleasing
-		|| AnimState == EGunAnimState::EmptyImpact)
+		|| AnimState == EGunAnimState::HammerReleasing)
 	{
 		HeldGunJitterElapsedTime += DeltaSeconds;
 	}
@@ -274,11 +273,14 @@ void ASDSelfShotGunActor::Tick(float DeltaSeconds)
 		UpdateHammerRelease();
 		break;
 	case EGunAnimState::EmptyImpact:
-		SetActorTransform(ApplyHeldGunJitter(GetFirstPersonGunTransform()));
+		SetActorTransform(GetFirstPersonGunTransform());
 		UpdateEmptyShotImpact();
 		break;
 	case EGunAnimState::Fired:
-		UpdateMechanismReset();
+		if (!bCurrentShotWasEmpty)
+		{
+			UpdateMechanismReset();
+		}
 		if (StateElapsedTime >= ShotHoldTime)
 		{
 			ReturnStartTransform = GetActorTransform();
@@ -470,6 +472,7 @@ void ASDSelfShotGunActor::FireGun()
 void ASDSelfShotGunActor::FireLiveRound()
 {
 	AnimState = EGunAnimState::Fired;
+	bCurrentShotWasEmpty = false;
 	MechanismResetStartTriggerRotation = TriggerRestRotation + TriggerPulledRotationOffset;
 	MechanismResetStartHammerRotation = HammerRestRotation + HammerFiredRotationOffset;
 	MuzzleFlashElapsedTime = MuzzleFlashDuration;
@@ -489,6 +492,9 @@ void ASDSelfShotGunActor::FireLiveRound()
 void ASDSelfShotGunActor::FireEmptyRound()
 {
 	AnimState = EGunAnimState::EmptyImpact;
+	bCurrentShotWasEmpty = true;
+	HeldGunJitterElapsedTime = 0.0f;
+	SetActorTransform(GetFirstPersonGunTransform());
 	MuzzleFlashElapsedTime = 0.0f;
 	MuzzleFlashLight->SetIntensity(0.0f);
 
@@ -531,6 +537,7 @@ void ASDSelfShotGunActor::FinishSequence()
 	MuzzleFlashElapsedTime = 0.0f;
 	StateElapsedTime = 0.0f;
 	MechanismResetElapsedTime = 0.0f;
+	bCurrentShotWasEmpty = false;
 	bHasCachedFirstPersonPoseCamera = false;
 	AnimState = EGunAnimState::Idle;
 	OnGunSequenceFinished.Broadcast();
