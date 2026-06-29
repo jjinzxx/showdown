@@ -22,8 +22,10 @@
 #include "ShowDownChatWidget.h"
 #include "ShowDownEosSubsystem.h"
 #include "ShowDownGameModeBase.h"
+#include "ShowDownGameStateBase.h"
 #include "ShowDownLeaveConfirmWidget.h"
 #include "ShowDownMultiRankWidget.h"
+#include "ShowDownVoiceSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
 #include "SlateOptMacros.h"
 #include "Styling/CoreStyle.h"
@@ -188,10 +190,25 @@ void AShowDownPlayerController::BeginPlay()
 	InitializeInteractableOutlinePostProcess();
 	CreateCenterCrosshairWidget();
 	UpdateCenterCrosshairVisibility();
+	TryBindVoiceChatEvents();
 }
 
 void AShowDownPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (AShowDownGameStateBase* PreviousGameState = VoiceBoundGameState.Get())
+	{
+		PreviousGameState->OnChatMessageReceived.RemoveDynamic(this, &AShowDownPlayerController::HandleChatMessageReceived);
+	}
+	if (UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr)
+	{
+		VoiceSubsystem->OnVoiceStatus.RemoveDynamic(this, &AShowDownPlayerController::HandleVoiceStatus);
+	}
+	VoiceBoundGameState.Reset();
+	bVoiceChatEventsBound = false;
+	bVoiceSubsystemEventsBound = false;
+
 	SetFocusedInteractable(nullptr);
 	if (InteractionOutlinePostProcessVolume)
 	{
@@ -475,6 +492,7 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 	{
 		TryApplyPendingMultiplayerSeatCamera();
 	}
+	TryBindVoiceChatEvents();
 
 	const bool bHasFixedCameraLook = FixedCameraMouseLookTarget != nullptr;
 	if (bHasFixedCameraLook)
@@ -517,6 +535,8 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 		OpenChat();
 		return;
 	}
+
+	HandleVoicePushToTalkInput();
 
 	if (WasInputKeyJustPressed(LeaveMatchKey))
 	{
@@ -575,6 +595,12 @@ void AShowDownPlayerController::InitializeFromPossessedPawn()
 	bEnableLegacyKeyboardBetHotkeys = ShowDownPawn->bEnableLegacyKeyboardBetHotkeys;
 	ToggleChatKey = ShowDownPawn->ToggleChatKey;
 	CloseChatKey = ShowDownPawn->CloseChatKey;
+	bEnableVoicePushToTalk = ShowDownPawn->bEnableVoicePushToTalk;
+	VoicePushToTalkKey = ShowDownPawn->VoicePushToTalkKey;
+	if (ToggleChatKey == VoicePushToTalkKey)
+	{
+		ToggleChatKey = EKeys::Enter;
+	}
 
 	// Every multiplayer pawn starts facing the shared table. Keep camera limits
 	// relative to that seat direction instead of clamping to world-space yaw.
@@ -1139,6 +1165,212 @@ void AShowDownPlayerController::SubmitDialogueInput(const FString& Text)
 	ServerSubmitDialogueInput(TrimmedText, GetChatSenderName());
 }
 
+void AShowDownPlayerController::SDVoiceSubmitText(const FString& Text)
+{
+	SubmitDialogueInput(Text);
+}
+
+void AShowDownPlayerController::SDVoiceSpeak(const FString& Text)
+{
+	const FString TrimmedText = Text.TrimStartAndEnd();
+	if (TrimmedText.IsEmpty())
+	{
+		return;
+	}
+
+	if (UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr)
+	{
+		VoiceSubsystem->SpeakCollectorLine(TrimmedText);
+	}
+}
+
+void AShowDownPlayerController::SDVoiceStatus()
+{
+	UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr;
+	if (!VoiceSubsystem)
+	{
+		ClientShowStatusMessage(TEXT("Voice subsystem missing."));
+		return;
+	}
+
+	const FString Status = VoiceSubsystem->GetVoiceDebugSummary();
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Status);
+	ClientShowStatusMessage(Status.Left(220));
+}
+
+void AShowDownPlayerController::SDVoiceStart()
+{
+	UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr;
+	if (!VoiceSubsystem)
+	{
+		ClientShowStatusMessage(TEXT("Voice subsystem missing."));
+		return;
+	}
+
+	VoiceSubsystem->BeginPushToTalk(
+		FShowDownVoiceTextCallback::CreateWeakLambda(
+			this,
+			[this](bool bSuccess, const FString& Text)
+			{
+				if (bSuccess)
+				{
+					SubmitDialogueInput(Text);
+				}
+			}));
+}
+
+void AShowDownPlayerController::SDVoiceStop()
+{
+	if (UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr)
+	{
+		VoiceSubsystem->EndPushToTalk();
+	}
+}
+
+void AShowDownPlayerController::SDVoiceCancel()
+{
+	if (UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr)
+	{
+		VoiceSubsystem->CancelPushToTalk();
+	}
+}
+
+void AShowDownPlayerController::SDVoiceEnable(bool bEnable)
+{
+	UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr;
+	if (!VoiceSubsystem)
+	{
+		ClientShowStatusMessage(TEXT("Voice subsystem missing."));
+		return;
+	}
+
+	VoiceSubsystem->SetOpenAIVoiceEnabled(bEnable);
+	const FString Status = VoiceSubsystem->GetVoiceDebugSummary();
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Status);
+	ClientShowStatusMessage(Status.Left(220));
+}
+
+void AShowDownPlayerController::SDVoiceMode(const FString& Mode)
+{
+	UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr;
+	if (!VoiceSubsystem)
+	{
+		ClientShowStatusMessage(TEXT("Voice subsystem missing."));
+		return;
+	}
+
+	const FString NormalizedMode = Mode.TrimStartAndEnd().ToLower();
+	if (NormalizedMode == TEXT("off") || NormalizedMode == TEXT("0"))
+	{
+		VoiceSubsystem->SetVoiceInputMode(EShowDownVoiceInputMode::Off);
+	}
+	else if (NormalizedMode == TEXT("push") || NormalizedMode == TEXT("pushtotalk") || NormalizedMode == TEXT("ptt") || NormalizedMode == TEXT("1"))
+	{
+		VoiceSubsystem->SetVoiceInputMode(EShowDownVoiceInputMode::PushToTalk);
+	}
+	else if (NormalizedMode == TEXT("always") || NormalizedMode == TEXT("alwaysopen") || NormalizedMode == TEXT("open") || NormalizedMode == TEXT("2"))
+	{
+		VoiceSubsystem->SetVoiceInputMode(EShowDownVoiceInputMode::AlwaysOpen);
+	}
+	else
+	{
+		ClientShowStatusMessage(TEXT("Usage: SDVoiceMode off|push|always"));
+		return;
+	}
+
+	const FString Status = VoiceSubsystem->GetVoiceDebugSummary();
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Status);
+	ClientShowStatusMessage(Status.Left(220));
+}
+
+void AShowDownPlayerController::SDVoiceTone(float FrequencyHz, float DurationSeconds)
+{
+	UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr;
+	if (!VoiceSubsystem)
+	{
+		ClientShowStatusMessage(TEXT("Voice subsystem missing."));
+		return;
+	}
+
+	VoiceSubsystem->PlayDebugTone(FrequencyHz, DurationSeconds);
+	const FString Status = VoiceSubsystem->GetVoiceDebugSummary();
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Status);
+	ClientShowStatusMessage(Status.Left(220));
+}
+
+void AShowDownPlayerController::SDVoiceSaveRecording()
+{
+	UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr;
+	if (!VoiceSubsystem)
+	{
+		ClientShowStatusMessage(TEXT("Voice subsystem missing."));
+		return;
+	}
+
+	FString SavedFilePath;
+	if (!VoiceSubsystem->SaveLastRecordingWav(SavedFilePath))
+	{
+		const FString Error = VoiceSubsystem->GetLastVoiceError();
+		UE_LOG(LogTemp, Warning, TEXT("SDVoiceSaveRecording failed: %s"), *Error);
+		ClientShowStatusMessage(Error.Left(220));
+		return;
+	}
+
+	const FString Message = FString::Printf(TEXT("Voice recording saved: %s"), *SavedFilePath);
+	UE_LOG(LogTemp, Log, TEXT("%s"), *Message);
+	ClientShowStatusMessage(Message.Left(220));
+}
+
+void AShowDownPlayerController::SDVoiceTranscribeFile(const FString& FilePath)
+{
+	UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr;
+	if (!VoiceSubsystem)
+	{
+		ClientShowStatusMessage(TEXT("Voice subsystem missing."));
+		return;
+	}
+
+	const bool bStarted = VoiceSubsystem->TranscribeWavFileForDebug(
+		FilePath,
+		FShowDownVoiceTextCallback::CreateWeakLambda(
+			this,
+			[this](bool bSuccess, const FString& Text)
+			{
+				const FString Message = bSuccess
+					? FString::Printf(TEXT("Debug STT: %s"), *Text)
+					: TEXT("Debug STT failed.");
+				UE_LOG(LogTemp, Log, TEXT("%s"), *Message);
+				ClientShowStatusMessage(Message.Left(220));
+			}));
+
+	if (!bStarted)
+	{
+		const FString Error = VoiceSubsystem->GetLastVoiceError();
+		UE_LOG(LogTemp, Warning, TEXT("SDVoiceTranscribeFile failed: %s"), *Error);
+		ClientShowStatusMessage(Error.Left(220));
+	}
+}
+
 void AShowDownPlayerController::RequestPlayerCheck()
 {
 	SubmitPlayerBetAction(EShowDownBetAction::Check, 0);
@@ -1548,6 +1780,47 @@ void AShowDownPlayerController::HandleBettingHotkeys()
 	}
 }
 
+void AShowDownPlayerController::HandleVoicePushToTalkInput()
+{
+	if (!bEnableVoicePushToTalk || !IsLocalController())
+	{
+		return;
+	}
+
+	UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr;
+	if (!VoiceSubsystem || VoiceSubsystem->VoiceInputMode != EShowDownVoiceInputMode::PushToTalk)
+	{
+		return;
+	}
+
+	if (WasInputKeyJustPressed(VoicePushToTalkKey))
+	{
+		VoiceSubsystem->BeginPushToTalk(
+			FShowDownVoiceTextCallback::CreateWeakLambda(
+				this,
+				[this](bool bSuccess, const FString& Text)
+				{
+					if (!bSuccess)
+					{
+						return;
+					}
+
+					const FString TrimmedText = Text.TrimStartAndEnd();
+					if (!TrimmedText.IsEmpty())
+					{
+						SubmitDialogueInput(TrimmedText);
+					}
+				}));
+	}
+
+	if (WasInputKeyJustReleased(VoicePushToTalkKey))
+	{
+		VoiceSubsystem->EndPushToTalk();
+	}
+}
+
 void AShowDownPlayerController::EnsureChatWidget()
 {
 	if (ChatWidget)
@@ -1700,6 +1973,71 @@ FString AShowDownPlayerController::GetChatSenderName() const
 	}
 
 	return SenderName.Left(32);
+}
+
+void AShowDownPlayerController::TryBindVoiceChatEvents()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	AShowDownGameStateBase* ShowDownGameState = GetWorld()
+		? GetWorld()->GetGameState<AShowDownGameStateBase>()
+		: nullptr;
+	if (ShowDownGameState && VoiceBoundGameState.Get() != ShowDownGameState)
+	{
+		if (AShowDownGameStateBase* PreviousGameState = VoiceBoundGameState.Get())
+		{
+			PreviousGameState->OnChatMessageReceived.RemoveDynamic(this, &AShowDownPlayerController::HandleChatMessageReceived);
+		}
+
+		ShowDownGameState->OnChatMessageReceived.AddDynamic(this, &AShowDownPlayerController::HandleChatMessageReceived);
+		VoiceBoundGameState = ShowDownGameState;
+		bVoiceChatEventsBound = true;
+	}
+
+	if (UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr)
+	{
+		if (!bVoiceSubsystemEventsBound)
+		{
+			VoiceSubsystem->OnVoiceStatus.RemoveDynamic(this, &AShowDownPlayerController::HandleVoiceStatus);
+			VoiceSubsystem->OnVoiceStatus.AddDynamic(this, &AShowDownPlayerController::HandleVoiceStatus);
+			bVoiceSubsystemEventsBound = true;
+		}
+	}
+}
+
+void AShowDownPlayerController::BroadcastLocalCollectorStatus(bool bSuccess, const FString& Message) const
+{
+	if (AShowDownGameStateBase* ShowDownGameState = GetWorld()
+		? GetWorld()->GetGameState<AShowDownGameStateBase>()
+		: nullptr)
+	{
+		ShowDownGameState->BroadcastCollectorLLMStatus(bSuccess, Message);
+	}
+}
+
+void AShowDownPlayerController::HandleChatMessageReceived(const FString& SenderName, const FString& Message)
+{
+	if (!IsLocalController() || !SenderName.Equals(TEXT("Collector"), ESearchCase::IgnoreCase))
+	{
+		return;
+	}
+
+	if (UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr)
+	{
+		VoiceSubsystem->SpeakCollectorLine(Message);
+	}
+}
+
+void AShowDownPlayerController::HandleVoiceStatus(bool bSuccess, const FString& Message)
+{
+	BroadcastLocalCollectorStatus(bSuccess, Message);
 }
 
 void AShowDownPlayerController::SubmitLocalMultiplayerDisplayName()

@@ -18,6 +18,7 @@ class USceneComponent;
 class UShowDownChatWidget;
 class UShowDownLeaveConfirmWidget;
 class UShowDownMultiRankWidget;
+class UShowDownVoiceSubsystem;
 
 struct FSDPrimitiveCustomDepthState
 {
@@ -56,6 +57,39 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Chat")
 	void SubmitDialogueInput(const FString& Text);
+
+	UFUNCTION(Exec)
+	void SDVoiceSubmitText(const FString& Text);
+
+	UFUNCTION(Exec)
+	void SDVoiceSpeak(const FString& Text);
+
+	UFUNCTION(Exec)
+	void SDVoiceStatus();
+
+	UFUNCTION(Exec)
+	void SDVoiceStart();
+
+	UFUNCTION(Exec)
+	void SDVoiceStop();
+
+	UFUNCTION(Exec)
+	void SDVoiceCancel();
+
+	UFUNCTION(Exec)
+	void SDVoiceEnable(bool bEnable);
+
+	UFUNCTION(Exec)
+	void SDVoiceMode(const FString& Mode);
+
+	UFUNCTION(Exec)
+	void SDVoiceTone(float FrequencyHz = 440.0f, float DurationSeconds = 0.75f);
+
+	UFUNCTION(Exec)
+	void SDVoiceSaveRecording();
+
+	UFUNCTION(Exec)
+	void SDVoiceTranscribeFile(const FString& FilePath);
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Betting")
 	void RequestPlayerCheck();
@@ -220,10 +254,16 @@ public:
 	TSubclassOf<UShowDownMultiRankWidget> MultiplayerRankWidgetClass;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
-	FKey ToggleChatKey = EKeys::T;
+	FKey ToggleChatKey = EKeys::Enter;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
 	FKey CloseChatKey = EKeys::Escape;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Voice")
+	bool bEnableVoicePushToTalk = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Voice")
+	FKey VoicePushToTalkKey = EKeys::T;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Multiplayer")
 	FKey LeaveMatchKey = EKeys::Escape;
@@ -311,6 +351,7 @@ private:
 	FRotator GetCameraSteppedShakeRotationOffset() const;
 	FVector GetCameraSteppedShakeLocationOffset(const FRotator& CameraRotation) const;
 	void HandleBettingHotkeys();
+	void HandleVoicePushToTalkInput();
 	void EnsureChatWidget();
 	void EnsureLeaveConfirmWidget();
 	bool TryApplyPendingMultiplayerSeatCamera();
@@ -322,10 +363,16 @@ private:
 	void RemoveCenterCrosshairWidget();
 	void SubmitLocalMultiplayerDisplayName();
 	FString GetChatSenderName() const;
+	void TryBindVoiceChatEvents();
+	void BroadcastLocalCollectorStatus(bool bSuccess, const FString& Message) const;
 	UFUNCTION()
 	void HandleMultiRankRestartRequested();
 	UFUNCTION()
 	void HandleMultiRankMainMenuRequested();
+	UFUNCTION()
+	void HandleChatMessageReceived(const FString& SenderName, const FString& Message);
+	UFUNCTION()
+	void HandleVoiceStatus(bool bSuccess, const FString& Message);
 	AShowDownGameModeBase* ResolveGameMode() const;
 
 	UPROPERTY()
@@ -401,4 +448,7 @@ private:
 	FRotator CameraSteppedShakeRotationAmplitude = FRotator::ZeroRotator;
 	FVector CameraSteppedShakeLocationAmplitude = FVector::ZeroVector;
 	bool bFixedCameraInvertMouseY = true;
+	bool bVoiceChatEventsBound = false;
+	bool bVoiceSubsystemEventsBound = false;
+	TWeakObjectPtr<class AShowDownGameStateBase> VoiceBoundGameState;
 };

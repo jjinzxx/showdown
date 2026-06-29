@@ -18,6 +18,7 @@
 #include "ShowDownPlayerController.h"
 #include "ShowDownRankWidget.h"
 #include "ShowDownShopWidget.h"
+#include "ShowDownVoiceSubsystem.h"
 #include "SupabaseSubsystem.h"
 
 AShowDownHubFlowManager::AShowDownHubFlowManager()
@@ -31,6 +32,7 @@ AShowDownHubFlowManager::AShowDownHubFlowManager()
 void AShowDownHubFlowManager::BeginPlay()
 {
 	Super::BeginPlay();
+	ApplySinglePlayerVoiceSettings();
 
 	// GameInstanceSubsystem survives level travel, so returning players can skip login.
 	bool bHasSession = false;
@@ -323,6 +325,7 @@ void AShowDownHubFlowManager::StartDeveloperSinglePlayPreview()
 
 void AShowDownHubFlowManager::ShowSinglePlayPreviewInternal(bool bAllowOnlineReward)
 {
+	ApplySinglePlayerVoiceSettings();
 	CurrentRewardMatchId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
 	UE_LOG(LogTemp, Log, TEXT("Single play reward match id: %s"), *CurrentRewardMatchId);
 	bCurrentMatchAllowsOnlineReward = false;
@@ -433,6 +436,17 @@ void AShowDownHubFlowManager::ShowSinglePlayPreviewInternal(bool bAllowOnlineRew
 
 	OnScreenChanged.Broadcast(EShowDownHubFlowScreen::SinglePlayPreview);
 	UE_LOG(LogTemp, Log, TEXT("Single play started from HubFlowManager."));
+}
+
+void AShowDownHubFlowManager::ApplySinglePlayerVoiceSettings()
+{
+	if (UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr)
+	{
+		VoiceSubsystem->TTSPlaybackSpeed = FMath::Clamp(GameCameraVoiceSpeed, 0.5f, 2.0f);
+		VoiceSubsystem->TTSPlaybackPitch = FMath::Clamp(GameCameraVoicePitch, 0.5f, 2.0f);
+	}
 }
 
 void AShowDownHubFlowManager::OpenMultiplayerLevel()
