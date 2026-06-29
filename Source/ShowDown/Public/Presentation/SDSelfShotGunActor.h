@@ -47,6 +47,36 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Self Shot Gun")
 	void UseGun();
 
+	UFUNCTION(BlueprintCallable, Category = "Self Shot Gun")
+	void UseGunWithForcedResult(bool bLiveRound);
+
+	UFUNCTION(BlueprintCallable, Category = "Self Shot Gun")
+	void UseGunWithForcedResultAtTarget(bool bLiveRound, AActor* TargetActor);
+
+	UFUNCTION(BlueprintCallable, Category = "Self Shot Gun")
+	void UseGunWithForcedResultAtTargetFromLocation(bool bLiveRound, AActor* TargetActor, FVector SourceLocation);
+
+	UFUNCTION(BlueprintCallable, Category = "Self Shot Gun")
+	void UseGunWithForcedResultAtTargetFromLocationAndCamera(
+		bool bLiveRound,
+		AActor* TargetActor,
+		FVector SourceLocation,
+		ACameraActor* ShotCamera);
+
+	UFUNCTION(BlueprintCallable, Category = "Self Shot Gun")
+	void UseGunWithForcedResultAtTargetFromLocationAimAndCamera(
+		bool bLiveRound,
+		AActor* TargetActor,
+		FVector SourceLocation,
+		FVector AimLocation,
+		ACameraActor* ShotCamera);
+
+	UFUNCTION(BlueprintCallable, Category = "Self Shot Gun|Target Shot")
+	ACameraActor* GetEnemyShotCinematicCamera() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Self Shot Gun|Target Shot")
+	float GetTargetShotSourcePullDistance() const;
+
 	virtual bool CanInteract_Implementation(AActor* Interactor) const override;
 	virtual void Interact_Implementation(AActor* Interactor) override;
 
@@ -61,6 +91,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Self Shot Gun")
 	FSDSelfShotGunEvent OnGunSequenceFinished;
+
+	UPROPERTY(BlueprintAssignable, Category = "Self Shot Gun")
+	FSDSelfShotGunEvent OnGunPresentationFinished;
 
 protected:
 	virtual void BeginPlay() override;
@@ -136,6 +169,18 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person", meta = (DisplayName = "Rotation Offset (Pitch, Yaw, Roll)", ToolTip = "Pitch tilts the barrel up and down. Yaw turns it left and right. Roll twists it sideways."))
 	FRotator FirstPersonRotationOffset = FRotator(-22.0f, 0.0f, -58.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Target Shot", meta = (DisplayName = "Aim Offset"))
+	FVector TargetShotAimOffset = FVector(0.0f, 0.0f, 90.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Target Shot", meta = (DisplayName = "Rotation Offset (Pitch, Yaw, Roll)", ToolTip = "Yaw 180 flips the mesh so the muzzle faces the target when the gun mesh forward axis is reversed."))
+	FRotator TargetShotRotationOffset = FRotator(-22.0f, 180.0f, -58.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|Target Shot", meta = (ClampMin = "0.0", DisplayName = "Source Pull Distance"))
+	float TargetShotSourcePullDistance = 36.0f;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Self Shot Gun|Target Shot", meta = (DisplayName = "Enemy Shot Cinematic Camera"))
+	TObjectPtr<ACameraActor> EnemyShotCinematicCamera;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Self Shot Gun|First Person|Held Jitter")
 	bool bEnableHeldGunJitter = true;
@@ -403,6 +448,7 @@ private:
 	void FireLiveRound();
 	void FireEmptyRound();
 	void FinishSequence();
+	void StartGunUse();
 	void StartMechanismAnimation();
 	void UpdateMechanismCocking();
 	void UpdateHammerRelease();
@@ -427,6 +473,7 @@ private:
 	void EnterHitSequenceBlackout();
 	void EnterHitSequenceRecovery();
 	void FinishHitSequence();
+	void BroadcastPresentationFinishedIfIdle();
 	void StartTinnitusSound();
 	void UpdateTinnitusSound(float DeltaSeconds);
 	void StopTinnitusSound();
@@ -455,6 +502,9 @@ private:
 	FRotator CachedFirstPersonCameraRotation = FRotator::ZeroRotator;
 	FVector CachedFirstPersonCameraLocation = FVector::ZeroVector;
 	TWeakObjectPtr<AActor> PreviousViewTarget;
+	TWeakObjectPtr<ACameraActor> ForcedShotCamera;
+	UPROPERTY(Transient)
+	TObjectPtr<ACameraActor> ActiveSelfShotCinematicCamera = nullptr;
 	ECollisionEnabled::Type OriginalCollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 	EGunAnimState AnimState = EGunAnimState::Idle;
 	EHitSequenceState HitSequenceState = EHitSequenceState::Idle;
@@ -474,11 +524,19 @@ private:
 	bool bSelfShotCinematicCameraActive = false;
 	bool bSelfShotCinematicCameraStartPending = false;
 	bool bSelfShotCinematicCameraHoldStarted = false;
+	bool bPresentationFinishPending = false;
+	bool bCurrentShotTargetsLocalPlayer = true;
+	bool bCurrentShotWasEmpty = false;
+	bool bHasForcedShotSourceLocation = false;
+	bool bHasForcedShotAimLocation = false;
 	bool bHasCachedFirstPersonPoseCamera = false;
 	bool bCinematicCameraShakeActive = false;
 	bool bTinnitusFadeOutStarted = false;
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> TinnitusAudioComponent;
+	TWeakObjectPtr<AActor> ForcedShotTargetActor;
+	FVector ForcedShotSourceLocation = FVector::ZeroVector;
+	FVector ForcedShotAimLocation = FVector::ZeroVector;
 	FRotator CinematicCameraShakeRotationAmplitude = FRotator::ZeroRotator;
 	FVector CinematicCameraShakeLocationAmplitude = FVector::ZeroVector;
 	FTransform CinematicCameraShakeBaseTransform;

@@ -128,6 +128,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Card")
 	void MoveToSlot(USceneComponent* Slot, bool bNewFaceUp);
 
+	UFUNCTION(BlueprintCallable, Category = "Card")
+	void MoveToSlotWithRotationOffset(USceneComponent* Slot, bool bNewFaceUp, FRotator RotationOffset);
+
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Card")
 	float GetSlotAttachMotionTotalSeconds() const;
 
@@ -155,6 +158,7 @@ private:
 	void ConfigureInteractionComponents();
 	void UpdateTargetTransform();
 	void EnableMotionTick();
+	void MoveToSlotTransform(const FTransform& SlotTransform, bool bNewFaceUp);
 	void StartSlotAttachMotion(const FTransform& TargetTransform);
 	void UpdateSlotAttachMotion(float DeltaTime);
 	void UpdateSlotAttachSettle(float DeltaTime, FVector& InOutVisualWorldOffset, FRotator& OutVisualRelativeRotation);
