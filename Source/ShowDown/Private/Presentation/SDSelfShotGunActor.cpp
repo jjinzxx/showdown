@@ -121,7 +121,7 @@ ASDSelfShotGunActor::ASDSelfShotGunActor()
 	HammerMesh->SetupAttachment(HammerPivot);
 	HammerMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> HammerMeshAsset(
-		TEXT("/Game/Fab/SW27-2/Revolver/Hammer.Hammer"));
+		TEXT("/Game/Fab/Revolver/Revolver/Hammer.Hammer"));
 	if (HammerMeshAsset.Succeeded())
 	{
 		HammerMesh->SetStaticMesh(HammerMeshAsset.Object);
