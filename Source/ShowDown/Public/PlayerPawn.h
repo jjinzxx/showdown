@@ -87,10 +87,16 @@ public:
 	TSubclassOf<class UShowDownChatWidget> ChatWidgetClass;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
-	FKey ToggleChatKey = EKeys::T;
+	FKey ToggleChatKey = EKeys::Enter;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Chat")
 	FKey CloseChatKey = EKeys::Escape;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Voice")
+	bool bEnableVoicePushToTalk = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Voice")
+	FKey VoicePushToTalkKey = EKeys::T;
 	
 	//카메라 회전 감도
 	UPROPERTY(EditAnywhere, Category = Camera)
@@ -225,6 +231,7 @@ private:
 	class UShowDownChatWidget* ChatWidget = nullptr;
 	
 	void HandleBettingHotkeys();
+	void HandleVoicePushToTalkInput();
 	void EnsureChatWidget();
 	void ApplyChatInputMode(bool bOpen);
 	FString GetChatSenderName() const;

@@ -292,13 +292,16 @@ private:
 	FString RecentRoundHistory;
 	FString CurrentRoundActionHistory;
 	FString DiscardedCardsSummary;
+	FString PendingBossChatReplyDialogue;
 	int32 CurrentRoundPlayerGaveRank = 0;
 	int32 CurrentRoundCollectorGaveRank = 0;
 	int32 LastRoundPlayerCardRank = 0;
 	int32 LastRoundCollectorCardRank = 0;
 	bool bCurrentRoundSummaryRecorded = false;
 	bool bBossChatReplyInFlight = false;
+	bool bHasPendingBossChatReply = false;
 	float LastBossChatReplyRequestTime = -1000.0f;
+	FTimerHandle BossChatReplyRetryTimerHandle;
 
 	UPROPERTY()
 	TArray<TObjectPtr<ASDPlayerState>> MultiplayerPlayers;
@@ -360,6 +363,8 @@ private:
 	void ExecuteCollectorBetDecision(const FCollectorBetDecision& CollectorDecision, int32 GivenCardRank);
 	FSDLLMBossContext BuildLLMBossContext(int32 CurrentBet, int32 GivenCardRank) const;
 	FSDLLMBossContext BuildLLMChatContext(const FString& PlayerDialogue) const;
+	void TryRequestBossChatReply(const FString& PlayerDialogue, bool bIgnoreCooldown = false);
+	void RequestPendingBossChatReply();
 	void AppendRecentDialogueLine(const FString& Speaker, const FString& Message);
 	void ResetCurrentRoundMemory();
 	void RecordCurrentRoundAction(const FString& ActionText);

@@ -882,53 +882,121 @@ void AShowDownGameModeBase::SubmitPlayerDialogueInputFromPlayer(const FString& P
 		ShowDownGameState->BroadcastChatMessage(DisplaySenderName, TrimmedDialogue);
 	}
 
+	TryRequestBossChatReply(TrimmedDialogue);
+}
+
+void AShowDownGameModeBase::TryRequestBossChatReply(const FString& PlayerDialogue, bool bIgnoreCooldown)
+{
+	const FString TrimmedDialogue = PlayerDialogue.TrimStartAndEnd().Left(240);
+	if (TrimmedDialogue.IsEmpty())
+	{
+		return;
+	}
+
 	if (UGameInstance* GameInstance = GetGameInstance())
 	{
 		if (USDLLMSubsystem* LLMSubsystem = GameInstance->GetSubsystem<USDLLMSubsystem>())
 		{
+			if (!LLMSubsystem->bEnableInstantBossChatReply || !LLMSubsystem->IsConfigured())
+			{
+				return;
+			}
+
+			if (bBossChatReplyInFlight && !LLMSubsystem->bAllowOverlappingBossChatReplies)
+			{
+				PendingBossChatReplyDialogue = TrimmedDialogue;
+				bHasPendingBossChatReply = true;
+				if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+				{
+					ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("듣는 중..."));
+				}
+				return;
+			}
+
 			const float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
 			const bool bCooldownReady =
 				(CurrentTime - LastBossChatReplyRequestTime) >= LLMSubsystem->BossChatReplyCooldownSeconds;
-			const bool bCanRequestInstantReply =
-				LLMSubsystem->bEnableInstantBossChatReply
-				&& LLMSubsystem->IsConfigured()
-				&& bCooldownReady
-				&& (LLMSubsystem->bAllowOverlappingBossChatReplies || !bBossChatReplyInFlight);
 
-			if (bCanRequestInstantReply)
+			if (!bIgnoreCooldown && !bCooldownReady)
 			{
-				bBossChatReplyInFlight = true;
-				LastBossChatReplyRequestTime = CurrentTime;
-				if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+				PendingBossChatReplyDialogue = TrimmedDialogue;
+				bHasPendingBossChatReply = true;
+
+				if (UWorld* World = GetWorld())
 				{
-					ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("Boss is typing..."));
+					const float RetryDelay = FMath::Max(
+						0.05f,
+						LLMSubsystem->BossChatReplyCooldownSeconds - (CurrentTime - LastBossChatReplyRequestTime));
+					World->GetTimerManager().SetTimer(
+						BossChatReplyRetryTimerHandle,
+						this,
+						&AShowDownGameModeBase::RequestPendingBossChatReply,
+						RetryDelay,
+						false);
 				}
 
-				const FSDLLMBossContext ChatContext = BuildLLMChatContext(TrimmedDialogue);
-				LLMSubsystem->RequestBossChatReply(
-					ChatContext,
-					FSDLLMBossChatCallback::CreateWeakLambda(
-						this,
-						[this](bool bSuccess, const FString& Dialogue, const FString& Intent)
-						{
-							bBossChatReplyInFlight = false;
-							if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
-							{
-								if (bSuccess)
-								{
-									AppendRecentDialogueLine(TEXT("Collector"), Dialogue);
-									ShowDownGameState->BroadcastChatMessage(TEXT("Collector"), Dialogue);
-									ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("Boss answered."));
-								}
-								else
-								{
-									ShowDownGameState->BroadcastCollectorLLMStatus(false, TEXT("Boss chat failed."));
-								}
-							}
-						}));
+				if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+				{
+					ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("듣는 중..."));
+				}
+				return;
 			}
+
+			if (UWorld* World = GetWorld())
+			{
+				World->GetTimerManager().ClearTimer(BossChatReplyRetryTimerHandle);
+			}
+
+			bBossChatReplyInFlight = true;
+			LastBossChatReplyRequestTime = CurrentTime;
+			if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+			{
+				ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("생각 중..."));
+			}
+
+			const FSDLLMBossContext ChatContext = BuildLLMChatContext(TrimmedDialogue);
+			LLMSubsystem->RequestBossChatReply(
+				ChatContext,
+				FSDLLMBossChatCallback::CreateWeakLambda(
+					this,
+					[this](bool bSuccess, const FString& Dialogue, const FString& Intent)
+					{
+						bBossChatReplyInFlight = false;
+						if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
+						{
+							if (bSuccess)
+							{
+								AppendRecentDialogueLine(TEXT("Collector"), Dialogue);
+								ShowDownGameState->BroadcastChatMessage(TEXT("Collector"), Dialogue);
+								ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("답변 완료."));
+							}
+							else
+							{
+								ShowDownGameState->BroadcastCollectorLLMStatus(false, TEXT("대화 실패."));
+							}
+						}
+
+						if (bHasPendingBossChatReply)
+						{
+							RequestPendingBossChatReply();
+						}
+					}));
 		}
 	}
+}
+
+void AShowDownGameModeBase::RequestPendingBossChatReply()
+{
+	if (!bHasPendingBossChatReply)
+	{
+		return;
+	}
+
+	const FString PendingDialogue = PendingBossChatReplyDialogue;
+	PendingBossChatReplyDialogue.Empty();
+	bHasPendingBossChatReply = false;
+
+	TryRequestBossChatReply(PendingDialogue, true);
 }
 
 void AShowDownGameModeBase::NotifyPresentationFinished(EShowDownPhase FinishedPhase)
@@ -1008,7 +1076,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 			{
 				if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 				{
-					ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("Waiting for boss..."));
+					ShowDownGameState->BroadcastCollectorLLMStatus(true, TEXT("생각 중..."));
 				}
 				const FSDLLMBossContext LLMContext = BuildLLMBossContext(CurrentBet, GivenCardRank);
 				LLMSubsystem->RequestBossResponse(
@@ -1046,7 +1114,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 							{
 								if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 								{
-									ShowDownGameState->BroadcastCollectorLLMStatus(false, TEXT("Boss API failed. Using fallback AI."));
+									ShowDownGameState->BroadcastCollectorLLMStatus(false, TEXT("API 실패. 기본 AI 사용."));
 								}
 								CollectorDecision = CollectorAISystem->ChooseBetDecisionByModel(
 									CollectorState.HandCards,
@@ -1065,7 +1133,7 @@ void AShowDownGameModeBase::ResolveCollectorBetResponse()
 
 			if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 			{
-				ShowDownGameState->BroadcastCollectorLLMStatus(false, TEXT("OPENAI_API_KEY not found. Using fallback AI."));
+				ShowDownGameState->BroadcastCollectorLLMStatus(false, TEXT("API 키 없음. 기본 AI 사용."));
 			}
 		}
 	}

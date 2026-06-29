@@ -13,6 +13,7 @@
 #include "ShowDownGameStateBase.h"
 #include "ShowDownChatWidget.h"
 #include "ShowDownPlayerController.h"
+#include "ShowDownVoiceSubsystem.h"
 #include "SupabaseSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -88,6 +89,11 @@ void APlayerPawn::PreInitializeComponents()
 void APlayerPawn::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (ToggleChatKey == VoicePushToTalkKey)
+	{
+		ToggleChatKey = EKeys::Enter;
+	}
 
 	if (HasAuthority())
 	{
@@ -175,6 +181,8 @@ void APlayerPawn::Tick(float DeltaTime)
 		bHasPreviousMousePosition = false;
 		return;
 	}
+
+	HandleVoicePushToTalkInput();
 
 	if (bUseMousePositionLookFallback)
 	{
@@ -671,6 +679,42 @@ void APlayerPawn::HandleBettingHotkeys()
 	if (PC->WasInputKeyJustPressed(EKeys::Five))
 	{
 		RequestPlayerRaiseTo(6);
+	}
+}
+
+void APlayerPawn::HandleVoicePushToTalkInput()
+{
+	if (!bEnableVoicePushToTalk)
+	{
+		return;
+	}
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	UShowDownVoiceSubsystem* VoiceSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UShowDownVoiceSubsystem>()
+		: nullptr;
+	if (!PC || !VoiceSubsystem || VoiceSubsystem->VoiceInputMode != EShowDownVoiceInputMode::PushToTalk)
+	{
+		return;
+	}
+
+	if (PC->WasInputKeyJustPressed(VoicePushToTalkKey))
+	{
+		VoiceSubsystem->BeginPushToTalk(
+			FShowDownVoiceTextCallback::CreateWeakLambda(
+				this,
+				[this](bool bSuccess, const FString& Text)
+				{
+					if (bSuccess)
+					{
+						SubmitDialogueInput(Text);
+					}
+				}));
+	}
+
+	if (PC->WasInputKeyJustReleased(VoicePushToTalkKey))
+	{
+		VoiceSubsystem->EndPushToTalk();
 	}
 }
 
