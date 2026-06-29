@@ -137,6 +137,18 @@ private:
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera", meta = (ClampMin = "0.0"))
 	float GameCameraLookSensitivity = 0.2f;
 
+	UPROPERTY(
+		EditAnywhere,
+		Category = "ShowDown|Camera|Game Camera|Voice",
+		meta = (DisplayName = "Voice Speed", ClampMin = "0.5", ClampMax = "2.0", UIMin = "0.5", UIMax = "2.0"))
+	float GameCameraVoiceSpeed = 1.0f;
+
+	UPROPERTY(
+		EditAnywhere,
+		Category = "ShowDown|Camera|Game Camera|Voice",
+		meta = (DisplayName = "Voice Pitch", ClampMin = "0.5", ClampMax = "2.0", UIMin = "0.5", UIMax = "2.0"))
+	float GameCameraVoicePitch = 1.0f;
+
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Camera|Game Camera")
 	float GameCameraMinPitch = -35.0f;
 
@@ -215,6 +227,7 @@ private:
 	void SetUiOnlyInput(UUserWidget* FocusWidget);
 	void StartDeveloperSinglePlayPreview();
 	void ShowSinglePlayPreviewInternal(bool bAllowOnlineReward);
+	void ApplySinglePlayerVoiceSettings();
 	bool PlayCamera(ACameraActor* Camera, bool bCut = false);
 	bool PlayViewTarget(AActor* ViewTarget, bool bCut = false);
 	void ClearGameplayCameraLook();

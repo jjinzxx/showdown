@@ -29,6 +29,10 @@
 		{
 			"Name": "EOSVoiceChat",
 			"Enabled": true
+		},
+		{
+			"Name": "AudioCapture",
+			"Enabled": true
 		}
 	]
 }
