@@ -430,7 +430,7 @@ void AShowDownHubFlowManager::ShowSinglePlayPreviewInternal(bool bAllowOnlineRew
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("L_Hub GameMode is not AShowDownGameModeBase. Single play cannot start."));
+			UE_LOG(LogTemp, Warning, TEXT("Main level GameMode is not AShowDownGameModeBase. Single play cannot start."));
 		}
 	}
 
@@ -747,7 +747,7 @@ void AShowDownHubFlowManager::HandleLobbyLeaveRequested()
 	{
 		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
 		{
-			EosSubsystem->LeaveLobby(FName(TEXT("L_Hub")));
+			EosSubsystem->LeaveLobby(FName(TEXT("L_ShowdownMain")));
 			return;
 		}
 	}

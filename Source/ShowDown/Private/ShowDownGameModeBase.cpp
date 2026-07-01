@@ -13,7 +13,6 @@
 #include "RouletteSystem.h"
 #include "SDCardPlacementAnchor.h"
 #include "SDLLMSubsystem.h"
-#include "SDMultiplayerTable.h"
 #include "SDMultiplayerSeatAnchor.h"
 #include "ShowDownTypes.h"
 #include "Components/SceneComponent.h"
@@ -33,25 +32,6 @@
 
 namespace
 {
-	ACameraActor* FindMultiplayerSeatCamera(UWorld* World, int32 SeatIndex)
-	{
-		if (!World)
-		{
-			return nullptr;
-		}
-
-		const FName SeatTag(*FString::Printf(TEXT("MP_SeatCamera_%d"), SeatIndex + 1));
-		for (TActorIterator<ACameraActor> It(World); It; ++It)
-		{
-			if (ACameraActor* Camera = *It; Camera && Camera->ActorHasTag(SeatTag))
-			{
-				return Camera;
-			}
-		}
-
-		return nullptr;
-	}
-
 	int32 GetSeatIndexFromPlayerSlot(EShowDownPlayerSlot Slot)
 	{
 		switch (Slot)
@@ -65,22 +45,142 @@ namespace
 		}
 	}
 
-	int32 GetCardSeatIndexFromPlayerSlot(EShowDownPlayerSlot Slot)
-	{
-		switch (Slot)
-		{
-		case EShowDownPlayerSlot::Player1: return 1;
-		case EShowDownPlayerSlot::Player2: return 0;
-		case EShowDownPlayerSlot::Player3: return 3;
-		case EShowDownPlayerSlot::Player4: return 2;
-		case EShowDownPlayerSlot::None:
-		default: return INDEX_NONE;
-		}
-	}
-
 	FRotator GetHiddenForeheadCardRotationOffset()
 	{
 		return FRotator(0.0f, 180.0f, 0.0f);
+	}
+
+	FRotator GetMultiplayerForeheadCardRotationOffset(int32 ReceiverPlayerIndex)
+	{
+		// Player1 uses the single-player player forehead slot, which needs the
+		// hidden-card flip. Player2 reuses the old opponent/collector slot, which
+		// is already authored to face the table correctly.
+		return ReceiverPlayerIndex == 0 ? GetHiddenForeheadCardRotationOffset() : FRotator::ZeroRotator;
+	}
+
+	bool IsActiveNetworkPlayerController(const APlayerController* PlayerController)
+	{
+		return PlayerController
+			&& PlayerController->Player != nullptr
+			&& PlayerController->PlayerState != nullptr;
+	}
+
+	bool IsPlaceholderNetworkPlayerName(const FString& PlayerName)
+	{
+		const FString TrimmedName = PlayerName.TrimStartAndEnd();
+		if (TrimmedName.IsEmpty())
+		{
+			return true;
+		}
+
+		if (TrimmedName.Equals(TEXT("Player"), ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		if (TrimmedName.StartsWith(TEXT("Player "), ESearchCase::IgnoreCase))
+		{
+			FString Suffix = TrimmedName.RightChop(7).TrimStartAndEnd();
+			return !Suffix.IsEmpty() && Suffix.IsNumeric();
+		}
+
+		return false;
+	}
+
+	FString GetNetworkPlayerDisplayName(const ASDPlayerState* PlayerState)
+	{
+		if (!PlayerState)
+		{
+			return FString();
+		}
+
+		const FString PlayerName = PlayerState->GetPlayerName().TrimStartAndEnd().Left(32);
+		if (!IsPlaceholderNetworkPlayerName(PlayerName))
+		{
+			return PlayerName;
+		}
+
+		return TEXT("Connecting...");
+	}
+
+	EShowDownPlayerSlot GetPlayerSlotByIndex(int32 SlotIndex)
+	{
+		static const EShowDownPlayerSlot AllSlots[] = {
+			EShowDownPlayerSlot::Player1,
+			EShowDownPlayerSlot::Player2,
+			EShowDownPlayerSlot::Player3,
+			EShowDownPlayerSlot::Player4
+		};
+
+		return AllSlots[FMath::Clamp(SlotIndex, 0, UE_ARRAY_COUNT(AllSlots) - 1)];
+	}
+
+	EShowDownSide GetMultiplayerLayoutSideForPlayerIndex(int32 PlayerIndex)
+	{
+		return PlayerIndex == 1 ? EShowDownSide::Collector : EShowDownSide::Player;
+	}
+
+	FVector ResolveSingleTableCenter(UWorld* World)
+	{
+		if (!World)
+		{
+			return FVector(-5457.0f, -670.0f, 324.0f);
+		}
+
+		TArray<AActor*> AnchorActors;
+		UGameplayStatics::GetAllActorsOfClass(World, ASDCardPlacementAnchor::StaticClass(), AnchorActors);
+
+		FVector HandAnchorSum = FVector::ZeroVector;
+		int32 HandAnchorCount = 0;
+		FVector AnyAnchorSum = FVector::ZeroVector;
+		int32 AnyAnchorCount = 0;
+		for (AActor* AnchorActor : AnchorActors)
+		{
+			const ASDCardPlacementAnchor* Anchor = Cast<ASDCardPlacementAnchor>(AnchorActor);
+			if (!Anchor)
+			{
+				continue;
+			}
+
+			const FVector AnchorLocation = Anchor->GetActorLocation();
+			AnyAnchorSum += AnchorLocation;
+			++AnyAnchorCount;
+			if (Anchor->IsHandAnchor())
+			{
+				HandAnchorSum += AnchorLocation;
+				++HandAnchorCount;
+			}
+		}
+
+		if (HandAnchorCount > 0)
+		{
+			return HandAnchorSum / static_cast<float>(HandAnchorCount);
+		}
+
+		if (AnyAnchorCount > 0)
+		{
+			FVector Center = AnyAnchorSum / static_cast<float>(AnyAnchorCount);
+			Center.Z -= 30.0f;
+			return Center;
+		}
+
+		return FVector(-5457.0f, -670.0f, 324.0f);
+	}
+
+	FTransform BuildSingleTableSeatTransform(const FVector& TableCenter, int32 SeatIndex)
+	{
+		static const FVector SeatOffsets[] = {
+			FVector(-85.0f, 0.0f, 45.0f),
+			FVector(85.0f, 0.0f, 45.0f),
+			FVector(0.0f, -200.0f, 45.0f),
+			FVector(0.0f, 200.0f, 45.0f)
+		};
+		static const float SeatYaws[] = { 0.0f, 180.0f, 90.0f, -90.0f };
+
+		const int32 ClampedSeatIndex = FMath::Clamp(SeatIndex, 0, UE_ARRAY_COUNT(SeatOffsets) - 1);
+		return FTransform(
+			FRotator(0.0f, SeatYaws[ClampedSeatIndex], 0.0f),
+			TableCenter + SeatOffsets[ClampedSeatIndex]);
 	}
 }
 
@@ -185,6 +285,11 @@ void AShowDownGameModeBase::StartSinglePlayer()
 
 void AShowDownGameModeBase::StartMultiplayerGame()
 {
+	if (bMultiplayerMatchStarted)
+	{
+		return;
+	}
+
 	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
 	{
 		ShowDownGameState->SetMatchMode(EShowDownMatchMode::Multiplayer);
@@ -252,7 +357,7 @@ void AShowDownGameModeBase::PostLogin(APlayerController* NewPlayer)
 		{
 			ShowDownController->ClientShowStatusMessage(TEXT("게임이 이미 시작되어 입장할 수 없습니다."));
 		}
-		NewPlayer->ClientTravel(TEXT("/Game/Maps/L_Hub"), TRAVEL_Absolute);
+		NewPlayer->ClientTravel(TEXT("/Game/Maps/L_ShowdownMain"), TRAVEL_Absolute);
 		return;
 	}
 
@@ -276,10 +381,10 @@ void AShowDownGameModeBase::PostLogin(APlayerController* NewPlayer)
 			{
 				ShowDownController->ClientShowStatusMessage(TEXT("방이 가득 찼습니다. 최대 4명까지 입장할 수 있습니다."));
 			}
-			NewPlayer->ClientTravel(TEXT("/Game/Maps/L_Hub"), TRAVEL_Absolute);
+			NewPlayer->ClientTravel(TEXT("/Game/Maps/L_ShowdownMain"), TRAVEL_Absolute);
 			return;
 		}
-		ShowDownPlayerState->SetHostPlayer(GameState && GameState->PlayerArray.Num() <= 1);
+		ShowDownPlayerState->SetHostPlayer(ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::Player1);
 	}
 
 	RefreshNetworkPlayerSlots();
@@ -2179,32 +2284,29 @@ void AShowDownGameModeBase::RefreshNetworkPlayerSlots()
 
 	TSet<EShowDownPlayerSlot> SeenSlots;
 	TArray<ASDPlayerState*> NetworkPlayers;
-	if (GameState)
-	{
-		for (APlayerState* BasePlayerState : GameState->PlayerArray)
-		{
-			ASDPlayerState* ShowDownPlayerState = Cast<ASDPlayerState>(BasePlayerState);
-			if (ShowDownPlayerState)
-			{
-				NetworkPlayers.AddUnique(ShowDownPlayerState);
-			}
-		}
-	}
-
 	if (UWorld* World = GetWorld())
 	{
 		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
 		{
 			if (APlayerController* PlayerController = Iterator->Get())
 			{
-				if (ASDPlayerState* ShowDownPlayerState = PlayerController->GetPlayerState<ASDPlayerState>())
+				if (IsActiveNetworkPlayerController(PlayerController))
 				{
-					NetworkPlayers.AddUnique(ShowDownPlayerState);
+					if (ASDPlayerState* ShowDownPlayerState = PlayerController->GetPlayerState<ASDPlayerState>())
+					{
+						NetworkPlayers.AddUnique(ShowDownPlayerState);
+					}
 				}
 			}
 		}
 	}
 
+	NetworkPlayers.Sort([](const ASDPlayerState& Left, const ASDPlayerState& Right)
+	{
+		return static_cast<uint8>(Left.ShowDownSlot) < static_cast<uint8>(Right.ShowDownSlot);
+	});
+
+	int32 PlayerIndex = 0;
 	for (ASDPlayerState* ShowDownPlayerState : NetworkPlayers)
 	{
 		if (!ShowDownPlayerState)
@@ -2212,7 +2314,12 @@ void AShowDownGameModeBase::RefreshNetworkPlayerSlots()
 			continue;
 		}
 
-		if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
+		if (!bMultiplayerMatchStarted)
+		{
+			ShowDownPlayerState->SetShowDownSlot(GetPlayerSlotByIndex(PlayerIndex));
+			ShowDownPlayerState->SetHostPlayer(PlayerIndex == 0);
+		}
+		else if (ShowDownPlayerState->ShowDownSlot == EShowDownPlayerSlot::None)
 		{
 			ShowDownPlayerState->SetShowDownSlot(FindNextOpenPlayerSlot());
 		}
@@ -2222,15 +2329,18 @@ void AShowDownGameModeBase::RefreshNetworkPlayerSlots()
 			continue;
 		}
 
+		const FString DisplayName = GetNetworkPlayerDisplayName(ShowDownPlayerState);
+
 		FShowDownNetworkPlayerSlot SlotState;
 		SlotState.Slot = ShowDownPlayerState->ShowDownSlot;
 		SlotState.PlayerId = FString::FromInt(ShowDownPlayerState->GetPlayerId());
-		SlotState.DisplayName = ShowDownPlayerState->GetPlayerName();
+		SlotState.DisplayName = DisplayName;
 		SlotState.bConnected = true;
 		SlotState.bReady = ShowDownPlayerState->bReady;
 
 		ShowDownGameState->SetPlayerSlot(SlotState);
 		SeenSlots.Add(SlotState.Slot);
+		++PlayerIndex;
 	}
 
 	const EShowDownPlayerSlot AllSlots[] = {
@@ -2252,11 +2362,20 @@ void AShowDownGameModeBase::RefreshNetworkPlayerSlots()
 EShowDownPlayerSlot AShowDownGameModeBase::FindNextOpenPlayerSlot() const
 {
 	TSet<EShowDownPlayerSlot> UsedSlots;
-	if (GameState)
+	if (UWorld* World = GetWorld())
 	{
-		for (APlayerState* BasePlayerState : GameState->PlayerArray)
+		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
 		{
-			if (const ASDPlayerState* ShowDownPlayerState = Cast<ASDPlayerState>(BasePlayerState))
+			const APlayerController* PlayerController = Iterator->Get();
+			if (!IsActiveNetworkPlayerController(PlayerController))
+			{
+				continue;
+			}
+
+			const ASDPlayerState* ShowDownPlayerState = PlayerController
+				? PlayerController->GetPlayerState<ASDPlayerState>()
+				: nullptr;
+			if (ShowDownPlayerState && ShowDownPlayerState->ShowDownSlot != EShowDownPlayerSlot::None)
 			{
 				UsedSlots.Add(ShowDownPlayerState->ShowDownSlot);
 			}
@@ -2356,7 +2475,6 @@ void AShowDownGameModeBase::StartMultiplayerMatch(const TArray<ASDPlayerState*>&
 		MultiplayerPlayers.Add(Player);
 	}
 
-	EnsureMultiplayerTable();
 	EnsureMultiplayerSeatAnchors();
 
 	if (AShowDownGameStateBase* ShowDownGameState = GetShowDownGameState())
@@ -2403,23 +2521,16 @@ void AShowDownGameModeBase::StartMultiplayerMatch(const TArray<ASDPlayerState*>&
 TArray<ASDPlayerState*> AShowDownGameModeBase::GetConnectedShowDownPlayers() const
 {
 	TArray<ASDPlayerState*> Players;
-	if (GameState)
-	{
-		for (APlayerState* BasePlayerState : GameState->PlayerArray)
-		{
-			ASDPlayerState* Player = Cast<ASDPlayerState>(BasePlayerState);
-			if (Player && Player->ShowDownSlot != EShowDownPlayerSlot::None)
-			{
-				Players.AddUnique(Player);
-			}
-		}
-	}
-
 	if (UWorld* World = GetWorld())
 	{
 		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
 		{
 			const APlayerController* PlayerController = Iterator->Get();
+			if (!IsActiveNetworkPlayerController(PlayerController))
+			{
+				continue;
+			}
+
 			ASDPlayerState* Player = PlayerController ? PlayerController->GetPlayerState<ASDPlayerState>() : nullptr;
 			if (Player && Player->ShowDownSlot != EShowDownPlayerSlot::None)
 			{
@@ -2488,7 +2599,6 @@ void AShowDownGameModeBase::EnsureMultiplayerPawns()
 				ShowDownController->ClientUseMultiplayerSeatCamera(
 					SeatIndex,
 					GameplayCameraLookSensitivity,
-					GameplayFallbackCameraLookSensitivity,
 					GameplayCameraMinPitch,
 					GameplayCameraMaxPitch,
 					GameplayCameraMinYawOffset,
@@ -2526,7 +2636,6 @@ void AShowDownGameModeBase::EnsureMultiplayerPawns()
 				ShowDownController->ClientUseMultiplayerSeatCamera(
 					SeatIndex,
 					GameplayCameraLookSensitivity,
-					GameplayFallbackCameraLookSensitivity,
 					GameplayCameraMinPitch,
 					GameplayCameraMaxPitch,
 					GameplayCameraMinYawOffset,
@@ -2548,32 +2657,9 @@ void AShowDownGameModeBase::EnsureMultiplayerPawns()
 	}
 }
 
-void AShowDownGameModeBase::EnsureMultiplayerTable()
-{
-	if (MultiplayerTable || !HasAuthority())
-	{
-		return;
-	}
-
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.Owner = this;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	MultiplayerTable = World->SpawnActor<ASDMultiplayerTable>(
-		ASDMultiplayerTable::StaticClass(),
-		FVector(0.0f, 0.0f, 25.0f),
-		FRotator::ZeroRotator,
-		SpawnParams);
-}
-
 void AShowDownGameModeBase::EnsureMultiplayerSeatAnchors()
 {
-	if (!HasAuthority() || MultiplayerSeatAnchors.Num() == MultiplayerPlayers.Num())
+	if (!HasAuthority())
 	{
 		return;
 	}
@@ -2596,8 +2682,13 @@ void AShowDownGameModeBase::EnsureMultiplayerSeatAnchors()
 	for (int32 PlayerIndex = 0; PlayerIndex < MultiplayerPlayers.Num(); ++PlayerIndex)
 	{
 		const ASDPlayerState* Player = MultiplayerPlayers[PlayerIndex];
-		const int32 SeatIndexFromSlot = Player ? GetCardSeatIndexFromPlayerSlot(Player->ShowDownSlot) : INDEX_NONE;
+		const int32 SeatIndexFromSlot = Player ? GetSeatIndexFromPlayerSlot(Player->ShowDownSlot) : INDEX_NONE;
 		const int32 SeatIndex = SeatIndexFromSlot == INDEX_NONE ? PlayerIndex : SeatIndexFromSlot;
+		if (SeatIndex == 0 || SeatIndex == 1)
+		{
+			MultiplayerSeatAnchors.Add(nullptr);
+			continue;
+		}
 
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Owner = this;
@@ -2610,9 +2701,9 @@ void AShowDownGameModeBase::EnsureMultiplayerSeatAnchors()
 			continue;
 		}
 
-		if (ACameraActor* SeatCamera = FindMultiplayerSeatCamera(World, SeatIndex))
+		if (true)
 		{
-			SeatAnchor->ConfigureFromCameraTransform(SeatCamera->GetCameraComponent()->GetComponentTransform());
+			SeatAnchor->ConfigureFromCameraTransform(GetMultiplayerPawnSpawnTransform(nullptr, SeatIndex));
 		}
 		else
 		{
@@ -2626,17 +2717,8 @@ void AShowDownGameModeBase::EnsureMultiplayerSeatAnchors()
 
 FTransform AShowDownGameModeBase::GetMultiplayerPawnSpawnTransform(AController* Controller, int32 PlayerIndex)
 {
-	static const FVector SeatOffsets[] = {
-		FVector(0.0f, -850.0f, 0.0f),
-		FVector(0.0f, 850.0f, 0.0f),
-		FVector(-1200.0f, 0.0f, 0.0f),
-		FVector(1200.0f, 0.0f, 0.0f)
-	};
-	static const float SeatYaws[] = { 90.0f, -90.0f, 0.0f, 180.0f };
-
-	const int32 SeatIndex = FMath::Clamp(PlayerIndex, 0, UE_ARRAY_COUNT(SeatOffsets) - 1);
-	const FVector TableCenter = MultiplayerTable ? MultiplayerTable->GetActorLocation() : FVector::ZeroVector;
-	return FTransform(FRotator(0.0f, SeatYaws[SeatIndex], 0.0f), TableCenter + SeatOffsets[SeatIndex]);
+	const FVector TableCenter = ResolveSingleTableCenter(GetWorld());
+	return BuildSingleTableSeatTransform(TableCenter, PlayerIndex);
 }
 
 ASDPlayerState* AShowDownGameModeBase::FindNextAliveMultiplayerPlayer(ASDPlayerState* AfterPlayer) const
@@ -2718,16 +2800,8 @@ void AShowDownGameModeBase::DealMultiplayerHands()
 		}
 
 		const int32 PlayerIndex = MultiplayerPlayers.IndexOfByKey(Player);
-		FSDCardHandLayoutSettings HandLayout = GetDefaultHandLayoutSettings();
-		if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
-		{
-			// The seat anchor is already placed in front of the camera.
-			HandLayout.CardSpacing = 32.0f;
-			HandLayout.ForwardOffset = 0.0f;
-			HandLayout.HeightOffset = 0.0f;
-			HandLayout.LeanAngle = 0.0f;
-			HandLayout.LayerStep = 0.5f;
-		}
+		const FSDCardHandLayoutSettings HandLayout =
+			ResolveHandLayoutSettings(GetMultiplayerLayoutSideForPlayerIndex(PlayerIndex));
 
 		CardSystem->SpawnHandCards(
 			this,
@@ -2738,6 +2812,8 @@ void AShowDownGameModeBase::DealMultiplayerHands()
 			true,
 			false,
 			Player->HandCards);
+
+		ApplyCardMotionForSide(GetMultiplayerLayoutSideForPlayerIndex(PlayerIndex), Player->HandCards);
 
 		for (ACard* Card : Player->HandCards)
 		{
@@ -2920,7 +2996,12 @@ void AShowDownGameModeBase::HandleMultiplayerSelectedCard(ASDPlayerState* Submit
 	SelectedCard->SetSelectable(false);
 	if (USceneComponent* HeadSlot = GetHeadSlotForPlayerState(MultiplayerCardReceiver))
 	{
-		CardSystem->MoveCardToSlotWithRotationOffset(SelectedCard, HeadSlot, true, GetHiddenForeheadCardRotationOffset());
+		const int32 ReceiverPlayerIndex = MultiplayerPlayers.IndexOfByKey(MultiplayerCardReceiver);
+		CardSystem->MoveCardToSlotWithRotationOffset(
+			SelectedCard,
+			HeadSlot,
+			true,
+			GetMultiplayerForeheadCardRotationOffset(ReceiverPlayerIndex));
 	}
 
 	if (AreAllAliveMultiplayerPlayersReadyToReveal())
@@ -3446,15 +3527,8 @@ void AShowDownGameModeBase::ReflowMultiplayerHand(ASDPlayerState* Player)
 	if (USceneComponent* HandSlot = GetHandSlotForPlayerState(Player))
 	{
 		const int32 PlayerIndex = MultiplayerPlayers.IndexOfByKey(Player);
-		FSDCardHandLayoutSettings HandLayout = GetDefaultHandLayoutSettings();
-		if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
-		{
-			HandLayout.CardSpacing = 32.0f;
-			HandLayout.ForwardOffset = 0.0f;
-			HandLayout.HeightOffset = 0.0f;
-			HandLayout.LeanAngle = 0.0f;
-			HandLayout.LayerStep = 0.5f;
-		}
+		const FSDCardHandLayoutSettings HandLayout =
+			ResolveHandLayoutSettings(GetMultiplayerLayoutSideForPlayerIndex(PlayerIndex));
 		CardSystem->LayoutHandCards(this, HandSlot, HandLayout, Player->HandCards);
 	}
 }
@@ -3467,24 +3541,23 @@ USceneComponent* AShowDownGameModeBase::GetHandSlotForPlayerState(ASDPlayerState
 	}
 
 	const int32 PlayerIndex = MultiplayerPlayers.IndexOfByKey(Player);
+	if (PlayerIndex == 0)
+	{
+		if (USceneComponent* HandSlot = GetHandSlotForSide(EShowDownSide::Player))
+		{
+			return HandSlot;
+		}
+	}
+	if (PlayerIndex == 1)
+	{
+		if (USceneComponent* HandSlot = GetHandSlotForSide(EShowDownSide::Collector))
+		{
+			return HandSlot;
+		}
+	}
 	if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
 	{
 		return MultiplayerSeatAnchors[PlayerIndex]->GetHandSlot();
-	}
-
-	// Legacy map anchors are used only until runtime seat anchors are available.
-	const EShowDownSide AnchorSide = PlayerIndex == 0
-		? EShowDownSide::Player
-		: PlayerIndex == 1 ? EShowDownSide::Collector : EShowDownSide::Player;
-	if (PlayerIndex >= 0 && PlayerIndex < 2)
-	{
-		if (const ASDCardPlacementAnchor* HandAnchor = GetHandAnchorForSide(AnchorSide))
-		{
-			if (USceneComponent* HandSlot = HandAnchor->GetSlotComponent())
-			{
-				return HandSlot;
-			}
-		}
 	}
 
 	for (FConstPlayerControllerIterator Iterator = GetWorld()->GetPlayerControllerIterator(); Iterator; ++Iterator)
@@ -3521,23 +3594,23 @@ USceneComponent* AShowDownGameModeBase::GetHeadSlotForPlayerState(ASDPlayerState
 	}
 
 	const int32 PlayerIndex = MultiplayerPlayers.IndexOfByKey(Player);
+	if (PlayerIndex == 0)
+	{
+		if (USceneComponent* HeadSlot = GetHeadSlotForSide(EShowDownSide::Player))
+		{
+			return HeadSlot;
+		}
+	}
+	if (PlayerIndex == 1)
+	{
+		if (USceneComponent* HeadSlot = GetHeadSlotForSide(EShowDownSide::Collector))
+		{
+			return HeadSlot;
+		}
+	}
 	if (MultiplayerSeatAnchors.IsValidIndex(PlayerIndex) && MultiplayerSeatAnchors[PlayerIndex])
 	{
 		return MultiplayerSeatAnchors[PlayerIndex]->GetForeheadSlot();
-	}
-
-	const EShowDownSide AnchorSide = PlayerIndex == 0
-		? EShowDownSide::Player
-		: PlayerIndex == 1 ? EShowDownSide::Collector : EShowDownSide::Player;
-	if (PlayerIndex >= 0 && PlayerIndex < 2)
-	{
-		if (const ASDCardPlacementAnchor* HeadAnchor = GetForeheadAnchorForSide(AnchorSide))
-		{
-			if (USceneComponent* HeadSlot = HeadAnchor->GetSlotComponent())
-			{
-				return HeadSlot;
-			}
-		}
 	}
 
 	for (FConstPlayerControllerIterator Iterator = GetWorld()->GetPlayerControllerIterator(); Iterator; ++Iterator)

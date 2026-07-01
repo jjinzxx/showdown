@@ -14,7 +14,6 @@ class ACard;
 class APlayerPawn;
 class ASDCardPlacementAnchor;
 class ASDPlayerSeat;
-class ASDMultiplayerTable;
 class ASDMultiplayerSeatAnchor;
 class ASDSelfShotGunActor;
 class UCardSystem;
@@ -183,7 +182,7 @@ public:
 	void EventEnd(EShowDownPhase FinishedPhase);
 
 	// 싱글플레이 한 판을 시작합니다. 콜렉터를 찾고 1스테이지부터 진행합니다.
-	// 허브(L_Hub)에서는 싱글플레이 버튼을 눌렀을 때 HubFlowManager가 이 함수를 호출합니다.
+	// 메인 레벨에서는 싱글플레이 버튼을 눌렀을 때 HubFlowManager가 이 함수를 호출합니다.
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|Flow")
 	void StartSinglePlayer();
 
@@ -206,9 +205,6 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera", meta = (ClampMin = "0.0"))
 	float GameplayCameraLookSensitivity = 0.08f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera", meta = (ClampMin = "0.0"))
-	float GameplayFallbackCameraLookSensitivity = 0.08f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ShowDown|Camera")
 	float GameplayCameraMinPitch = -35.0f;
@@ -338,9 +334,6 @@ private:
 	TObjectPtr<ASDPlayerState> MultiplayerNextFirstPlayer = nullptr;
 
 	UPROPERTY()
-	TObjectPtr<ASDMultiplayerTable> MultiplayerTable = nullptr;
-
-	UPROPERTY()
 	TArray<TObjectPtr<ASDMultiplayerSeatAnchor>> MultiplayerSeatAnchors;
 
 	UPROPERTY()
@@ -415,7 +408,6 @@ private:
 	void StartMultiplayerMatch(const TArray<ASDPlayerState*>& Players);
 	TArray<ASDPlayerState*> GetConnectedShowDownPlayers() const;
 	ASDPlayerState* GetPlayerStateForController(AController* Controller) const;
-	void EnsureMultiplayerTable();
 	void EnsureMultiplayerSeatAnchors();
 	void EnsureMultiplayerPawns();
 	FTransform GetMultiplayerPawnSpawnTransform(AController* Controller, int32 PlayerIndex);

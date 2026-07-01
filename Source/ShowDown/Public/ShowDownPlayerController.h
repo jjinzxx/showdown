@@ -292,6 +292,9 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerRequestMultiplayerRestart();
 
+	UFUNCTION(Server, Unreliable)
+	void ServerUpdateDebugCameraLookRotation(FRotator LookRotation);
+
 	UFUNCTION(Client, Reliable)
 	void ClientShowStatusMessage(const FString& Message);
 
@@ -307,7 +310,6 @@ public:
 	void ClientUseMultiplayerSeatCamera(
 		int32 SeatIndex,
 		float SeatCameraLookSensitivity,
-		float FallbackSeatCameraLookSensitivity,
 		float MinPitchDegrees,
 		float MaxPitchDegrees,
 		float MinYawOffsetDegrees,
@@ -345,6 +347,7 @@ private:
 	void SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetBet);
 	void ApplyPawnCameraInput(float YawInput, float PitchInput);
 	void UpdateFixedCameraMouseLook(float DeltaTime);
+	void SubmitDebugCameraLookRotation(const FRotator& LookRotation, float DeltaTime);
 	void RestoreFixedCameraBaseTransform();
 	FRotator GetBreathingSwayRotationOffset(float Strength) const;
 	FVector GetBreathingSwayLocationOffset(const FRotator& CameraRotation, float Strength) const;
@@ -405,19 +408,18 @@ private:
 	UPROPERTY()
 	TObjectPtr<USceneComponent> FixedCameraMouseLookTarget = nullptr;
 
-	// Created only on a local client when the map does not contain an authored
-	// MP_SeatCamera_* actor. It is deliberately non-replicated: every player
-	// must keep an independent, slot-specific view of the shared table.
+	// Created only on a local client. Every player keeps an independent,
+	// slot-specific view derived from the same single-player table anchors.
 	TObjectPtr<ACameraActor> LocalFallbackSeatCamera = nullptr;
 
 	TSharedPtr<SWidget> CenterCrosshairWidget;
 	TArray<FSDPrimitiveCustomDepthState> FocusedPrimitiveStates;
 
 	bool bChatOpen = false;
+	FString LastSubmittedMultiplayerDisplayName;
 	bool bPendingMultiplayerSeatCamera = false;
 	int32 PendingMultiplayerSeatIndex = INDEX_NONE;
 	float PendingMultiplayerSeatCameraLookSensitivity = 0.08f;
-	float PendingMultiplayerFallbackSeatCameraLookSensitivity = 0.08f;
 	float PendingMultiplayerCameraMinPitch = -35.0f;
 	float PendingMultiplayerCameraMaxPitch = 35.0f;
 	float PendingMultiplayerCameraMinYawOffset = -45.0f;
@@ -447,6 +449,8 @@ private:
 	float CameraSteppedShakeSeed = 0.0f;
 	FRotator CameraSteppedShakeRotationAmplitude = FRotator::ZeroRotator;
 	FVector CameraSteppedShakeLocationAmplitude = FVector::ZeroVector;
+	float DebugCameraLookReplicationElapsedTime = 0.0f;
+	FRotator LastSubmittedDebugCameraLookRotation = FRotator::ZeroRotator;
 	bool bFixedCameraInvertMouseY = true;
 	bool bVoiceChatEventsBound = false;
 	bool bVoiceSubsystemEventsBound = false;

@@ -14,7 +14,10 @@ ACard::ACard()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	bReplicates = true;
-	SetReplicateMovement(true);
+	SetReplicateMovement(false);
+	SetNetUpdateFrequency(30.0f);
+	SetMinNetUpdateFrequency(10.0f);
+	NetPriority = 2.0f;
 
 	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(RootComp);
@@ -101,6 +104,11 @@ void ACard::BeginPlay()
 	TargetVisualWorldOffset = FVector::ZeroVector;
 	DefaultRotation = GetActorRotation();
 	TargetRotation = DefaultRotation;
+	if (HasAuthority())
+	{
+		ReplicatedMovementTarget.Location = DefaultLocation;
+		ReplicatedMovementTarget.Rotation = DefaultRotation;
+	}
 	if (VisualRoot)
 	{
 		BaseVisualRootScale = VisualRoot->GetRelativeScale3D();
@@ -109,6 +117,11 @@ void ACard::BeginPlay()
 	}
 	RefreshVisual();
 	SetActorTickEnabled(false);
+
+	if (!HasAuthority() && ReplicatedMovementTarget.Revision != 0)
+	{
+		ApplyMovementTarget(FTransform(ReplicatedMovementTarget.Rotation, ReplicatedMovementTarget.Location), ReplicatedMovementTarget.bUseSlotAttachMotion);
+	}
 }
 
 void ACard::Tick(float DeltaTime)
@@ -131,21 +144,6 @@ void ACard::Tick(float DeltaTime)
 		VisualRoot->SetRelativeScale3D(BaseVisualRootScale * CurrentVisualScaleMultiplier);
 	}
 
-	if (!HasAuthority())
-	{
-		if (CurrentVisualWorldOffset.Equals(TargetVisualWorldOffset, 0.1f))
-		{
-			CurrentVisualWorldOffset = TargetVisualWorldOffset;
-			if (VisualRoot)
-			{
-				const FVector VisualRelativeOffset = GetActorTransform().InverseTransformVectorNoScale(CurrentVisualWorldOffset);
-				VisualRoot->SetRelativeLocation(VisualRelativeOffset);
-			}
-			SetActorTickEnabled(false);
-		}
-		return;
-	}
-
 	if (bSlotAttachMotionActive)
 	{
 		UpdateSlotAttachMotion(DeltaTime);
@@ -155,12 +153,11 @@ void ACard::Tick(float DeltaTime)
 	const FVector NewLocation = FMath::VInterpTo(GetActorLocation(), TargetLocation, DeltaTime, MoveSpeed);
 	const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime, MoveSpeed);
 	SetActorLocationAndRotation(NewLocation, NewRotation);
-	ForceNetUpdate();
 
 	const bool bVisualAtTarget = CurrentVisualWorldOffset.Equals(TargetVisualWorldOffset, 0.1f);
 	const bool bActorAtTarget = GetActorLocation().Equals(TargetLocation, 0.1f)
 		&& GetActorRotation().Equals(TargetRotation, 0.1f);
-	if (bVisualAtTarget && bActorAtTarget)
+	if (bVisualAtTarget && bActorAtTarget && !bVisualScaleMotionActive && !bSlotAttachSettleActive)
 	{
 		CurrentVisualWorldOffset = TargetVisualWorldOffset;
 		if (VisualRoot)
@@ -169,7 +166,6 @@ void ACard::Tick(float DeltaTime)
 			VisualRoot->SetRelativeLocation(VisualRelativeOffset);
 		}
 		SetActorLocationAndRotation(TargetLocation, TargetRotation);
-		ForceNetUpdate();
 		SetActorTickEnabled(false);
 	}
 }
@@ -212,6 +208,7 @@ void ACard::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimePro
 	DOREPLIFETIME(ACard, HiddenFromSlot);
 	DOREPLIFETIME(ACard, HandOwnerSlot);
 	DOREPLIFETIME(ACard, TargetVisualScaleMultiplier);
+	DOREPLIFETIME(ACard, ReplicatedMovementTarget);
 }
 
 void ACard::OnRep_CardVisual()
@@ -222,6 +219,12 @@ void ACard::OnRep_CardVisual()
 void ACard::OnRep_TargetVisualScaleMultiplier()
 {
 	StartVisualScaleMotion(TargetVisualScaleMultiplier);
+	EnableMotionTick();
+}
+
+void ACard::OnRep_MovementTarget()
+{
+	ApplyMovementTarget(FTransform(ReplicatedMovementTarget.Rotation, ReplicatedMovementTarget.Location), ReplicatedMovementTarget.bUseSlotAttachMotion);
 }
 
 void ACard::RefreshVisual()
@@ -328,17 +331,11 @@ void ACard::MoveToSlotTransform(const FTransform& SlotTransform, bool bNewFaceUp
 	bSelected = false;
 	bHovered = false;
 	SetSelectable(false);
-	DefaultLocation = SlotTransform.GetLocation();
-	DefaultRotation = SlotTransform.GetRotation().Rotator();
-	UpdateTargetTransform();
-	EnableMotionTick();
 	SetFaceUp(bNewFaceUp);
 	SetTargetVisualScaleMultiplier(SlotAttachTargetScale);
+	ApplyMovementTarget(SlotTransform, bUseSlotAttachMotion);
+	PublishMovementTarget(SlotTransform, bUseSlotAttachMotion);
 
-	if (HasAuthority() && bUseSlotAttachMotion)
-	{
-		StartSlotAttachMotion(FTransform(DefaultRotation, DefaultLocation));
-	}
 }
 
 float ACard::GetSlotAttachMotionTotalSeconds() const
@@ -350,11 +347,7 @@ float ACard::GetSlotAttachMotionTotalSeconds() const
 
 void ACard::MoveToHandTransform(const FTransform& NewTransform)
 {
-	bSlotAttachMotionActive = false;
-	bSlotAttachSettleActive = false;
 	bVisualScaleMotionActive = false;
-	SlotAttachElapsedTime = 0.0f;
-	SlotAttachSettleElapsedTime = 0.0f;
 	VisualScaleElapsedTime = 0.0f;
 	SetTargetVisualScaleMultiplier(1.0f);
 	if (VisualRoot)
@@ -362,16 +355,53 @@ void ACard::MoveToHandTransform(const FTransform& NewTransform)
 		VisualRoot->SetRelativeRotation(FRotator::ZeroRotator);
 	}
 
-	DefaultLocation = NewTransform.GetLocation();
-	DefaultRotation = NewTransform.GetRotation().Rotator();
-	UpdateTargetTransform();
-	EnableMotionTick();
-	ForceNetUpdate();
+	ApplyMovementTarget(NewTransform, false);
+	PublishMovementTarget(NewTransform, false);
 }
 
 void ACard::EnableMotionTick()
 {
 	SetActorTickEnabled(true);
+}
+
+void ACard::PublishMovementTarget(const FTransform& NewTransform, bool bPlaySlotAttachMotion)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	ReplicatedMovementTarget.Location = NewTransform.GetLocation();
+	ReplicatedMovementTarget.Rotation = NewTransform.GetRotation().Rotator();
+	ReplicatedMovementTarget.bUseSlotAttachMotion = bPlaySlotAttachMotion && bUseSlotAttachMotion;
+	++ReplicatedMovementTarget.Revision;
+	if (ReplicatedMovementTarget.Revision == 0)
+	{
+		ReplicatedMovementTarget.Revision = 1;
+	}
+	ForceNetUpdate();
+}
+
+void ACard::ApplyMovementTarget(const FTransform& NewTransform, bool bPlaySlotAttachMotion)
+{
+	ResetTravelMotionState();
+	DefaultLocation = NewTransform.GetLocation();
+	DefaultRotation = NewTransform.GetRotation().Rotator();
+	UpdateTargetTransform();
+	EnableMotionTick();
+
+	if (bPlaySlotAttachMotion && bUseSlotAttachMotion)
+	{
+		StartSlotAttachMotion(FTransform(DefaultRotation, DefaultLocation));
+	}
+}
+
+void ACard::ResetTravelMotionState()
+{
+	bSlotAttachMotionActive = false;
+	bSlotAttachSettleActive = false;
+	SlotAttachElapsedTime = 0.0f;
+	SlotAttachSettleElapsedTime = 0.0f;
 }
 
 void ACard::UpdateTargetTransform()

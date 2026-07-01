@@ -185,13 +185,13 @@ private:
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Developer")
 	bool bDeveloperSkipOnlineReward = true;
 
-	// Multiplayer lobby stays in a separate level so L_Hub can evolve independently.
+	// Lobby and gameplay now travel through the same authored main level.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Level")
-	FName MultiplayerLobbyLevelName = TEXT("L_MultiplayerLobby");
+	FName MultiplayerLobbyLevelName = TEXT("L_ShowdownMain");
 
-	// Actual gameplay map reached after the lobby host starts the match.
+	// Same level reloaded as a listen/server-travel target after the lobby host starts the match.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Level")
-	FName MultiplayerLevelName = TEXT("L_MultiplayerGame");
+	FName MultiplayerLevelName = TEXT("L_ShowdownMain");
 
 	// 게임 종료(승/패) 후 메인메뉴로 돌아가기까지의 대기 시간(초). 결과를 잠시 보여주기 위함.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Flow")

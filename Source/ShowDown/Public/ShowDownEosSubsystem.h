@@ -35,13 +35,13 @@ public:
 	void LoginWithSupabaseSession();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void HostSession(FName MapName = TEXT("L_MultiplayerGame"));
+	void HostSession(FName MapName = TEXT("L_ShowdownMain"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void FindAndJoinFirstSession();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void HostLobby(FName LobbyMapName = TEXT("L_MultiplayerLobby"), FName GameMapName = TEXT("L_MultiplayerGame"));
+	void HostLobby(FName LobbyMapName = TEXT("L_ShowdownMain"), FName GameMapName = TEXT("L_ShowdownMain"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void JoinLobbyByCode(const FString& RoomCode);
@@ -52,7 +52,7 @@ public:
 	// Leaves the current room and tears down the local EOS session before returning
 	// to the hub. A host leaving closes its listen-server room for the other clients.
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void LeaveLobby(FName HubMapName = TEXT("L_Hub"));
+	void LeaveLobby(FName HubMapName = TEXT("L_ShowdownMain"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void StartLobbyStartPolling();
@@ -97,8 +97,8 @@ private:
 	TSharedPtr<FOnlineSessionSearch> SessionSearch;
 	FOnlineSessionSearchResult PendingStartedGameSearchResult;
 	FTimerHandle LobbyStartPollTimerHandle;
-	FName PendingHostMapName = TEXT("L_MultiplayerGame");
-	FName PendingGameMapName = TEXT("L_MultiplayerGame");
+	FName PendingHostMapName = TEXT("L_ShowdownMain");
+	FName PendingGameMapName = TEXT("L_ShowdownMain");
 	FString PendingJoinCode;
 	FString LobbyCode;
 	int32 ExpectedLobbyPlayerCount = 2;

@@ -8,6 +8,7 @@
 #include "Online/OnlineSessionNames.h"
 #include "OnlineSessionSettings.h"
 #include "OnlineSubsystem.h"
+#include "ShowDownGameModeBase.h"
 #include "ShowDownGameStateBase.h"
 #include "ShowDownPlayerController.h"
 #include "SupabaseSubsystem.h"
@@ -142,7 +143,7 @@ void UShowDownEosSubsystem::HostSession(FName MapName)
 		return;
 	}
 
-	PendingHostMapName = MapName.IsNone() ? FName(TEXT("L_MultiplayerGame")) : MapName;
+	PendingHostMapName = MapName.IsNone() ? FName(TEXT("L_ShowdownMain")) : MapName;
 	PendingSessionFlow = ESessionFlow::HostImmediateGame;
 
 	if (CreateSessionCompleteDelegateHandle.IsValid())
@@ -206,8 +207,8 @@ void UShowDownEosSubsystem::HostLobby(FName LobbyMapName, FName GameMapName)
 			return;
 		}
 
-		PendingHostMapName = LobbyMapName.IsNone() ? FName(TEXT("L_MultiplayerLobby")) : LobbyMapName;
-		PendingGameMapName = GameMapName.IsNone() ? FName(TEXT("L_MultiplayerGame")) : GameMapName;
+		PendingHostMapName = LobbyMapName.IsNone() ? FName(TEXT("L_ShowdownMain")) : LobbyMapName;
+		PendingGameMapName = GameMapName.IsNone() ? FName(TEXT("L_ShowdownMain")) : GameMapName;
 		PendingJoinCode.Empty();
 		LobbyCode.Empty();
 		bLobbyHost = false;
@@ -228,8 +229,8 @@ void UShowDownEosSubsystem::HostLobby(FName LobbyMapName, FName GameMapName)
 		return;
 	}
 
-	PendingHostMapName = LobbyMapName.IsNone() ? FName(TEXT("L_MultiplayerLobby")) : LobbyMapName;
-	PendingGameMapName = GameMapName.IsNone() ? FName(TEXT("L_MultiplayerGame")) : GameMapName;
+	PendingHostMapName = LobbyMapName.IsNone() ? FName(TEXT("L_ShowdownMain")) : LobbyMapName;
+	PendingGameMapName = GameMapName.IsNone() ? FName(TEXT("L_ShowdownMain")) : GameMapName;
 	LobbyCode = MakeRoomCode();
 	PendingJoinCode.Empty();
 	bLobbyHost = true;
@@ -373,16 +374,30 @@ void UShowDownEosSubsystem::StartHostedGame()
 		return;
 	}
 
+	AGameModeBase* GameMode = World->GetAuthGameMode();
+	if (!GameMode)
+	{
+		OnSessionResult.Broadcast(false, TEXT("Only the listen server host can start the game."));
+		return;
+	}
+
+	if (AShowDownGameModeBase* ShowDownGameMode = Cast<AShowDownGameModeBase>(GameMode))
+	{
+		ShowDownGameMode->RefreshMultiplayerLobbyPlayers();
+	}
+
 	int32 PlayerControllerCount = 0;
 	for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
 	{
-		++PlayerControllerCount;
+		if (const APlayerController* PlayerController = Iterator->Get(); PlayerController && PlayerController->Player)
+		{
+			++PlayerControllerCount;
+		}
 	}
 	const int32 LobbySlotCount = World->GetGameState<AShowDownGameStateBase>()
 		? World->GetGameState<AShowDownGameStateBase>()->PlayerSlots.Num()
 		: 0;
 
-	AGameModeBase* GameMode = World->GetAuthGameMode();
 	UE_LOG(
 		LogTemp,
 		Log,
@@ -393,12 +408,6 @@ void UShowDownEosSubsystem::StartHostedGame()
 		*PendingGameMapName.ToString()
 	);
 
-	if (!GameMode)
-	{
-		OnSessionResult.Broadcast(false, TEXT("Only the listen server host can start the game."));
-		return;
-	}
-
 	const IOnlineSessionPtr SessionInterface = GetSessionInterface();
 	FNamedOnlineSession* NamedSession = SessionInterface.IsValid()
 		? SessionInterface->GetNamedSession(ShowDownSessionName)
@@ -406,20 +415,13 @@ void UShowDownEosSubsystem::StartHostedGame()
 
 	if (!SessionInterface.IsValid() || !NamedSession)
 	{
-		ExpectedLobbyPlayerCount = FMath::Clamp(FMath::Max(PlayerControllerCount, LobbySlotCount), 2, 4);
+		ExpectedLobbyPlayerCount = FMath::Clamp(LobbySlotCount > 0 ? LobbySlotCount : PlayerControllerCount, 2, 4);
 		OnSessionResult.Broadcast(true, TEXT("Starting game without EOS session update..."));
 		TravelHostedGame();
 		return;
 	}
 
-	const int32 RegisteredPlayerCount = NamedSession->RegisteredPlayers.Num();
-
-	// Server travel is asynchronous for clients. Preserve the exact lobby
-	// population so the destination map cannot begin with only early arrivals.
-	ExpectedLobbyPlayerCount = FMath::Clamp(
-		FMath::Max3(PlayerControllerCount, LobbySlotCount, RegisteredPlayerCount),
-		2,
-		4);
+	ExpectedLobbyPlayerCount = FMath::Clamp(LobbySlotCount > 0 ? LobbySlotCount : PlayerControllerCount, 2, 4);
 
 	if (UpdateSessionCompleteDelegateHandle.IsValid())
 	{
@@ -455,7 +457,7 @@ void UShowDownEosSubsystem::StartHostedGame()
 void UShowDownEosSubsystem::LeaveLobby(FName HubMapName)
 {
 	StopLobbyStartPolling();
-	PendingHostMapName = HubMapName.IsNone() ? FName(TEXT("L_Hub")) : HubMapName;
+	PendingHostMapName = HubMapName.IsNone() ? FName(TEXT("L_ShowdownMain")) : HubMapName;
 	PendingJoinCode.Empty();
 	SessionSearch.Reset();
 
@@ -737,7 +739,15 @@ void UShowDownEosSubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 				PendingStartedGameSearchResult = SessionSearch->SearchResults[MatchIndex];
 				PendingSessionFlow = ESessionFlow::None;
 				SessionSearch.Reset();
-				OnSessionResult.Broadcast(true, TEXT("Host started. Waiting for server travel..."));
+				if (UWorld* World = GetWorld(); World && World->GetNetMode() == NM_Client)
+				{
+					OnSessionResult.Broadcast(true, TEXT("EOS game joined."));
+				}
+				else
+				{
+					OnSessionResult.Broadcast(true, TEXT("Host started. Entering game..."));
+					JoinStartedGameSession();
+				}
 			}
 			return;
 		}
@@ -817,7 +827,7 @@ void UShowDownEosSubsystem::HandleJoinSessionComplete(
 	}
 
 	FString ConnectString;
-	if (!SessionInterface->GetResolvedConnectString(SessionName, ConnectString) || ConnectString.IsEmpty())
+	if (!SessionInterface->GetResolvedConnectString(SessionName, ConnectString, NAME_GamePort) || ConnectString.IsEmpty())
 	{
 		const bool bJoiningStartedGame = PendingSessionFlow == ESessionFlow::JoinStartedGame;
 		OnSessionResult.Broadcast(false, TEXT("EOS connect string was empty."));
@@ -1054,6 +1064,20 @@ void UShowDownEosSubsystem::TravelHostedGame()
 	}
 
 	bInMultiplayerLobby = false;
+
+	FString CurrentMapName = World->GetMapName();
+	CurrentMapName.RemoveFromStart(World->StreamingLevelsPrefix);
+	const bool bAlreadyOnTargetMap = CurrentMapName.Equals(PendingGameMapName.ToString(), ESearchCase::IgnoreCase);
+	if (bAlreadyOnTargetMap)
+	{
+		if (AShowDownGameModeBase* ShowDownGameMode = Cast<AShowDownGameModeBase>(GameMode))
+		{
+			OnSessionResult.Broadcast(true, TEXT("Starting game..."));
+			ShowDownGameMode->StartMultiplayerGame();
+			return;
+		}
+	}
+
 	const FString TravelPath = FString::Printf(TEXT("/Game/Maps/%s"), *PendingGameMapName.ToString());
 	OnSessionResult.Broadcast(true, TEXT("Traveling to game..."));
 	GameMode->ProcessServerTravel(TravelPath, false);

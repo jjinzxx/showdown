@@ -18,7 +18,7 @@
 #include "Materials/MaterialInterface.h"
 #include "PlayerPawn.h"
 #include "SDPlayerState.h"
-#include "SDMultiplayerTable.h"
+#include "SDCardPlacementAnchor.h"
 #include "ShowDownChatWidget.h"
 #include "ShowDownEosSubsystem.h"
 #include "ShowDownGameModeBase.h"
@@ -123,26 +123,53 @@ namespace
 {
 	bool IsMultiplayerGameMap(const UWorld* World)
 	{
-		return World && World->GetMapName().Contains(TEXT("L_MultiplayerGame"));
+		return World && World->GetNetMode() != NM_Standalone;
 	}
 
-	bool TryGetMultiplayerTableLocation(UWorld* World, FVector& OutLocation)
+	bool TryGetSharedTableLocation(UWorld* World, FVector& OutLocation)
 	{
 		if (!World)
 		{
 			return false;
 		}
 
-		for (TActorIterator<ASDMultiplayerTable> It(World); It; ++It)
+		FVector HandAnchorSum = FVector::ZeroVector;
+		int32 HandAnchorCount = 0;
+		FVector AnyAnchorSum = FVector::ZeroVector;
+		int32 AnyAnchorCount = 0;
+		for (TActorIterator<ASDCardPlacementAnchor> It(World); It; ++It)
 		{
-			if (const ASDMultiplayerTable* Table = *It)
+			const ASDCardPlacementAnchor* Anchor = *It;
+			if (!Anchor)
 			{
-				OutLocation = Table->GetActorLocation();
-				return true;
+				continue;
+			}
+
+			const FVector AnchorLocation = Anchor->GetActorLocation();
+			AnyAnchorSum += AnchorLocation;
+			++AnyAnchorCount;
+			if (Anchor->IsHandAnchor())
+			{
+				HandAnchorSum += AnchorLocation;
+				++HandAnchorCount;
 			}
 		}
 
-		return false;
+		if (HandAnchorCount > 0)
+		{
+			OutLocation = HandAnchorSum / static_cast<float>(HandAnchorCount);
+			return true;
+		}
+
+		if (AnyAnchorCount > 0)
+		{
+			OutLocation = AnyAnchorSum / static_cast<float>(AnyAnchorCount);
+			OutLocation.Z -= 30.0f;
+			return true;
+		}
+
+		OutLocation = FVector(-5457.0f, -670.0f, 324.0f);
+		return true;
 	}
 }
 
@@ -182,6 +209,12 @@ AShowDownPlayerController::AShowDownPlayerController()
 void AShowDownPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (!Player)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Skipping local player setup for ShowDownPlayerController without a UPlayer yet: %s"), *GetName());
+		return;
+	}
 
 	bShowMouseCursor = false;
 	bEnableClickEvents = false;
@@ -265,7 +298,6 @@ void AShowDownPlayerController::ClientEnterMultiplayerGameplay_Implementation()
 void AShowDownPlayerController::ClientUseMultiplayerSeatCamera_Implementation(
 	int32 SeatIndex,
 	float SeatCameraLookSensitivity,
-	float FallbackSeatCameraLookSensitivity,
 	float MinPitchDegrees,
 	float MaxPitchDegrees,
 	float MinYawOffsetDegrees,
@@ -291,7 +323,6 @@ void AShowDownPlayerController::ClientUseMultiplayerSeatCamera_Implementation(
 	// map's CameraActors actually exist locally.
 	PendingMultiplayerSeatIndex = SeatIndex;
 	PendingMultiplayerSeatCameraLookSensitivity = SeatCameraLookSensitivity;
-	PendingMultiplayerFallbackSeatCameraLookSensitivity = FallbackSeatCameraLookSensitivity;
 	PendingMultiplayerCameraMinPitch = MinPitchDegrees;
 	PendingMultiplayerCameraMaxPitch = MaxPitchDegrees;
 	PendingMultiplayerCameraMinYawOffset = MinYawOffsetDegrees;
@@ -330,11 +361,11 @@ void AShowDownPlayerController::ClientLeaveMultiplayerRoomToHub_Implementation()
 		? GetGameInstance()->GetSubsystem<UShowDownEosSubsystem>()
 		: nullptr)
 	{
-		EosSubsystem->LeaveLobby(FName(TEXT("L_Hub")));
+		EosSubsystem->LeaveLobby(FName(TEXT("L_ShowdownMain")));
 		return;
 	}
 
-	ClientTravel(TEXT("/Game/Maps/L_Hub"), TRAVEL_Absolute);
+	ClientTravel(TEXT("/Game/Maps/L_ShowdownMain"), TRAVEL_Absolute);
 }
 
 bool AShowDownPlayerController::TryApplyPendingMultiplayerSeatCamera()
@@ -345,11 +376,14 @@ bool AShowDownPlayerController::TryApplyPendingMultiplayerSeatCamera()
 	}
 
 	FVector TableLocation = FVector::ZeroVector;
-	if (!TryGetMultiplayerTableLocation(GetWorld(), TableLocation))
+	if (!TryGetSharedTableLocation(GetWorld(), TableLocation))
 	{
 		UE_LOG(LogTemp, Verbose, TEXT("멀티플레이 테이블 대기 중: SeatIndex=%d"), PendingMultiplayerSeatIndex);
 		return false;
 	}
+
+	return IsMultiplayerGameMap(GetWorld())
+		&& UseFallbackMultiplayerSeatCamera(PendingMultiplayerSeatIndex);
 
 	const FName SeatCameraTag(*FString::Printf(TEXT("MP_SeatCamera_%d"), PendingMultiplayerSeatIndex + 1));
 	for (TActorIterator<ACameraActor> It(GetWorld()); It; ++It)
@@ -424,21 +458,21 @@ bool AShowDownPlayerController::UseFallbackMultiplayerSeatCamera(int32 SeatIndex
 	}
 
 	static const FVector SeatOffsets[] = {
-		FVector(0.0f, -850.0f, 220.0f),
-		FVector(0.0f, 850.0f, 220.0f),
-		FVector(-1200.0f, 0.0f, 220.0f),
-		FVector(1200.0f, 0.0f, 220.0f)
+		FVector(-85.0f, 0.0f, 45.0f),
+		FVector(85.0f, 0.0f, 45.0f),
+		FVector(0.0f, -200.0f, 45.0f),
+		FVector(0.0f, 200.0f, 45.0f)
 	};
-	static const float SeatYaws[] = { 90.0f, -90.0f, 0.0f, 180.0f };
+	static const float SeatYaws[] = { 0.0f, 180.0f, 90.0f, -90.0f };
 
 	FVector TableCenter = FVector::ZeroVector;
-	if (!TryGetMultiplayerTableLocation(GetWorld(), TableCenter))
+	if (!TryGetSharedTableLocation(GetWorld(), TableCenter))
 	{
 		return false;
 	}
 
 	const FTransform CameraTransform(
-		FRotator(-12.0f, SeatYaws[SeatIndex], 0.0f),
+		FRotator(-20.0f, SeatYaws[SeatIndex], 0.0f),
 		TableCenter + SeatOffsets[SeatIndex]);
 	if (!IsValid(LocalFallbackSeatCamera))
 	{
@@ -461,7 +495,7 @@ bool AShowDownPlayerController::UseFallbackMultiplayerSeatCamera(int32 SeatIndex
 	SetViewTarget(LocalFallbackSeatCamera);
 	SetFixedCameraMouseLook(
 		LocalFallbackSeatCamera,
-		PendingMultiplayerFallbackSeatCameraLookSensitivity,
+		PendingMultiplayerSeatCameraLookSensitivity,
 		PendingMultiplayerCameraMinPitch,
 		PendingMultiplayerCameraMaxPitch,
 		PendingMultiplayerCameraMinYawOffset,
@@ -493,6 +527,10 @@ void AShowDownPlayerController::PlayerTick(float DeltaTime)
 		TryApplyPendingMultiplayerSeatCamera();
 	}
 	TryBindVoiceChatEvents();
+	if (IsMultiplayerGameMap(GetWorld()))
+	{
+		SubmitLocalMultiplayerDisplayName();
+	}
 
 	const bool bHasFixedCameraLook = FixedCameraMouseLookTarget != nullptr;
 	if (bHasFixedCameraLook)
@@ -1427,7 +1465,7 @@ void AShowDownPlayerController::ConfirmLeaveMultiplayerMatch()
 		}
 		bHandleShowDownGameplayInput = false;
 		SetHoveredCard(nullptr);
-		EosSubsystem->LeaveLobby(FName(TEXT("L_Hub")));
+		EosSubsystem->LeaveLobby(FName(TEXT("L_ShowdownMain")));
 	}
 }
 
@@ -1640,6 +1678,37 @@ void AShowDownPlayerController::UpdateFixedCameraMouseLook(float DeltaTime)
 	FixedCameraMouseLookTarget->SetWorldLocationAndRotation(
 		FixedCameraBaseLocation + SwayLocation + SteppedShakeLocation,
 		FixedCameraLookRotation + SwayRotation + SteppedShakeRotation);
+	SubmitDebugCameraLookRotation(FixedCameraLookRotation, DeltaTime);
+}
+
+void AShowDownPlayerController::SubmitDebugCameraLookRotation(const FRotator& LookRotation, float DeltaTime)
+{
+	if (!IsLocalController() || !IsMultiplayerGameMap(GetWorld()))
+	{
+		return;
+	}
+
+	DebugCameraLookReplicationElapsedTime += DeltaTime;
+	const float PitchDelta = FMath::Abs(FRotator::NormalizeAxis(LookRotation.Pitch - LastSubmittedDebugCameraLookRotation.Pitch));
+	const float YawDelta = FMath::Abs(FRotator::NormalizeAxis(LookRotation.Yaw - LastSubmittedDebugCameraLookRotation.Yaw));
+	if (DebugCameraLookReplicationElapsedTime < 0.05f && PitchDelta < 0.5f && YawDelta < 0.5f)
+	{
+		return;
+	}
+
+	DebugCameraLookReplicationElapsedTime = 0.0f;
+	LastSubmittedDebugCameraLookRotation = LookRotation;
+
+	if (HasAuthority())
+	{
+		if (APlayerPawn* PlayerPawn = Cast<APlayerPawn>(GetPawn()))
+		{
+			PlayerPawn->SetReplicatedCameraLookRotation(LookRotation);
+		}
+		return;
+	}
+
+	ServerUpdateDebugCameraLookRotation(LookRotation);
 }
 
 void AShowDownPlayerController::RestoreFixedCameraBaseTransform()
@@ -2058,7 +2127,12 @@ void AShowDownPlayerController::SubmitLocalMultiplayerDisplayName()
 	const FString Nickname = SupabaseSubsystem->GetNickname().TrimStartAndEnd();
 	if (!Nickname.IsEmpty())
 	{
-		ServerSetMultiplayerDisplayName(Nickname);
+		const FString SanitizedName = Nickname.Left(32);
+		if (!SanitizedName.Equals(LastSubmittedMultiplayerDisplayName, ESearchCase::CaseSensitive))
+		{
+			LastSubmittedMultiplayerDisplayName = SanitizedName;
+			ServerSetMultiplayerDisplayName(SanitizedName);
+		}
 	}
 }
 
@@ -2146,6 +2220,14 @@ void AShowDownPlayerController::ServerRequestMultiplayerRestart_Implementation()
 	if (AShowDownGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AShowDownGameModeBase>() : nullptr)
 	{
 		GameMode->RequestMultiplayerRestartFromController(this);
+	}
+}
+
+void AShowDownPlayerController::ServerUpdateDebugCameraLookRotation_Implementation(FRotator LookRotation)
+{
+	if (APlayerPawn* PlayerPawn = Cast<APlayerPawn>(GetPawn()))
+	{
+		PlayerPawn->SetReplicatedCameraLookRotation(LookRotation);
 	}
 }
 
