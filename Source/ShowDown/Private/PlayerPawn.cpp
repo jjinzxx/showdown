@@ -526,7 +526,7 @@ void APlayerPawn::SubmitPlayerBetAction(EShowDownBetAction Action, int32 TargetB
 		break;
 
 	case EShowDownBetAction::Raise:
-		if (TargetBet > 0)
+		if (TargetBet != 0)
 		{
 			ServerPlayerRaiseTo(TargetBet);
 		}
@@ -683,27 +683,27 @@ void APlayerPawn::HandleBettingHotkeys()
 
 	if (PC->WasInputKeyJustPressed(EKeys::One))
 	{
-		RequestPlayerRaiseTo(2);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -1);
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Two))
 	{
-		RequestPlayerRaiseTo(3);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -2);
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Three))
 	{
-		RequestPlayerRaiseTo(4);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -3);
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Four))
 	{
-		RequestPlayerRaiseTo(5);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -4);
 	}
 
 	if (PC->WasInputKeyJustPressed(EKeys::Five))
 	{
-		RequestPlayerRaiseTo(6);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -5);
 	}
 }
 

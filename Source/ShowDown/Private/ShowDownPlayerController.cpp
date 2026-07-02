@@ -1589,7 +1589,7 @@ void AShowDownPlayerController::SubmitPlayerBetAction(EShowDownBetAction Action,
 		break;
 
 	case EShowDownBetAction::Raise:
-		if (TargetBet > 0)
+		if (TargetBet != 0)
 		{
 			ServerPlayerRaiseTo(TargetBet);
 		}
@@ -1825,27 +1825,27 @@ void AShowDownPlayerController::HandleBettingHotkeys()
 
 	if (WasInputKeyJustPressed(EKeys::One))
 	{
-		RequestPlayerRaiseTo(2);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -1);
 	}
 
 	if (WasInputKeyJustPressed(EKeys::Two))
 	{
-		RequestPlayerRaiseTo(3);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -2);
 	}
 
 	if (WasInputKeyJustPressed(EKeys::Three))
 	{
-		RequestPlayerRaiseTo(4);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -3);
 	}
 
 	if (WasInputKeyJustPressed(EKeys::Four))
 	{
-		RequestPlayerRaiseTo(5);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -4);
 	}
 
 	if (WasInputKeyJustPressed(EKeys::Five))
 	{
-		RequestPlayerRaiseTo(6);
+		SubmitPlayerBetAction(EShowDownBetAction::Raise, -5);
 	}
 }
 

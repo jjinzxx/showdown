@@ -1037,7 +1037,9 @@ void AShowDownGameModeBase::PlayerRaiseTo(int32 BulletCount)
 		return;
 	}
 
-	const int32 NewBet = FMath::Clamp(BulletCount, 1, 6);
+	const int32 CurrentBet = BettingSystem->GetCurrentBet();
+	const int32 RequestedBet = BulletCount < 0 ? CurrentBet + FMath::Abs(BulletCount) : BulletCount;
+	const int32 NewBet = FMath::Clamp(RequestedBet, 1, 6);
 
 	if (BettingSystem->RaiseTo(EShowDownSide::Player, NewBet))
 	{
@@ -1119,7 +1121,7 @@ void AShowDownGameModeBase::RequestPlayerBetActionFromController(
 		break;
 
 	case EShowDownBetAction::Raise:
-		if (TargetBet > 0)
+		if (TargetBet != 0)
 		{
 			PlayerRaiseTo(TargetBet);
 		}
@@ -3118,11 +3120,17 @@ void AShowDownGameModeBase::HandleMultiplayerBetAction(
 
 	case EShowDownBetAction::Raise:
 	{
-		const int32 RequestedBet = TargetBet > 0 ? TargetBet : CurrentBet + 1;
+		const int32 RequestedBet = TargetBet < 0
+			? CurrentBet + FMath::Abs(TargetBet)
+			: (TargetBet > 0 ? TargetBet : CurrentBet + 1);
 		const int32 NewBet = FMath::Clamp(RequestedBet, 1, 6);
 		if (NewBet <= CurrentBet || BettingRaisesLeft <= 0 || !BettingSystem || !BettingSystem->RaiseTo(EShowDownSide::Player, NewBet))
 		{
-			NotifyMultiplayerStatus(TEXT("레이즈할 수 없습니다."));
+			NotifyMultiplayerStatus(FString::Printf(
+				TEXT("레이즈할 수 없습니다. 현재 %d / 요청 %d / 남은 레이즈 %d"),
+				CurrentBet,
+				NewBet,
+				BettingRaisesLeft));
 			return;
 		}
 
@@ -3140,9 +3148,18 @@ void AShowDownGameModeBase::HandleMultiplayerBetAction(
 	}
 
 	case EShowDownBetAction::Fold:
+	{
 		NotifyMultiplayerStatus(FString::Printf(TEXT("%s 폴드."), *SubmittingPlayer->GetPlayerName()));
 		MultiplayerFoldedPlayers.Add(SubmittingPlayer);
-		ApplyMultiplayerRoulette(SubmittingPlayer, SubmittingPlayer->CurrentBet);
+
+		const int32 FoldedRank = SubmittingPlayer->ForeheadCard ? SubmittingPlayer->ForeheadCard->Rank : 0;
+		const FShowDownStageRule* StageRule = GetCurrentStageRule();
+		const bool bSevenFoldLoadsSix = StageRule ? StageRule->bSevenFoldLoadsSix : true;
+		const int32 LoadCount = RoundResolver
+			? RoundResolver->GetFoldLoadCount(FoldedRank, SubmittingPlayer->CurrentBet, bSevenFoldLoadsSix)
+			: SubmittingPlayer->CurrentBet;
+		ApplyMultiplayerRoulette(SubmittingPlayer, LoadCount);
+
 		MultiplayerNextFirstPlayer = SubmittingPlayer;
 		MultiplayerPlayersActed.Add(SubmittingPlayer);
 		MultiplayerCurrentBetter = FindNextActivePlayer(SubmittingPlayer);
@@ -3151,6 +3168,7 @@ void AShowDownGameModeBase::HandleMultiplayerBetAction(
 			FinishMultiplayerRoundByReveal();
 		}
 		return;
+	}
 
 	default:
 		return;
@@ -3215,9 +3233,16 @@ void AShowDownGameModeBase::FinishMultiplayerRoundByReveal()
 			WinnerNames += Winner->GetPlayerName();
 		}
 
-		const bool bAllRevealedPlayersTied = RevealedPlayers.Num() > 0 && Winners.Num() == RevealedPlayers.Num();
+		const bool bOnlyOnePlayerRemainsAfterFold = RevealedPlayers.Num() == 1 && MultiplayerFoldedPlayers.Num() > 0;
+		const bool bAllRevealedPlayersTied = RevealedPlayers.Num() > 1 && Winners.Num() == RevealedPlayers.Num();
 		TArray<ASDPlayerState*> RouletteTargets;
-		if (bAllRevealedPlayersTied)
+		if (bOnlyOnePlayerRemainsAfterFold)
+		{
+			NotifyMultiplayerStatus(FString::Printf(
+				TEXT("공개 결과: %s 승리. 폴드한 플레이어만 패배 처리됩니다."),
+				*WinnerNames));
+		}
+		else if (bAllRevealedPlayersTied)
 		{
 			RouletteTargets = RevealedPlayers;
 			NotifyMultiplayerStatus(TEXT("공개 결과: 전원 동점. 모두 룰렛을 돌립니다."));
