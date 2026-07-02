@@ -16,6 +16,35 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	Message
 );
 
+USTRUCT(BlueprintType)
+struct FShowDownPublicRoomInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|EOS")
+	int32 SearchResultIndex = INDEX_NONE;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|EOS")
+	FString RoomCode;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|EOS")
+	FString RoomName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|EOS")
+	int32 CurrentPlayers = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ShowDown|EOS")
+	int32 MaxPlayers = 4;
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnShowDownPublicRoomsUpdated,
+	bool,
+	bSuccess,
+	const TArray<FShowDownPublicRoomInfo>&,
+	Rooms
+);
+
 UCLASS()
 class SHOWDOWN_API UShowDownEosSubsystem : public UGameInstanceSubsystem
 {
@@ -28,6 +57,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "ShowDown|EOS")
 	FOnShowDownEosResult OnSessionResult;
 
+	UPROPERTY(BlueprintAssignable, Category = "ShowDown|EOS")
+	FOnShowDownPublicRoomsUpdated OnPublicRoomsUpdated;
+
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	bool IsEosLoggedIn() const;
 
@@ -35,16 +67,25 @@ public:
 	void LoginWithSupabaseSession();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void HostSession(FName MapName = TEXT("L_ShowdownMain"));
+	void HostSession(FName MapName = TEXT("L_MultiplayerGame"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void FindAndJoinFirstSession();
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
-	void HostLobby(FName LobbyMapName = TEXT("L_ShowdownMain"), FName GameMapName = TEXT("L_ShowdownMain"));
+	void HostLobby(FName LobbyMapName = TEXT("L_MultiplayerLobby"), FName GameMapName = TEXT("L_MultiplayerGame"));
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
+	void HostPrivateLobby(FName LobbyMapName = TEXT("L_MultiplayerLobby"), FName GameMapName = TEXT("L_MultiplayerGame"));
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void JoinLobbyByCode(const FString& RoomCode);
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
+	void FindPublicLobbies();
+
+	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
+	void JoinPublicLobbyByIndex(int32 SearchResultIndex);
 
 	UFUNCTION(BlueprintCallable, Category = "ShowDown|EOS")
 	void StartHostedGame();
@@ -84,7 +125,8 @@ private:
 		JoinStartedGame,
 		LeaveLobby,
 		CleanupBeforeHostLobby,
-		CleanupBeforeJoinLobby
+		CleanupBeforeJoinLobby,
+		BrowsePublicLobbies
 	};
 
 	FDelegateHandle LoginCompleteDelegateHandle;
@@ -96,16 +138,18 @@ private:
 
 	TSharedPtr<FOnlineSessionSearch> SessionSearch;
 	FOnlineSessionSearchResult PendingStartedGameSearchResult;
+	TArray<FOnlineSessionSearchResult> PublicLobbySearchResults;
 	FTimerHandle LobbyStartPollTimerHandle;
-	FName PendingHostMapName = TEXT("L_ShowdownMain");
-	FName PendingGameMapName = TEXT("L_ShowdownMain");
+	FName PendingHostMapName = TEXT("L_MultiplayerLobby");
+	FName PendingGameMapName = TEXT("L_MultiplayerGame");
 	FString PendingJoinCode;
 	FString LobbyCode;
-	int32 ExpectedLobbyPlayerCount = 2;
+	int32 ExpectedLobbyPlayerCount = 4;
 	ESessionFlow PendingSessionFlow = ESessionFlow::None;
 	bool bLobbyStartPollInFlight = false;
 	bool bInMultiplayerLobby = false;
 	bool bLobbyHost = false;
+	bool bPendingLobbyIsPublic = true;
 
 	class IOnlineSubsystem* GetEosSubsystem() const;
 	IOnlineIdentityPtr GetIdentityInterface() const;
@@ -122,4 +166,5 @@ private:
 	void TravelHostedGame();
 	void CompleteLobbyLeave(bool bSessionDestroyed);
 	bool TravelToSearchResult(const FOnlineSessionSearchResult& SearchResult, const FString& StatusMessage);
+	void HostLobbyWithVisibility(FName LobbyMapName, FName GameMapName, bool bPublicRoom);
 };

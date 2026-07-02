@@ -549,7 +549,7 @@ void AShowDownGameModeBase::DealInitialHand()
 	const FSDCardHandLayoutSettings CollectorHandLayout = ResolveHandLayoutSettings(EShowDownSide::Collector);
 
 	ClearHandCards();
-	CardSystem->ResetDeck();
+	CardSystem->ResetDeck(2);
 	CardSystem->ShuffleDeck();
 
 	TArray<int32> PlayerRanks;
@@ -590,6 +590,7 @@ void AShowDownGameModeBase::DealInitialHand()
 		CollectorState.HandCards);
 	ApplyCardMotionForSide(EShowDownSide::Collector, CollectorState.HandCards);
 
+	UE_LOG(LogTemp, Log, TEXT("Single player deck: ranks 1-7 x2, total 14 cards."));
 	UE_LOG(LogTemp, Log, TEXT("Player hand count: %d"), PlayerState.HandCards.Num());
 	UE_LOG(LogTemp, Log, TEXT("Collector hand count: %d"), CollectorState.HandCards.Num());
 }
@@ -2774,8 +2775,24 @@ void AShowDownGameModeBase::DealMultiplayerHands()
 	ClearMultiplayerHands();
 	ClearMultiplayerForeheadCards();
 
-	CardSystem->ResetDeck();
+	int32 AlivePlayerCount = 0;
+	for (const ASDPlayerState* Player : MultiplayerPlayers)
+	{
+		if (Player && Player->Lives > 0)
+		{
+			++AlivePlayerCount;
+		}
+	}
+	AlivePlayerCount = FMath::Clamp(AlivePlayerCount, 2, 4);
+
+	CardSystem->ResetDeck(AlivePlayerCount);
 	CardSystem->ShuffleDeck();
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("Multiplayer deck: ranks 1-7 x%d, total %d cards."),
+		AlivePlayerCount,
+		AlivePlayerCount * 7);
 
 	for (ASDPlayerState* Player : MultiplayerPlayers)
 	{

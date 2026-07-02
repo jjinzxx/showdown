@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "Templates/SubclassOf.h"
 #include "Engine/TimerHandle.h"
+#include "ShowDownEosSubsystem.h"
 #include "ShowDownTypes.h"
 #include "ShowDownHubFlowManager.generated.h"
 
@@ -187,11 +188,11 @@ private:
 
 	// Lobby and gameplay now travel through the same authored main level.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Level")
-	FName MultiplayerLobbyLevelName = TEXT("L_ShowdownMain");
+	FName MultiplayerLobbyLevelName = TEXT("L_MultiplayerLobby");
 
 	// Same level reloaded as a listen/server-travel target after the lobby host starts the match.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Level")
-	FName MultiplayerLevelName = TEXT("L_ShowdownMain");
+	FName MultiplayerLevelName = TEXT("L_MultiplayerGame");
 
 	// 게임 종료(승/패) 후 메인메뉴로 돌아가기까지의 대기 시간(초). 결과를 잠시 보여주기 위함.
 	UPROPERTY(EditAnywhere, Category = "ShowDown|Flow")
@@ -249,7 +250,19 @@ private:
 	void HandleHostMultiplayerRequested();
 
 	UFUNCTION()
+	void HandleHostPrivateMultiplayerRequested();
+
+	UFUNCTION()
 	void HandleJoinMultiplayerRequested(const FString& RoomCode);
+
+	UFUNCTION()
+	void HandleRefreshPublicRoomsRequested();
+
+	UFUNCTION()
+	void HandleJoinPublicRoomRequested(int32 SearchResultIndex);
+
+	UFUNCTION()
+	void HandlePublicRoomsUpdated(bool bSuccess, const TArray<FShowDownPublicRoomInfo>& Rooms);
 
 	UFUNCTION()
 	void HandleMultiplayerBackRequested();

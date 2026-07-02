@@ -256,7 +256,10 @@ void AShowDownHubFlowManager::ShowMultiplayerMenu()
 	}
 
 	MultiplayerWidget->OnHostRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleHostMultiplayerRequested);
+	MultiplayerWidget->OnPrivateHostRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleHostPrivateMultiplayerRequested);
 	MultiplayerWidget->OnJoinRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleJoinMultiplayerRequested);
+	MultiplayerWidget->OnRefreshRoomsRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleRefreshPublicRoomsRequested);
+	MultiplayerWidget->OnJoinPublicRoomRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleJoinPublicRoomRequested);
 	MultiplayerWidget->OnBackRequested.AddDynamic(this, &AShowDownHubFlowManager::HandleMultiplayerBackRequested);
 
 	SetActiveWidget(MultiplayerWidget);
@@ -294,6 +297,7 @@ void AShowDownHubFlowManager::ShowLobby()
 			LobbyWidget->SetLobbyInfo(EosSubsystem->GetLobbyCode(), EosSubsystem->IsLobbyHost());
 			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
 			EosSubsystem->OnSessionResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->OnPublicRoomsUpdated.RemoveDynamic(this, &AShowDownHubFlowManager::HandlePublicRoomsUpdated);
 			if (EosSubsystem->IsLobbyHost())
 			{
 				EosSubsystem->StopLobbyStartPolling();
@@ -661,6 +665,25 @@ void AShowDownHubFlowManager::HandleHostMultiplayerRequested()
 	}
 }
 
+void AShowDownHubFlowManager::HandleHostPrivateMultiplayerRequested()
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->OnSessionResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->HostPrivateLobby(MultiplayerLobbyLevelName, MultiplayerLevelName);
+			return;
+		}
+	}
+
+	if (MultiplayerWidget)
+	{
+		MultiplayerWidget->ShowStatusMessage(TEXT("EOS subsystem is unavailable."), FLinearColor::Red);
+	}
+}
+
 void AShowDownHubFlowManager::HandleJoinMultiplayerRequested(const FString& RoomCode)
 {
 	if (UGameInstance* GameInstance = GetGameInstance())
@@ -680,6 +703,59 @@ void AShowDownHubFlowManager::HandleJoinMultiplayerRequested(const FString& Room
 	}
 }
 
+void AShowDownHubFlowManager::HandleRefreshPublicRoomsRequested()
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->OnSessionResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->OnPublicRoomsUpdated.RemoveDynamic(this, &AShowDownHubFlowManager::HandlePublicRoomsUpdated);
+			EosSubsystem->OnPublicRoomsUpdated.AddDynamic(this, &AShowDownHubFlowManager::HandlePublicRoomsUpdated);
+			EosSubsystem->FindPublicLobbies();
+			return;
+		}
+	}
+
+	if (MultiplayerWidget)
+	{
+		MultiplayerWidget->ShowStatusMessage(TEXT("EOS subsystem is unavailable."), FLinearColor::Red);
+		MultiplayerWidget->SetPublicRooms(TArray<FShowDownPublicRoomInfo>());
+	}
+}
+
+void AShowDownHubFlowManager::HandleJoinPublicRoomRequested(int32 SearchResultIndex)
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
+		{
+			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->OnSessionResult.AddDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->JoinPublicLobbyByIndex(SearchResultIndex);
+			return;
+		}
+	}
+
+	if (MultiplayerWidget)
+	{
+		MultiplayerWidget->ShowStatusMessage(TEXT("EOS subsystem is unavailable."), FLinearColor::Red);
+	}
+}
+
+void AShowDownHubFlowManager::HandlePublicRoomsUpdated(bool bSuccess, const TArray<FShowDownPublicRoomInfo>& Rooms)
+{
+	if (MultiplayerWidget)
+	{
+		MultiplayerWidget->SetPublicRooms(Rooms);
+		if (!bSuccess)
+		{
+			MultiplayerWidget->ShowStatusMessage(TEXT("공개방 목록을 불러오지 못했습니다."), FLinearColor::Red);
+		}
+	}
+}
+
 void AShowDownHubFlowManager::HandleMultiplayerBackRequested()
 {
 	if (UGameInstance* GameInstance = GetGameInstance())
@@ -687,6 +763,7 @@ void AShowDownHubFlowManager::HandleMultiplayerBackRequested()
 		if (UShowDownEosSubsystem* EosSubsystem = GameInstance->GetSubsystem<UShowDownEosSubsystem>())
 		{
 			EosSubsystem->OnSessionResult.RemoveDynamic(this, &AShowDownHubFlowManager::HandleEosSessionResult);
+			EosSubsystem->OnPublicRoomsUpdated.RemoveDynamic(this, &AShowDownHubFlowManager::HandlePublicRoomsUpdated);
 		}
 	}
 
@@ -782,6 +859,13 @@ void AShowDownHubFlowManager::HandleRankBackRequested()
 
 void AShowDownHubFlowManager::HandleGameOver(EShowDownSide Winner)
 {
+	if (UWorld* World = GetWorld(); World && World->GetNetMode() != NM_Standalone)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Ignoring hub auto-return for multiplayer game over."));
+		World->GetTimerManager().ClearTimer(ReturnToHubTimerHandle);
+		return;
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("Game over. Winner: %s. Returning to hub in %.1fs."),
 		Winner == EShowDownSide::Player ? TEXT("Player") : TEXT("Collector"),
 		ReturnToHubDelay);
